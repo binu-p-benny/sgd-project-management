@@ -89,17 +89,6 @@ export function ProjectStatTiles({ counts }: { counts: ProjectSituationCounts })
       color: severity(counts.blocked, 1, 1, 1),
       href: "/projects?status=blocked",
     },
-    // Schedule slippage across the whole portfolio — serious well before it reaches
-    // "blocked" territory, since a growing pile of overdue steps is a leading indicator
-    // of more projects becoming delayed or blocked soon. Links to the projects that
-    // contain at least one overdue step (a step-level count, but a project-level view).
-    {
-      label: "Overdue steps",
-      subtitle: "Across all projects",
-      value: counts.overdueSteps,
-      color: severity(counts.overdueSteps, 1, 3, 8),
-      href: "/projects?overdue=1",
-    },
     // Delayed projects are real but one tier down from blocked — work is still moving,
     // just behind schedule.
     {

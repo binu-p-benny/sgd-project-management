@@ -1,6 +1,11 @@
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
 import type { UpcomingStepRow } from "@/lib/dashboard";
 import { DEPARTMENT_LABELS } from "@/lib/labels";
+
+const PAGE_SIZE = 5;
 
 function formatDueLabel(daysRemaining: number): string {
   if (daysRemaining <= 0) return "Today";
@@ -14,6 +19,11 @@ function urgencyClasses(daysRemaining: number): string {
 }
 
 export function UpcomingStepsWidget({ data }: { data: UpcomingStepRow[] }) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(data.length / PAGE_SIZE));
+  const start = (page - 1) * PAGE_SIZE;
+  const pageData = data.slice(start, start + PAGE_SIZE);
+
   return (
     <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900 sm:p-5">
       <h3 className="mb-4 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Due this week ({data.length})</h3>
@@ -26,7 +36,7 @@ export function UpcomingStepsWidget({ data }: { data: UpcomingStepRow[] }) {
         <>
           {/* Mobile: stacked cards */}
           <div className="flex flex-col gap-3 sm:hidden">
-            {data.map((row) => (
+            {pageData.map((row) => (
               <Link
                 key={row.stepId}
                 href={`/projects/${row.projectId}`}
@@ -58,7 +68,7 @@ export function UpcomingStepsWidget({ data }: { data: UpcomingStepRow[] }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                {data.map((row) => (
+                {pageData.map((row) => (
                   <tr key={row.stepId}>
                     <td className="py-2 pr-4">
                       <Link href={`/projects/${row.projectId}`} className="text-zinc-900 hover:underline dark:text-zinc-50">
@@ -80,6 +90,30 @@ export function UpcomingStepsWidget({ data }: { data: UpcomingStepRow[] }) {
               </tbody>
             </table>
           </div>
+
+          {totalPages > 1 && (
+            <div className="mt-4 flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                ← Previous
+              </button>
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                Page {page} of {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                Next →
+              </button>
+            </div>
+          )}
         </>
       )}
     </div>
