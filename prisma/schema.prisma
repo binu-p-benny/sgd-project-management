@@ -1,0 +1,250 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Department {
+  hr_admin
+  project_engineer
+  design_engineer
+  purchase
+  accounts
+  owner_admin
+}
+
+enum PaymentStatus {
+  pending
+  partial
+  received
+}
+
+enum GlassType {
+  normal
+  laminated
+}
+
+enum VisitUrgency {
+  emergency
+  hot
+  cold
+  site_not_ready
+}
+
+// current_phase on projects (includes "completed")
+enum ProjectPhase {
+  phase_1
+  phase_2
+  phase_3
+  completed
+}
+
+enum OverallStatus {
+  on_track
+  delayed
+  blocked
+  completed
+}
+
+// phase on phase_steps (no "completed" phase — a step's own status tracks completion)
+enum StepPhase {
+  phase_1
+  phase_2
+  phase_3
+}
+
+enum StepStatus {
+  not_started
+  in_progress
+  blocked
+  completed
+}
+
+enum ItemType {
+  section
+  hardware
+  gasket
+}
+
+enum BlockedReason {
+  client_payment_hold
+  client_hold
+  site_not_ready
+  section_damage
+  powder_coating_damage
+  section_and_powder_coating_damage
+  hardware_damage
+  glass_damage
+  requirement_wrong_section
+  requirement_wrong_hardware
+  requirement_wrong_gasket
+  requirement_wrong_glass
+  vendor_issue_section
+  vendor_issue_hardware
+  vendor_issue_gasket
+  vendor_issue_glass
+  fabrication_damage_section
+  fabrication_damage_hardware
+  fabrication_damage_glass
+  transportation_damage_section
+  transportation_damage_hardware
+  transportation_damage_glass
+  wrong_tight_measurement
+  other
+}
+
+// ---------------------------------------------------------------------------
+// Models
+//
+// All DateTime fields use @db.Timestamptz(3) explicitly. Without it, Prisma's
+// PostgreSQL default is `timestamp` (no timezone), which writes using the
+// server's local offset but reads back assuming UTC — silently shifting every
+// timestamp by the local UTC offset on every round trip. Timestamptz stores
+// true instants and removes that asymmetry.
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String     @id @default(cuid())
+  name         String
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  department   Department
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  statusChanges  StepStatusLog[]   @relation("StatusChangedBy")
+  qcCheckedItems ProcurementItem[] @relation("QcCheckedBy")
+
+  @@index([department])
+  @@map("users")
+}
+
+model Project {
+  id            String @id @default(cuid())
+  name          String
+  clientName    String @map("client_name")
+  clientPhone   String @map("client_phone")
+  clientAddress String @map("client_address")
+
+  finalCost      Decimal       @map("final_cost") @db.Decimal(12, 2)
+  amountReceived Decimal       @default(0) @map("amount_received") @db.Decimal(12, 2)
+  paymentStatus  PaymentStatus @default(pending) @map("payment_status")
+
+  glassType GlassType @map("glass_type")
+
+  roughDesignCompletedAt DateTime?     @map("rough_design_completed_at") @db.Timestamptz(3)
+  visitUrgency           VisitUrgency? @map("visit_urgency")
+
+  currentPhase  ProjectPhase  @default(phase_1) @map("current_phase")
+  overallStatus OverallStatus @default(on_track) @map("overall_status")
+
+  plannedStartDate DateTime? @map("planned_start_date") @db.Timestamptz(3)
+  plannedEndDate   DateTime? @map("planned_end_date") @db.Timestamptz(3)
+  actualStartDate  DateTime? @map("actual_start_date") @db.Timestamptz(3)
+  actualEndDate    DateTime? @map("actual_end_date") @db.Timestamptz(3)
+
+  notes String? @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  phaseSteps       PhaseStep[]
+  procurementItems ProcurementItem[]
+
+  @@index([currentPhase])
+  @@index([overallStatus])
+  @@index([paymentStatus])
+  @@map("projects")
+}
+
+model PhaseStep {
+  id        String  @id @default(cuid())
+  projectId String  @map("project_id")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  phase    StepPhase
+  stepCode String    @map("step_code")
+  stepName String    @map("step_name")
+
+  owningDepartment    Department  @map("owning_department")
+  secondaryDepartment Department? @map("secondary_department")
+
+  plannedDurationDays Int?     @map("planned_duration_days")
+  dependsOn           String[] @map("depends_on")
+
+  status StepStatus @default(not_started)
+
+  plannedStartDate DateTime? @map("planned_start_date") @db.Timestamptz(3)
+  plannedEndDate   DateTime? @map("planned_end_date") @db.Timestamptz(3)
+  actualStartDate  DateTime? @map("actual_start_date") @db.Timestamptz(3)
+  actualEndDate    DateTime? @map("actual_end_date") @db.Timestamptz(3)
+
+  blockedReason BlockedReason? @map("blocked_reason")
+  blockedNote   String?        @map("blocked_note") @db.Text
+  notes         String?        @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  statusLogs StepStatusLog[]
+
+  @@index([projectId])
+  @@index([stepCode])
+  @@index([owningDepartment])
+  @@index([status])
+  @@map("phase_steps")
+}
+
+model ProcurementItem {
+  id        String  @id @default(cuid())
+  projectId String  @map("project_id")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  itemType ItemType @map("item_type")
+
+  requirementCreatedAt DateTime? @map("requirement_created_at") @db.Timestamptz(3)
+  quoteCreatedAt       DateTime? @map("quote_created_at") @db.Timestamptz(3)
+  orderConfirmedAt     DateTime? @map("order_confirmed_at") @db.Timestamptz(3)
+  paymentSettledAt     DateTime? @map("payment_settled_at") @db.Timestamptz(3)
+  paymentDetails       String?   @map("payment_details") @db.Text
+  expectedArrivalDate  DateTime? @map("expected_arrival_date") @db.Timestamptz(3)
+  actualArrivalDate    DateTime? @map("actual_arrival_date") @db.Timestamptz(3)
+
+  qcChecked   Boolean   @default(false) @map("qc_checked")
+  qcCheckedAt DateTime? @map("qc_checked_at") @db.Timestamptz(3)
+  qcCheckedBy String?   @map("qc_checked_by")
+  qcCheckedByUser User? @relation("QcCheckedBy", fields: [qcCheckedBy], references: [id])
+
+  notes String? @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([projectId])
+  @@index([itemType])
+  @@map("procurement_items")
+}
+
+model StepStatusLog {
+  id          String    @id @default(cuid())
+  phaseStepId String    @map("phase_step_id")
+  phaseStep   PhaseStep @relation(fields: [phaseStepId], references: [id], onDelete: Cascade)
+
+  changedByUserId String @map("changed_by_user_id")
+  changedByUser   User   @relation("StatusChangedBy", fields: [changedByUserId], references: [id])
+
+  oldStatus StepStatus @map("old_status")
+  newStatus StepStatus @map("new_status")
+  reason    String?    @db.Text
+
+  changedAt DateTime @default(now()) @map("changed_at") @db.Timestamptz(3)
+
+  @@index([phaseStepId])
+  @@map("step_status_log")
+}
