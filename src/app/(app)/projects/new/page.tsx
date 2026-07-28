@@ -4,8 +4,8 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
 const inputClass =
-  "h-12 w-full rounded-lg border border-zinc-300 bg-white px-3 text-base text-zinc-900 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:focus:ring-zinc-700";
-const labelClass = "text-sm font-medium text-zinc-700 dark:text-zinc-300";
+  "h-12 w-full rounded-lg border border-edge bg-bg px-3 text-base text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30";
+const labelClass = "text-sm font-medium text-fg-muted";
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -60,14 +60,14 @@ export default function NewProjectPage() {
 
   return (
     <div className="mx-auto flex max-w-lg flex-col gap-5">
-      <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">New project</h1>
+      <h1 className="text-xl font-semibold text-fg">New project</h1>
 
       <form
         onSubmit={handleSubmit}
-        className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-6"
+        className="flex flex-col gap-4 rounded-xl border border-edge bg-surface p-5 sm:p-6"
       >
         {error && (
-          <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-300">
+          <div className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-400 ring-1 ring-inset ring-red-500/25">
             {error}
           </div>
         )}
@@ -122,7 +122,7 @@ export default function NewProjectPage() {
             rows={3}
             value={form.clientAddress}
             onChange={(e) => update("clientAddress", e.target.value)}
-            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-base text-zinc-900 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:focus:ring-zinc-700"
+            className="w-full rounded-lg border border-edge bg-bg px-3 py-2.5 text-base text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
           />
         </div>
 
@@ -162,7 +162,7 @@ export default function NewProjectPage() {
         <button
           type="submit"
           disabled={loading}
-          className="mt-2 h-12 w-full rounded-lg bg-zinc-900 text-base font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+          className="mt-2 h-12 w-full rounded-lg bg-accent text-base font-medium text-white transition-colors hover:bg-accent-2 disabled:opacity-50"
         >
           {loading ? "Creating..." : "Create project"}
         </button>

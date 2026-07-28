@@ -10,7 +10,7 @@ const BAR_COLOR: Record<OverallStatus, string> = {
   on_track: "bg-emerald-500",
   delayed: "bg-amber-500",
   blocked: "bg-red-500",
-  completed: "bg-zinc-400",
+  completed: "bg-fg-subtle",
 };
 
 function ProgressRow({ row }: { row: ProjectProgressRow }) {
@@ -18,10 +18,10 @@ function ProgressRow({ row }: { row: ProjectProgressRow }) {
     <li>
       <Link
         href={`/projects/${row.projectId}`}
-        className="-mx-1 flex flex-col gap-1.5 rounded-lg p-1 hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+        className="-mx-1 flex flex-col gap-1.5 rounded-lg p-1 hover:bg-white/[0.04]"
       >
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-50">{row.projectName}</span>
+          <span className="truncate text-sm font-medium text-fg">{row.projectName}</span>
           <span
             className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${OVERALL_STATUS_COLORS[row.effectiveStatus]}`}
           >
@@ -29,17 +29,17 @@ function ProgressRow({ row }: { row: ProjectProgressRow }) {
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="h-2 flex-1 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+          <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
             <div
               className={`h-full rounded-full ${BAR_COLOR[row.effectiveStatus]}`}
               style={{ width: `${row.percentComplete}%` }}
             />
           </div>
-          <span className="w-9 shrink-0 text-right text-xs text-zinc-500 dark:text-zinc-400">
+          <span className="w-9 shrink-0 text-right font-mono text-xs tabular-nums text-fg-muted">
             {row.percentComplete}%
           </span>
         </div>
-        <div className="text-xs text-zinc-400 dark:text-zinc-500">
+        <div className="text-xs text-fg-subtle">
           {PHASE_LABELS[row.phase]} · {row.completedSteps}/14 steps done
         </div>
       </Link>
@@ -68,16 +68,16 @@ export function ProjectProgressWidget({ initialData }: { initialData: ProjectPro
   }
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900 sm:p-5">
+    <div className="rounded-xl border border-edge bg-surface p-4 sm:p-5">
       <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Project progress</h3>
-        <Link href="/projects" className="text-xs font-medium text-zinc-500 hover:underline dark:text-zinc-400">
+        <h3 className="text-sm font-semibold text-fg">Project progress</h3>
+        <Link href="/projects" className="text-xs font-medium text-fg-muted hover:text-fg hover:underline">
           View all →
         </Link>
       </div>
 
       {data.totalCount === 0 ? (
-        <p className="py-6 text-center text-sm text-zinc-500 dark:text-zinc-400">No active projects.</p>
+        <p className="py-6 text-center text-sm text-fg-muted">No active projects.</p>
       ) : (
         <>
           <ul className="flex flex-col gap-3">
@@ -86,25 +86,25 @@ export function ProjectProgressWidget({ initialData }: { initialData: ProjectPro
             ))}
           </ul>
 
-          {error && <p className="mt-3 text-center text-xs text-red-600 dark:text-red-400">{error}</p>}
+          {error && <p className="mt-3 text-center text-xs text-red-400">{error}</p>}
 
-          <div className="mt-4 flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800">
+          <div className="mt-4 flex items-center justify-between border-t border-edge pt-3">
             <button
               type="button"
               onClick={() => goToPage(data.page - 1)}
               disabled={loading || data.page <= 1}
-              className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-white/[0.04] hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
             >
               ← Previous
             </button>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            <span className="font-mono text-xs tabular-nums text-fg-muted">
               Page {data.page} of {data.totalPages}
             </span>
             <button
               type="button"
               onClick={() => goToPage(data.page + 1)}
               disabled={loading || data.page >= data.totalPages}
-              className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-white/[0.04] hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
             >
               Next →
             </button>

@@ -12,7 +12,7 @@ interface NavItem {
 }
 
 function iconClass(active: boolean) {
-  return active ? "stroke-zinc-900 dark:stroke-zinc-50" : "stroke-zinc-400 dark:stroke-zinc-500";
+  return active ? "stroke-fg" : "stroke-fg-subtle";
 }
 
 const HOME_ICON = (active: boolean) => (
@@ -79,12 +79,13 @@ export function AppShell({
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-screen flex-col bg-bg">
       {/* Desktop top nav */}
-      <header className="hidden border-b border-zinc-200 bg-white sm:block dark:border-zinc-800 dark:bg-zinc-900">
+      <header className="hidden border-b border-edge bg-surface/80 backdrop-blur-sm sm:block">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
           <div className="flex items-center gap-8">
-            <span className="text-base font-semibold text-zinc-900 dark:text-zinc-50">
+            <span className="flex items-center gap-2 text-base font-semibold text-fg">
+              <span className="h-2 w-2 rounded-full bg-accent" />
               SGD Monitoring
             </span>
             <nav className="flex items-center gap-1">
@@ -95,9 +96,7 @@ export function AppShell({
                     key={item.href}
                     href={item.href}
                     className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                      active
-                        ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-50"
-                        : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-50"
+                      active ? "bg-white/[0.06] text-fg" : "text-fg-muted hover:bg-white/[0.04] hover:text-fg"
                     }`}
                   >
                     {item.label}
@@ -108,14 +107,12 @@ export function AppShell({
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
-              <div className="text-sm font-medium text-zinc-900 dark:text-zinc-50">{session.name}</div>
-              <div className="text-xs text-zinc-500 dark:text-zinc-400">
-                {DEPARTMENT_LABELS[session.department]}
-              </div>
+              <div className="text-sm font-medium text-fg">{session.name}</div>
+              <div className="text-xs text-fg-muted">{DEPARTMENT_LABELS[session.department]}</div>
             </div>
             <button
               onClick={handleLogout}
-              className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="rounded-lg border border-edge px-3 py-2 text-sm font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-white/[0.04] hover:text-fg"
             >
               Log out
             </button>
@@ -124,12 +121,12 @@ export function AppShell({
       </header>
 
       {/* Mobile top bar */}
-      <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-4 py-3 sm:hidden dark:border-zinc-800 dark:bg-zinc-900">
-        <span className="text-base font-semibold text-zinc-900 dark:text-zinc-50">SGD Monitoring</span>
-        <button
-          onClick={handleLogout}
-          className="text-sm font-medium text-zinc-500 dark:text-zinc-400"
-        >
+      <header className="flex items-center justify-between border-b border-edge bg-surface/80 px-4 py-3 backdrop-blur-sm sm:hidden">
+        <span className="flex items-center gap-2 text-base font-semibold text-fg">
+          <span className="h-2 w-2 rounded-full bg-accent" />
+          SGD Monitoring
+        </span>
+        <button onClick={handleLogout} className="text-sm font-medium text-fg-muted">
           Log out
         </button>
       </header>
@@ -139,23 +136,13 @@ export function AppShell({
       </main>
 
       {/* Mobile bottom tab bar */}
-      <nav className="fixed inset-x-0 bottom-0 z-10 flex border-t border-zinc-200 bg-white sm:hidden dark:border-zinc-800 dark:bg-zinc-900">
+      <nav className="fixed inset-x-0 bottom-0 z-10 flex border-t border-edge bg-surface/95 backdrop-blur-sm sm:hidden">
         {items.map((item) => {
           const active = pathname.startsWith(item.href);
           return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="flex flex-1 flex-col items-center gap-1 py-2.5"
-            >
+            <Link key={item.href} href={item.href} className="flex flex-1 flex-col items-center gap-1 py-2.5">
               {item.icon(active)}
-              <span
-                className={`text-xs font-medium ${
-                  active ? "text-zinc-900 dark:text-zinc-50" : "text-zinc-400 dark:text-zinc-500"
-                }`}
-              >
-                {item.label}
-              </span>
+              <span className={`text-xs font-medium ${active ? "text-fg" : "text-fg-subtle"}`}>{item.label}</span>
             </Link>
           );
         })}

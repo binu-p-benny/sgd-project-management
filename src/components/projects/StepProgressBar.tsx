@@ -53,17 +53,17 @@ function getStatusDetail(step: ProgressStep): { primary: string; secondary: stri
 }
 
 const ICON_RING: Record<StepStatus, string> = {
-  completed: "bg-emerald-600 border-emerald-600 dark:bg-emerald-500 dark:border-emerald-500",
-  in_progress: "bg-blue-600 border-blue-600 dark:bg-blue-500 dark:border-blue-500",
-  blocked: "bg-red-600 border-red-600 dark:bg-red-500 dark:border-red-500",
-  not_started: "bg-white border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700",
+  completed: "bg-emerald-500 border-emerald-500",
+  in_progress: "bg-blue-500 border-blue-500",
+  blocked: "bg-red-500 border-red-500",
+  not_started: "bg-surface border-edge-2",
 };
 
 const LABEL_COLOR: Record<StepStatus, string> = {
-  completed: "text-emerald-700 dark:text-emerald-400",
-  in_progress: "text-blue-700 dark:text-blue-400",
-  blocked: "text-red-700 dark:text-red-400",
-  not_started: "text-zinc-400 dark:text-zinc-500",
+  completed: "text-emerald-400",
+  in_progress: "text-blue-400",
+  blocked: "text-red-400",
+  not_started: "text-fg-subtle",
 };
 
 function StepIcon({ status }: { status: StepStatus }) {
@@ -105,10 +105,10 @@ export function StepProgressBar({ steps }: { steps: ProgressStep[] }) {
   if (rows.length === 0) return null;
 
   return (
-    <div className="flex flex-col gap-5 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-6">
+    <div className="flex flex-col gap-5 rounded-xl border border-edge bg-surface p-4 sm:p-6">
       {rows.map(({ phase, steps: phaseSteps }) => (
         <div key={phase} className="flex flex-col gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-fg-subtle">
             {PHASE_LABELS[phase]}
           </span>
           <div className="flex items-start">
@@ -126,7 +126,7 @@ export function StepProgressBar({ steps }: { steps: ProgressStep[] }) {
                         <StepIcon status={step.status} />
                       </div>
                       {overdue && (
-                        <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-amber-500 dark:border-zinc-900" />
+                        <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface bg-amber-500" />
                       )}
                     </div>
                     <span
@@ -140,7 +140,7 @@ export function StepProgressBar({ steps }: { steps: ProgressStep[] }) {
                       {primary}
                     </span>
                     {secondary && (
-                      <span className="text-center text-[9px] leading-tight break-words text-zinc-400 sm:text-[10px] dark:text-zinc-500">
+                      <span className="text-center text-[9px] leading-tight break-words text-fg-subtle sm:text-[10px]">
                         {secondary}
                       </span>
                     )}
@@ -148,7 +148,7 @@ export function StepProgressBar({ steps }: { steps: ProgressStep[] }) {
                   {i < phaseSteps.length - 1 && (
                     <div
                       className={`mx-1 mt-[14px] h-0.5 flex-1 sm:mx-2 sm:mt-[18px] ${
-                        step.status === "completed" ? "bg-emerald-600 dark:bg-emerald-500" : "bg-zinc-200 dark:bg-zinc-800"
+                        step.status === "completed" ? "bg-emerald-500" : "bg-white/10"
                       }`}
                     />
                   )}
@@ -158,19 +158,18 @@ export function StepProgressBar({ steps }: { steps: ProgressStep[] }) {
           </div>
         </div>
       ))}
-      <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-zinc-100 pt-3 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-edge pt-3 text-xs text-fg-muted">
         <span className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-emerald-600 dark:bg-emerald-500" /> Completed
+          <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> Completed
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-blue-600 dark:bg-blue-500" /> In progress
+          <span className="h-2.5 w-2.5 rounded-full bg-blue-500" /> In progress
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-red-600 dark:bg-red-500" /> Blocked
+          <span className="h-2.5 w-2.5 rounded-full bg-red-500" /> Blocked
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full border-2 border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900" /> Not
-          started
+          <span className="h-2.5 w-2.5 rounded-full border-2 border-edge-2 bg-surface" /> Not started
         </span>
         <span className="flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-full bg-amber-500" /> Overdue

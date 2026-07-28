@@ -16,8 +16,8 @@ export default async function AdminPage({
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">Admin</h1>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+        <h1 className="text-xl font-semibold text-fg">Admin</h1>
+        <p className="text-sm text-fg-muted">
           Every open step across every department — update on anyone&apos;s behalf.
           {department ? ` Showing ${DEPARTMENT_LABELS[department]}.` : ""} {items.length} open step
           {items.length === 1 ? "" : "s"}
@@ -27,7 +27,7 @@ export default async function AdminPage({
       <AdminFilters />
 
       {items.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-zinc-300 py-10 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+        <p className="rounded-lg border border-dashed border-edge-2 py-10 text-center text-sm text-fg-muted">
           Nothing open right now.
         </p>
       ) : (

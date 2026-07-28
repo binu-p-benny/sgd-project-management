@@ -31,10 +31,10 @@ export const OVERALL_STATUS_LABELS: Record<OverallStatus, string> = {
 };
 
 export const OVERALL_STATUS_COLORS: Record<OverallStatus, string> = {
-  on_track: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-  delayed: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-  blocked: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
-  completed: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300",
+  on_track: "bg-emerald-500/10 text-emerald-400 ring-1 ring-inset ring-emerald-500/25",
+  delayed: "bg-amber-500/10 text-amber-400 ring-1 ring-inset ring-amber-500/25",
+  blocked: "bg-red-500/10 text-red-400 ring-1 ring-inset ring-red-500/25",
+  completed: "bg-white/[0.06] text-fg-muted ring-1 ring-inset ring-white/10",
 };
 
 export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
@@ -51,10 +51,10 @@ export const STEP_STATUS_LABELS: Record<StepStatus, string> = {
 };
 
 export const STEP_STATUS_COLORS: Record<StepStatus, string> = {
-  not_started: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300",
-  in_progress: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
-  blocked: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
-  completed: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+  not_started: "bg-white/[0.06] text-fg-muted ring-1 ring-inset ring-white/10",
+  in_progress: "bg-blue-500/10 text-blue-400 ring-1 ring-inset ring-blue-500/25",
+  blocked: "bg-red-500/10 text-red-400 ring-1 ring-inset ring-red-500/25",
+  completed: "bg-emerald-500/10 text-emerald-400 ring-1 ring-inset ring-emerald-500/25",
 };
 
 export const BLOCKED_REASON_LABELS: Record<BlockedReason, string> = {

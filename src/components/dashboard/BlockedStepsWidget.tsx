@@ -5,13 +5,11 @@ import type { BlockedReason } from "@prisma/client";
 
 export function BlockedStepsWidget({ data }: { data: BlockedStepRow[] }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900 sm:p-5">
-      <h3 className="mb-4 text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-        Currently blocked ({data.length})
-      </h3>
+    <div className="rounded-xl border border-edge bg-surface p-4 sm:p-5">
+      <h3 className="mb-4 text-sm font-semibold text-fg">Currently blocked ({data.length})</h3>
 
       {data.length === 0 ? (
-        <p className="py-6 text-center text-sm text-zinc-500 dark:text-zinc-400">Nothing is blocked right now.</p>
+        <p className="py-6 text-center text-sm text-fg-muted">Nothing is blocked right now.</p>
       ) : (
         <>
           {/* Mobile: stacked cards */}
@@ -20,21 +18,19 @@ export function BlockedStepsWidget({ data }: { data: BlockedStepRow[] }) {
               <Link
                 key={row.stepId}
                 href={`/projects/${row.projectId}`}
-                className="flex flex-col gap-1 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800"
+                className="flex flex-col gap-1 rounded-lg border border-edge p-3 transition-colors hover:border-edge-2"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">{row.projectName}</span>
-                  <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/40 dark:text-red-300">
+                  <span className="text-sm font-medium text-fg">{row.projectName}</span>
+                  <span className="rounded-full bg-red-500/10 px-2 py-0.5 font-mono text-xs font-medium tabular-nums text-red-400 ring-1 ring-inset ring-red-500/25">
                     {row.daysBlocked}d
                   </span>
                 </div>
-                <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                <div className="text-xs text-fg-muted">
                   <span className="font-mono">{row.stepCode}</span> {row.stepName}
                 </div>
                 {row.blockedReason && (
-                  <div className="text-xs text-zinc-600 dark:text-zinc-300">
-                    {BLOCKED_REASON_LABELS[row.blockedReason as BlockedReason]}
-                  </div>
+                  <div className="text-xs text-fg-muted">{BLOCKED_REASON_LABELS[row.blockedReason as BlockedReason]}</div>
                 )}
               </Link>
             ))}
@@ -43,7 +39,7 @@ export function BlockedStepsWidget({ data }: { data: BlockedStepRow[] }) {
           {/* Desktop: table */}
           <div className="hidden overflow-x-auto sm:block">
             <table className="w-full text-left text-sm">
-              <thead className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              <thead className="text-[11px] uppercase tracking-wider text-fg-subtle">
                 <tr>
                   <th className="py-2 pr-4 font-medium">Project</th>
                   <th className="py-2 pr-4 font-medium">Step</th>
@@ -51,23 +47,22 @@ export function BlockedStepsWidget({ data }: { data: BlockedStepRow[] }) {
                   <th className="py-2 pr-4 text-right font-medium">Blocked</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+              <tbody className="divide-y divide-edge">
                 {data.map((row) => (
                   <tr key={row.stepId}>
                     <td className="py-2 pr-4">
-                      <Link href={`/projects/${row.projectId}`} className="text-zinc-900 hover:underline dark:text-zinc-50">
+                      <Link href={`/projects/${row.projectId}`} className="text-fg hover:underline">
                         {row.projectName}
                       </Link>
                     </td>
-                    <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-300">
-                      <span className="font-mono text-xs text-zinc-400 dark:text-zinc-500">{row.stepCode}</span>{" "}
-                      {row.stepName}
+                    <td className="py-2 pr-4 text-fg-muted">
+                      <span className="font-mono text-xs text-fg-subtle">{row.stepCode}</span> {row.stepName}
                     </td>
-                    <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-300">
+                    <td className="py-2 pr-4 text-fg-muted">
                       {row.blockedReason ? BLOCKED_REASON_LABELS[row.blockedReason as BlockedReason] : "—"}
                     </td>
                     <td className="py-2 pr-4 text-right">
-                      <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/40 dark:text-red-300">
+                      <span className="rounded-full bg-red-500/10 px-2 py-0.5 font-mono text-xs font-medium tabular-nums text-red-400 ring-1 ring-inset ring-red-500/25">
                         {row.daysBlocked}d
                       </span>
                     </td>

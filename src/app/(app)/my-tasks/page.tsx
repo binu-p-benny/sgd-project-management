@@ -11,15 +11,15 @@ export default async function MyTasksPage() {
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">My Tasks</h1>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+        <h1 className="text-xl font-semibold text-fg">My Tasks</h1>
+        <p className="text-sm text-fg-muted">
           {department ? DEPARTMENT_LABELS[department] : "All departments"} · {items.length} open step
           {items.length === 1 ? "" : "s"}
         </p>
       </div>
 
       {items.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-zinc-300 py-10 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+        <p className="rounded-lg border border-dashed border-edge-2 py-10 text-center text-sm text-fg-muted">
           Nothing open right now.
         </p>
       ) : (

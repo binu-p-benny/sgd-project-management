@@ -43,13 +43,13 @@ const DATE_FIELDS: { key: "plannedStartDate" | "plannedEndDate" | "actualStartDa
 ];
 
 const btnPrimary =
-  "flex-1 flex h-11 items-center justify-center rounded-lg bg-zinc-900 px-3 text-sm font-medium text-white disabled:opacity-40 dark:bg-zinc-50 dark:text-zinc-900";
+  "flex-1 flex h-11 items-center justify-center rounded-lg bg-accent px-3 text-sm font-medium text-white transition-colors hover:bg-accent-2 disabled:opacity-40";
 const btnSecondary =
-  "flex-1 flex h-11 items-center justify-center rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-700 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300";
+  "flex-1 flex h-11 items-center justify-center rounded-lg border border-edge px-3 text-sm font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-white/[0.04] hover:text-fg disabled:opacity-40";
 const selectClass =
-  "h-11 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50";
+  "h-11 w-full rounded-lg border border-edge bg-bg px-3 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30";
 const textareaClass =
-  "w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50";
+  "w-full rounded-lg border border-edge bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30";
 
 type Panel = "none" | "block" | "complete1a" | "dates";
 
@@ -171,21 +171,21 @@ export function TaskCard({
   const canStartOrComplete = item.gateBlockedBy === null || item.gateBlockedBy.length === 0;
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="flex flex-col gap-3 rounded-xl border border-edge bg-surface p-4">
       <div className="flex items-start justify-between gap-2">
         <div>
           <Link
             href={`/projects/${item.project.id}`}
-            className="text-xs font-medium text-zinc-500 hover:underline dark:text-zinc-400"
+            className="text-xs font-medium text-fg-muted hover:text-fg hover:underline"
           >
             {item.project.name}
           </Link>
           <div className="mt-0.5">
-            <span className="font-mono text-xs text-zinc-400 dark:text-zinc-500">{item.stepCode}</span>{" "}
-            <span className="font-medium text-zinc-900 dark:text-zinc-50">{item.stepName}</span>
+            <span className="font-mono text-xs text-fg-subtle">{item.stepCode}</span>{" "}
+            <span className="font-medium text-fg">{item.stepName}</span>
           </div>
           {showDepartment && (
-            <span className="mt-1 inline-block rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+            <span className="mt-1 inline-block rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] font-medium text-fg-muted ring-1 ring-inset ring-white/10">
               {DEPARTMENT_LABELS[item.owningDepartment]}
             </span>
           )}
@@ -195,19 +195,17 @@ export function TaskCard({
             {STEP_STATUS_LABELS[item.status]}
           </span>
           {item.overrun && item.status !== "blocked" && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+            <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-400 ring-1 ring-inset ring-amber-500/25">
               Overdue
             </span>
           )}
         </div>
       </div>
 
-      <div className="text-xs text-zinc-500 dark:text-zinc-400">
-        Planned finish: {formatDate(item.plannedEndDate)}
-      </div>
+      <div className="text-xs text-fg-muted">Planned finish: {formatDate(item.plannedEndDate)}</div>
 
       {item.status === "blocked" && item.blockedReason && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-900/30 dark:text-red-300">
+        <div className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-400 ring-1 ring-inset ring-red-500/25">
           <div className="font-medium">
             {BLOCKED_REASON_LABELS[item.blockedReason as keyof typeof BLOCKED_REASON_LABELS]}
             {item.daysBlocked !== null && ` · blocked ${item.daysBlocked}d`}
@@ -217,32 +215,32 @@ export function TaskCard({
       )}
 
       {item.isDerived && item.derivedSummary && (
-        <div className="rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+        <div className="rounded-lg bg-white/[0.06] px-3 py-2 text-xs text-fg-muted">
           Auto-computed from procurement —{" "}
           {item.derivedSummary.map((d) => `${d.itemType}: ${d.done ? "done" : "pending"}`).join(", ")}
         </div>
       )}
 
       {item.notes && (
-        <div className="rounded-lg bg-zinc-50 px-3 py-2 text-xs italic text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+        <div className="rounded-lg bg-white/[0.06] px-3 py-2 text-xs italic text-fg-muted">
           &ldquo;{item.notes}&rdquo;
         </div>
       )}
 
       {!item.isDerived && !canStartOrComplete && item.gateBlockedBy && (
-        <div className="rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+        <div className="rounded-lg bg-white/[0.06] px-3 py-2 text-xs text-fg-muted">
           Waiting on: {item.gateBlockedBy.join(", ")}
         </div>
       )}
 
       {error && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-900/30 dark:text-red-300">
+        <div className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-400 ring-1 ring-inset ring-red-500/25">
           {error}
         </div>
       )}
 
       {panel === "block" && (
-        <div className="flex flex-col gap-2 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+        <div className="flex flex-col gap-2 border-t border-edge pt-3">
           <select
             className={selectClass}
             value={blockedReason}
@@ -274,8 +272,8 @@ export function TaskCard({
       )}
 
       {panel === "complete1a" && (
-        <div className="flex flex-col gap-2 border-t border-zinc-100 pt-3 dark:border-zinc-800">
-          <label className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
+        <div className="flex flex-col gap-2 border-t border-edge pt-3">
+          <label className="text-xs font-medium text-fg-muted">
             Visit urgency (sets 1B&apos;s schedule)
           </label>
           <select
@@ -308,22 +306,22 @@ export function TaskCard({
       )}
 
       {panel === "dates" && (
-        <div className="flex flex-col gap-2 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+        <div className="flex flex-col gap-2 border-t border-edge pt-3">
           <div className="grid grid-cols-2 gap-2">
             {DATE_FIELDS.map(({ key, label }) => (
               <div key={key} className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{label}</label>
+                <label className="text-xs font-medium text-fg-muted">{label}</label>
                 <input
                   type="date"
                   value={dateFields[key]}
                   onChange={(e) => setDateFields((prev) => ({ ...prev, [key]: e.target.value }))}
                   onClick={openPicker}
-                  className="h-11 w-full rounded-lg border border-zinc-300 bg-white px-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+                  className="h-11 w-full rounded-lg border border-edge bg-bg px-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
                 />
               </div>
             ))}
           </div>
-          <p className="text-xs text-zinc-400 dark:text-zinc-500">
+          <p className="text-xs text-fg-subtle">
             Not-yet-completed downstream steps will be rescheduled automatically.
           </p>
           <textarea
@@ -346,7 +344,7 @@ export function TaskCard({
 
       {panel === "none" && canEditDates && (
         <button
-          className="flex h-9 items-center justify-center rounded-lg border border-zinc-200 px-3 text-xs font-medium text-zinc-500 dark:border-zinc-800 dark:text-zinc-400"
+          className="flex h-9 items-center justify-center rounded-lg border border-edge px-3 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:text-fg"
           onClick={() => setPanel("dates")}
         >
           Edit dates

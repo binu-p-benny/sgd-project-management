@@ -60,25 +60,25 @@ export function PaymentEditor({
   if (!canEdit) {
     return (
       <div>
-        <div className="text-zinc-400 dark:text-zinc-500">Payment</div>
-        <div className="font-medium text-zinc-900 dark:text-zinc-50">
+        <div className="text-fg-subtle">Payment</div>
+        <div className="font-medium text-fg">
           {PAYMENT_STATUS_LABELS[paymentStatus]} ({formatINR(amountReceived)} received)
         </div>
-        {notes && <div className="mt-1 text-xs italic text-zinc-500 dark:text-zinc-400">&ldquo;{notes}&rdquo;</div>}
+        {notes && <div className="mt-1 text-xs italic text-fg-muted">&ldquo;{notes}&rdquo;</div>}
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="text-zinc-400 dark:text-zinc-500">Payment</div>
-      {error && <div className="text-xs text-red-600 dark:text-red-400">{error}</div>}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+      <div className="text-fg-subtle">Payment</div>
+      {error && <div className="text-xs text-red-400">{error}</div>}
+      <div className="flex min-w-0 flex-col gap-2">
         <select
           value={paymentStatus}
           disabled={saving === "paymentStatus"}
           onChange={(e) => patch({ paymentStatus: e.target.value }, "paymentStatus")}
-          className="h-11 rounded-lg border border-zinc-300 bg-white px-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+          className="h-11 w-full min-w-0 rounded-lg border border-edge bg-bg px-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-50"
         >
           {Object.entries(PAYMENT_STATUS_LABELS).map(([value, label]) => (
             <option key={value} value={value}>
@@ -86,7 +86,7 @@ export function PaymentEditor({
             </option>
           ))}
         </select>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <input
             type="number"
             inputMode="numeric"
@@ -101,9 +101,9 @@ export function PaymentEditor({
                 patch({ amountReceived: value }, "amountReceived");
               }
             }}
-            className="h-11 w-32 rounded-lg border border-zinc-300 bg-white px-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+            className="h-11 w-24 min-w-0 flex-1 rounded-lg border border-edge bg-bg px-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-50"
           />
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">of {formatINR(finalCost)}</span>
+          <span className="shrink-0 text-xs text-fg-muted">of {formatINR(finalCost)}</span>
         </div>
         <textarea
           rows={2}
@@ -114,7 +114,7 @@ export function PaymentEditor({
           onBlur={() => {
             if (notesDraft !== (notes ?? "")) patch({ notes: notesDraft || null }, "notes");
           }}
-          className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50 sm:max-w-xs"
+          className="w-full min-w-0 resize-none rounded-lg border border-edge bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-50"
         />
       </div>
     </div>

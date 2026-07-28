@@ -79,10 +79,10 @@ export default async function ProjectsPage({
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">Projects</h1>
+        <h1 className="text-xl font-semibold text-fg">Projects</h1>
         <Link
           href="/projects/new"
-          className="flex h-11 items-center justify-center rounded-lg bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+          className="flex h-11 items-center justify-center rounded-lg bg-accent px-4 text-sm font-medium text-white transition-colors hover:bg-accent-2"
         >
           + New project
         </Link>
@@ -93,21 +93,18 @@ export default async function ProjectsPage({
       {activeFilters.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 text-sm">
           {activeFilters.map(([key, value]) => (
-            <span
-              key={key}
-              className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
-            >
+            <span key={key} className="rounded-full bg-white/[0.06] px-3 py-1 text-xs font-medium text-fg-muted ring-1 ring-inset ring-white/10">
               {ACTIVE_FILTER_LABEL[key]?.(value as string) ?? `${key}: ${value}`}
             </span>
           ))}
-          <Link href="/projects" className="text-xs font-medium text-zinc-500 underline dark:text-zinc-400">
+          <Link href="/projects" className="text-xs font-medium text-fg-muted underline hover:text-fg">
             Clear filters
           </Link>
         </div>
       )}
 
       {projects.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-zinc-300 py-10 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+        <p className="rounded-lg border border-dashed border-edge-2 py-10 text-center text-sm text-fg-muted">
           No projects match these filters.
         </p>
       ) : (
@@ -118,34 +115,30 @@ export default async function ProjectsPage({
               <Link
                 key={project.id}
                 href={`/projects/${project.id}`}
-                className="flex flex-col gap-2 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
+                className="flex flex-col gap-2 rounded-xl border border-edge bg-surface p-4 transition-colors hover:border-edge-2"
               >
                 <div className="flex items-start justify-between gap-2">
-                  <span className="font-medium text-zinc-900 dark:text-zinc-50">{project.name}</span>
+                  <span className="font-medium text-fg">{project.name}</span>
                   <span
                     className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${OVERALL_STATUS_COLORS[project.effectiveStatus]}`}
                   >
                     {OVERALL_STATUS_LABELS[project.effectiveStatus]}
                   </span>
                 </div>
-                <div className="text-sm text-zinc-500 dark:text-zinc-400">{project.clientName}</div>
+                <div className="text-sm text-fg-muted">{project.clientName}</div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-zinc-600 dark:text-zinc-300">{PHASE_LABELS[project.currentPhase]}</span>
-                  <span className="text-zinc-500 dark:text-zinc-400">
-                    {formatINR(Number(project.finalCost))}
-                  </span>
+                  <span className="text-fg-muted">{PHASE_LABELS[project.currentPhase]}</span>
+                  <span className="font-mono tabular-nums text-fg-muted">{formatINR(Number(project.finalCost))}</span>
                 </div>
-                <div className="text-xs text-zinc-400 dark:text-zinc-500">
-                  Payment: {PAYMENT_STATUS_LABELS[project.paymentStatus]}
-                </div>
+                <div className="text-xs text-fg-subtle">Payment: {PAYMENT_STATUS_LABELS[project.paymentStatus]}</div>
               </Link>
             ))}
           </div>
 
           {/* Desktop: table */}
-          <div className="hidden overflow-x-auto rounded-xl border border-zinc-200 sm:block dark:border-zinc-800">
+          <div className="hidden overflow-x-auto rounded-xl border border-edge sm:block">
             <table className="w-full text-left text-sm">
-              <thead className="bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+              <thead className="bg-surface text-[11px] uppercase tracking-wider text-fg-subtle">
                 <tr>
                   <th className="px-4 py-3 font-medium">Project</th>
                   <th className="px-4 py-3 font-medium">Client</th>
@@ -155,19 +148,16 @@ export default async function ProjectsPage({
                   <th className="px-4 py-3 font-medium text-right">Final cost</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+              <tbody className="divide-y divide-edge">
                 {projects.map((project) => (
-                  <tr
-                    key={project.id}
-                    className="cursor-pointer bg-white hover:bg-zinc-50 dark:bg-zinc-900 dark:hover:bg-zinc-800/60"
-                  >
+                  <tr key={project.id} className="cursor-pointer bg-surface transition-colors hover:bg-surface-2">
                     <td className="px-4 py-3">
-                      <Link href={`/projects/${project.id}`} className="font-medium text-zinc-900 hover:underline dark:text-zinc-50">
+                      <Link href={`/projects/${project.id}`} className="font-medium text-fg hover:underline">
                         {project.name}
                       </Link>
                     </td>
-                    <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">{project.clientName}</td>
-                    <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">{PHASE_LABELS[project.currentPhase]}</td>
+                    <td className="px-4 py-3 text-fg-muted">{project.clientName}</td>
+                    <td className="px-4 py-3 text-fg-muted">{PHASE_LABELS[project.currentPhase]}</td>
                     <td className="px-4 py-3">
                       <span
                         className={`rounded-full px-2 py-0.5 text-xs font-medium ${OVERALL_STATUS_COLORS[project.effectiveStatus]}`}
@@ -175,10 +165,8 @@ export default async function ProjectsPage({
                         {OVERALL_STATUS_LABELS[project.effectiveStatus]}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">
-                      {PAYMENT_STATUS_LABELS[project.paymentStatus]}
-                    </td>
-                    <td className="px-4 py-3 text-right text-zinc-600 dark:text-zinc-300">
+                    <td className="px-4 py-3 text-fg-muted">{PAYMENT_STATUS_LABELS[project.paymentStatus]}</td>
+                    <td className="px-4 py-3 text-right font-mono tabular-nums text-fg-muted">
                       {formatINR(Number(project.finalCost))}
                     </td>
                   </tr>

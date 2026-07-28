@@ -7,7 +7,7 @@ import { DEPARTMENT_LABELS, STEP_STATUS_LABELS } from "@/lib/labels";
 import type { StepStatus } from "@prisma/client";
 
 const STATUS_DOT: Record<StepStatus, string> = {
-  not_started: "bg-zinc-300 dark:bg-zinc-600",
+  not_started: "bg-white/20",
   in_progress: "bg-blue-500",
   blocked: "bg-red-500",
   completed: "bg-emerald-500",
@@ -31,21 +31,18 @@ function ActivityRow({ row }: { row: RecentActivityRow }) {
     <li>
       <Link
         href={`/projects/${row.projectId}`}
-        className="-mx-1 flex items-start gap-3 rounded-lg p-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+        className="-mx-1 flex items-start gap-3 rounded-lg p-1.5 hover:bg-white/[0.04]"
       >
         <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[row.newStatus]}`} />
         <div className="min-w-0 flex-1">
-          <p className="text-sm text-zinc-700 dark:text-zinc-300">
-            <span className="font-medium text-zinc-900 dark:text-zinc-50">{row.changedByName}</span> marked{" "}
-            <span className="font-medium text-zinc-900 dark:text-zinc-50">{row.stepName}</span> as{" "}
-            {STEP_STATUS_LABELS[row.newStatus]}
+          <p className="text-sm text-fg-muted">
+            <span className="font-medium text-fg">{row.changedByName}</span> marked{" "}
+            <span className="font-medium text-fg">{row.stepName}</span> as {STEP_STATUS_LABELS[row.newStatus]}
           </p>
-          <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+          <p className="truncate text-xs text-fg-subtle">
             {row.projectName} · {DEPARTMENT_LABELS[row.department]} · {formatRelativeTime(row.changedAt)}
           </p>
-          {row.reason && (
-            <p className="mt-0.5 truncate text-xs italic text-zinc-400 dark:text-zinc-500">{row.reason}</p>
-          )}
+          {row.reason && <p className="mt-0.5 truncate text-xs italic text-fg-subtle">{row.reason}</p>}
         </div>
       </Link>
     </li>
@@ -83,11 +80,11 @@ export function RecentActivityWidget({
   }
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900 sm:p-5">
-      <h3 className="mb-4 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Recent activity</h3>
+    <div className="rounded-xl border border-edge bg-surface p-4 sm:p-5">
+      <h3 className="mb-4 text-sm font-semibold text-fg">Recent activity</h3>
 
       {rows.length === 0 ? (
-        <p className="py-6 text-center text-sm text-zinc-500 dark:text-zinc-400">No activity yet.</p>
+        <p className="py-6 text-center text-sm text-fg-muted">No activity yet.</p>
       ) : (
         <>
           <ul className="flex flex-col gap-1">
@@ -96,7 +93,7 @@ export function RecentActivityWidget({
             ))}
           </ul>
 
-          {error && <p className="mt-3 text-center text-xs text-red-600 dark:text-red-400">{error}</p>}
+          {error && <p className="mt-3 text-center text-xs text-red-400">{error}</p>}
 
           {cursor && (
             <div className="mt-3 flex justify-center">
@@ -104,7 +101,7 @@ export function RecentActivityWidget({
                 type="button"
                 onClick={loadMore}
                 disabled={loading}
-                className="rounded-lg border border-zinc-200 px-4 py-2 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                className="rounded-lg border border-edge px-4 py-2 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-white/[0.04] hover:text-fg disabled:opacity-50"
               >
                 {loading ? "Loading…" : "Load more"}
               </button>

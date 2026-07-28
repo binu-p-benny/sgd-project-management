@@ -19,7 +19,7 @@ export default async function EditProjectPage({
 
   return (
     <div className="mx-auto flex max-w-lg flex-col gap-5">
-      <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">Edit project</h1>
+      <h1 className="text-xl font-semibold text-fg">Edit project</h1>
       <EditProjectForm
         projectId={project.id}
         initial={{

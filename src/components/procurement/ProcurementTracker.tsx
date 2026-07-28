@@ -123,7 +123,7 @@ function ItemCard({
     return (
       <label
         key={dateKey}
-        className="flex h-11 items-center gap-3 rounded-lg border border-zinc-200 px-3 dark:border-zinc-800"
+        className="flex h-11 items-center gap-3 rounded-lg border border-edge px-3"
       >
         <span className="relative inline-flex h-5 w-5 shrink-0">
           <input
@@ -132,7 +132,7 @@ function ItemCard({
             disabled={!editable || saving === dateKey}
             onClick={(e) => editable && handleCheckboxClick(e, dateKey, checked)}
             onChange={() => {}}
-            className="h-5 w-5 rounded border-zinc-300 accent-zinc-900 dark:accent-zinc-50"
+            className="h-5 w-5 rounded border-edge-2 accent-accent"
           />
           {/* Invisible but real-sized (not clipped to 1px, unlike sr-only) — Chromium
               won't anchor showPicker()'s popup to an element with no meaningful box.
@@ -149,7 +149,7 @@ function ItemCard({
             className="absolute inset-0 h-5 w-5 pointer-events-none opacity-0"
           />
         </span>
-        <span className="text-sm text-zinc-700 dark:text-zinc-300">
+        <span className="text-sm text-fg-muted">
           {label}
           {item[dateKey] ? ` · ${formatDate(item[dateKey] as string | null)}` : ""}
         </span>
@@ -183,15 +183,13 @@ function ItemCard({
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="flex flex-col gap-3 rounded-xl border border-edge bg-surface p-4">
       <div className="flex items-center justify-between">
-        <span className="font-medium capitalize text-zinc-900 dark:text-zinc-50">{item.itemType}</span>
+        <span className="font-medium capitalize text-fg">{item.itemType}</span>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            Expected: {formatDate(item.expectedArrivalDate)}
-          </span>
+          <span className="text-xs text-fg-muted">Expected: {formatDate(item.expectedArrivalDate)}</span>
           {item.overrun && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+            <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-400 ring-1 ring-inset ring-amber-500/25">
               Overdue
             </span>
           )}
@@ -199,7 +197,7 @@ function ItemCard({
       </div>
 
       {error && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-900/30 dark:text-red-300">
+        <div className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-400 ring-1 ring-inset ring-red-500/25">
           {error}
         </div>
       )}
@@ -208,7 +206,7 @@ function ItemCard({
 
       {canEdit ? (
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Payment details</label>
+          <label className="text-xs font-medium text-fg-muted">Payment details</label>
           <input
             type="text"
             placeholder="e.g. NEFT ref #12345, ₹50,000"
@@ -216,20 +214,20 @@ function ItemCard({
             disabled={saving === "paymentDetails"}
             onChange={(e) => setPaymentDetailsDraft(e.target.value)}
             onBlur={handlePaymentDetailsBlur}
-            className="h-11 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+            className="h-11 w-full rounded-lg border border-edge bg-bg px-3 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-50"
           />
         </div>
       ) : (
         item.paymentDetails && (
           <div className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Payment details</span>
-            <span className="text-sm text-zinc-700 dark:text-zinc-300">{item.paymentDetails}</span>
+            <span className="text-xs font-medium text-fg-muted">Payment details</span>
+            <span className="text-sm text-fg-muted">{item.paymentDetails}</span>
           </div>
         )
       )}
 
       <div className="flex flex-col gap-1">
-        <label className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Order confirmed</label>
+        <label className="text-xs font-medium text-fg-muted">Order confirmed</label>
         {canEdit ? (
           <input
             type="date"
@@ -237,10 +235,10 @@ function ItemCard({
             disabled={saving === "orderConfirmedAt"}
             onChange={(e) => handleDateChange("orderConfirmedAt", e.target.value)}
             onClick={openPicker}
-            className="h-11 w-full rounded-lg border border-zinc-300 bg-white px-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+            className="h-11 w-full rounded-lg border border-edge bg-bg px-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-50"
           />
         ) : (
-          <span className="text-sm text-zinc-700 dark:text-zinc-300">{formatDate(item.orderConfirmedAt)}</span>
+          <span className="text-sm text-fg-muted">{formatDate(item.orderConfirmedAt)}</span>
         )}
       </div>
 
@@ -248,7 +246,7 @@ function ItemCard({
 
       {canEdit ? (
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Note</label>
+          <label className="text-xs font-medium text-fg-muted">Note</label>
           <textarea
             rows={2}
             placeholder="Note (optional)"
@@ -256,12 +254,12 @@ function ItemCard({
             disabled={saving === "notes"}
             onChange={(e) => setNotesDraft(e.target.value)}
             onBlur={handleNotesBlur}
-            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+            className="w-full rounded-lg border border-edge bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-50"
           />
         </div>
       ) : (
         item.notes && (
-          <div className="rounded-lg bg-zinc-50 px-3 py-2 text-xs italic text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+          <div className="rounded-lg bg-white/[0.06] px-3 py-2 text-xs italic text-fg-muted">
             &ldquo;{item.notes}&rdquo;
           </div>
         )
@@ -284,7 +282,7 @@ export function ProcurementTracker({
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Procurement</h2>
+      <h2 className="text-lg font-semibold text-fg">Procurement</h2>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {items.map((item) => (
           <ItemCard key={item.id} item={item} canEdit={canEdit} canEditRequirement={canEdit || canEditRequirement} />

@@ -1,67 +1,83 @@
 @import "tailwindcss";
 
+/* Linear-style dark slate theme — single fixed theme, no light mode */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0b0f17;
+  --foreground: #e7eaf0;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+
+  /* Surfaces */
+  --color-bg: #0b0f17;
+  --color-surface: #161c24;
+  --color-surface-2: #1b2330;
+  --color-surface-3: #212a39;
+
+  /* Borders */
+  --color-edge: rgba(255, 255, 255, 0.08);
+  --color-edge-2: rgba(255, 255, 255, 0.14);
+
+  /* Text */
+  --color-fg: #e7eaf0;
+  --color-fg-muted: #99a2b3;
+  --color-fg-subtle: #6b7482;
+
+  /* Accent */
+  --color-accent: #6e79f7;
+  --color-accent-2: #8b93ff;
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-/* Chart palette — see dataviz skill references/palette.md (validated default instance) */
+/* Chart palette — dark slate, tuned to sit on --color-surface */
 :root {
-  --chart-surface: #fcfcfb;
-  --chart-text-primary: #0b0b0b;
-  --chart-text-secondary: #52514e;
-  --chart-muted: #898781;
-  --chart-grid: #e1e0d9;
-  --chart-axis: #c3c2b7;
-  --chart-series-1: #2a78d6; /* blue */
-  --chart-series-2: #1baf7a; /* aqua */
-  --chart-series-3: #eda100; /* yellow */
-  --chart-series-4: #008300; /* green */
-  --chart-series-5: #4a3aa7; /* violet */
-  --chart-series-6: #e34948; /* red */
-  --chart-series-7: #e87ba4; /* magenta */
-  --chart-series-8: #eb6834; /* orange */
-  --chart-status-good: #0ca30c;
-  --chart-status-warning: #fab219;
-  --chart-status-serious: #ec835a;
-  --chart-status-critical: #d03b3b;
-  --chart-diverging-pos: #e34948;
-  --chart-diverging-neg: #2a78d6;
+  --chart-surface: #161c24;
+  --chart-text-primary: #e7eaf0;
+  --chart-text-secondary: #99a2b3;
+  --chart-muted: #6b7482;
+  --chart-grid: rgba(255, 255, 255, 0.06);
+  --chart-axis: rgba(255, 255, 255, 0.12);
+  --chart-series-1: #6e79f7;
+  --chart-series-2: #2dd4bf;
+  --chart-series-3: #f0b429;
+  --chart-series-4: #34d399;
+  --chart-series-5: #c084fc;
+  --chart-series-6: #f87171;
+  --chart-series-7: #f472b6;
+  --chart-series-8: #fb923c;
+  --chart-status-good: #34d399;
+  --chart-status-warning: #f0b429;
+  --chart-status-serious: #fb923c;
+  --chart-status-critical: #f87171;
+  --chart-diverging-pos: #f87171;
+  --chart-diverging-neg: #6e79f7;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-
-    --chart-surface: #1a1a19;
-    --chart-text-primary: #ffffff;
-    --chart-text-secondary: #c3c2b7;
-    --chart-muted: #898781;
-    --chart-grid: #2c2c2a;
-    --chart-axis: #383835;
-    --chart-series-1: #3987e5;
-    --chart-series-2: #199e70;
-    --chart-series-3: #c98500;
-    --chart-series-4: #008300;
-    --chart-series-5: #9085e9;
-    --chart-series-6: #e66767;
-    --chart-series-7: #d55181;
-    --chart-series-8: #d95926;
-    --chart-diverging-pos: #e66767;
-    --chart-diverging-neg: #3987e5;
-  }
+html {
+  color-scheme: dark;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+/* Thin, unobtrusive scrollbars to match the dark slate surfaces */
+* {
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.14);
+  border-radius: 9999px;
 }
