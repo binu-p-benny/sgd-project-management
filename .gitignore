@@ -36,6 +36,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# database dumps — may contain live client data, never commit
+*.dump
+*.sql.gz
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

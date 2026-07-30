@@ -10,6 +10,7 @@ import {
   BLOCKED_REASON_LABELS,
   BLOCKED_REASON_OPTIONS,
   DEPARTMENT_LABELS,
+  PHASE_LABELS,
 } from "@/lib/labels";
 
 function formatDate(iso: string | null): string {
@@ -46,24 +47,47 @@ const btnPrimary =
   "flex-1 flex h-11 items-center justify-center rounded-lg bg-accent px-3 text-sm font-medium text-white transition-colors hover:bg-accent-2 disabled:opacity-40";
 const btnSecondary =
   "flex-1 flex h-11 items-center justify-center rounded-lg border border-edge px-3 text-sm font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-white/[0.04] hover:text-fg disabled:opacity-40";
+const btnAdminSmall =
+  "flex flex-1 h-9 items-center justify-center rounded-lg border border-edge px-3 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:text-fg";
 const selectClass =
   "h-11 w-full rounded-lg border border-edge bg-bg px-3 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30";
 const textareaClass =
   "w-full rounded-lg border border-edge bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30";
 
-type Panel = "none" | "block" | "complete1a" | "dates";
+type Panel = "none" | "block" | "complete1a" | "dates" | "revert";
+
+interface RevertPlan {
+  step: { stepCode: string; stepName: string; status: keyof typeof STEP_STATUS_LABELS };
+  toStatus: keyof typeof STEP_STATUS_LABELS;
+  cascade: { stepCode: string; stepName: string; status: keyof typeof STEP_STATUS_LABELS }[];
+  procurementReset: { stepCodes: string[]; clears: string[]; fullReset: boolean } | null;
+  projectDataClears: string[];
+  clearsStepNotes: boolean;
+  needsConsent: boolean;
+  phaseChange: { from: string; to: string } | null;
+}
+
+/** "2A", "2A and 2D1", "2A, 2D1 and 2F" */
+function formatStepList(codes: string[]): string {
+  if (codes.length <= 1) return codes.join("");
+  return `${codes.slice(0, -1).join(", ")} and ${codes[codes.length - 1]}`;
+}
 
 export function TaskCard({
   item,
   showDepartment = false,
   canEditDates = false,
+  canRevert = false,
 }: {
   item: MyTaskItem;
   showDepartment?: boolean;
   canEditDates?: boolean;
+  canRevert?: boolean;
 }) {
   const router = useRouter();
   const [panel, setPanel] = useState<Panel>("none");
+  const [revertPlan, setRevertPlan] = useState<RevertPlan | null>(null);
+  const [clearProcurement, setClearProcurement] = useState(false);
   const [blockedReason, setBlockedReason] = useState("");
   const [blockedNote, setBlockedNote] = useState("");
   const [visitUrgency, setVisitUrgency] = useState("");
@@ -137,6 +161,61 @@ export function TaskCard({
       return;
     }
     submit({ status: "completed", visitUrgency, notes: note || undefined });
+  }
+
+  // The preview is fetched rather than precomputed for every card, since a revert's blast
+  // radius depends on the whole project's live dependency graph and only matters once asked for.
+  async function openRevert() {
+    setPanel("revert");
+    setRevertPlan(null);
+    setClearProcurement(false);
+    setError(null);
+    setNote("");
+    try {
+      const res = await fetch(`/api/phase-steps/${item.id}/revert`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof data.error === "string" ? data.error : "Could not work out what this would affect");
+        return;
+      }
+      setRevertPlan(data as RevertPlan);
+    } catch {
+      setError("Could not reach the server");
+    }
+  }
+
+  async function confirmRevert() {
+    if (!note.trim()) {
+      setError("A reason is required — it goes on the step's history");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/phase-steps/${item.id}/revert`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason: note.trim(),
+          ...(clearProcurement ? { clearDerivedProcurement: true } : {}),
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(typeof data.error === "string" ? data.error : "Revert failed");
+        setSubmitting(false);
+        return;
+      }
+      setPanel("none");
+      setNote("");
+      setRevertPlan(null);
+      setClearProcurement(false);
+      router.refresh();
+      setSubmitting(false);
+    } catch {
+      setError("Could not reach the server");
+      setSubmitting(false);
+    }
   }
 
   async function confirmDates() {
@@ -305,6 +384,109 @@ export function TaskCard({
         </div>
       )}
 
+      {panel === "revert" && (
+        <div className="flex flex-col gap-2 border-t border-edge pt-3">
+          {!revertPlan && !error && <p className="text-xs text-fg-muted">Checking what this affects…</p>}
+
+          {revertPlan && (
+            <>
+              <p className="text-xs text-fg-muted">
+                Moves this step back to{" "}
+                <span className="font-medium text-fg">{STEP_STATUS_LABELS[revertPlan.toStatus]}</span> and clears
+                its actual dates so the information can be corrected.
+              </p>
+
+              {(revertPlan.procurementReset ||
+                revertPlan.projectDataClears.length > 0 ||
+                revertPlan.clearsStepNotes) && (
+                <div className="flex flex-col gap-2 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-400 ring-1 ring-inset ring-red-500/25">
+                  <div className="font-medium">Data recorded after this step is discarded</div>
+                  <ul className="flex list-disc flex-col gap-1 pl-4">
+                    {revertPlan.procurementReset && (
+                      <li>
+                        The {formatStepList(revertPlan.procurementReset.clears)} on all three
+                        procurement items
+                        {revertPlan.procurementReset.fullReset
+                          ? " — section, hardware and gasket go all the way back to empty, notes included"
+                          : " — earlier stages are kept"}
+                        . {formatStepList(revertPlan.procurementReset.stepCodes)} reset to Not started
+                        as a result.
+                      </li>
+                    )}
+                    {revertPlan.projectDataClears.map((label) => (
+                      <li key={label}>{label.charAt(0).toUpperCase() + label.slice(1)}</li>
+                    ))}
+                    {revertPlan.clearsStepNotes && <li>Notes on the steps being reverted</li>}
+                  </ul>
+                  <div>This can&apos;t be undone.</div>
+                  {revertPlan.needsConsent && (
+                    <label className="flex items-start gap-2 font-medium text-fg">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 size-4 shrink-0 accent-red-500"
+                        checked={clearProcurement}
+                        onChange={(e) => setClearProcurement(e.target.checked)}
+                      />
+                      Yes, discard that data and revert
+                    </label>
+                  )}
+                </div>
+              )}
+
+              {revertPlan.cascade.length > 0 && (
+                <div className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-400 ring-1 ring-inset ring-amber-500/25">
+                  <div className="font-medium">
+                    {revertPlan.cascade.length} downstream{" "}
+                    {revertPlan.cascade.length === 1 ? "step" : "steps"} will reset to Not started
+                  </div>
+                  <ul className="mt-1 flex flex-col gap-0.5">
+                    {revertPlan.cascade.map((s) => (
+                      <li key={s.stepCode}>
+                        <span className="font-mono">{s.stepCode}</span> {s.stepName} (
+                        {STEP_STATUS_LABELS[s.status]})
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {revertPlan.phaseChange && (
+                <p className="text-xs text-fg-muted">
+                  The project moves back from{" "}
+                  <span className="font-medium text-fg">{PHASE_LABELS[revertPlan.phaseChange.from as keyof typeof PHASE_LABELS]}</span> to{" "}
+                  <span className="font-medium text-fg">{PHASE_LABELS[revertPlan.phaseChange.to as keyof typeof PHASE_LABELS]}</span>. The
+                  steps and procurement rows themselves stay — they reset rather than being deleted, so the
+                  phase is picked up again from where it starts.
+                </p>
+              )}
+
+              <textarea
+                className={textareaClass}
+                rows={2}
+                placeholder="Reason (required) — what was wrong"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+              />
+            </>
+          )}
+
+          <div className="flex gap-2">
+            <button className={btnSecondary} onClick={() => setPanel("none")} disabled={submitting}>
+              Cancel
+            </button>
+            {revertPlan && (
+              <button
+                className={btnPrimary}
+                onClick={confirmRevert}
+                disabled={submitting || (revertPlan.needsConsent && !clearProcurement)}
+              >
+                {submitting ? "Reverting…" : "Confirm revert"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {panel === "dates" && (
         <div className="flex flex-col gap-2 border-t border-edge pt-3">
           <div className="grid grid-cols-2 gap-2">
@@ -342,13 +524,21 @@ export function TaskCard({
         </div>
       )}
 
-      {panel === "none" && canEditDates && (
-        <button
-          className="flex h-9 items-center justify-center rounded-lg border border-edge px-3 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:text-fg"
-          onClick={() => setPanel("dates")}
-        >
-          Edit dates
-        </button>
+      {panel === "none" && (canEditDates || canRevert) && (
+        <div className="flex gap-2">
+          {canEditDates && (
+            <button className={btnAdminSmall} onClick={() => setPanel("dates")}>
+              Edit dates
+            </button>
+          )}
+          {/* Derived steps get this too: reverting one clears the procurement data it derives
+              from, which the confirmation panel spells out before anything is discarded. */}
+          {canRevert && item.status !== "not_started" && (
+            <button className={btnAdminSmall} onClick={openRevert}>
+              Revert
+            </button>
+          )}
+        </div>
       )}
 
       {panel === "none" && !item.isDerived && item.status !== "completed" && (

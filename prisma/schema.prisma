@@ -151,6 +151,12 @@ model Project {
 
   notes String? @db.Text
 
+  // Soft delete: set when a project is removed from the app. The row and everything hanging
+  // off it are kept — deleting is a UI action, not a data one — but every read path filters
+  // these out, so a deleted project is invisible across the whole front end. See lib/prisma.ts,
+  // which enforces that centrally rather than leaving it to each query to remember.
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -160,6 +166,7 @@ model Project {
   @@index([currentPhase])
   @@index([overallStatus])
   @@index([paymentStatus])
+  @@index([deletedAt])
   @@map("projects")
 }
 

@@ -80,7 +80,7 @@ function EditablePhaseGroup({
         <h3 className="text-[11px] font-semibold uppercase tracking-wider text-fg-subtle">{PHASE_LABELS[phase]}</h3>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {before.map((item) => (
-            <TaskCard key={item.id} item={item} canEditDates showDepartment />
+            <TaskCard key={item.id} item={item} canEditDates canRevert showDepartment />
           ))}
         </div>
       </div>
@@ -88,7 +88,7 @@ function EditablePhaseGroup({
       {after.length > 0 && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {after.map((item) => (
-            <TaskCard key={item.id} item={item} canEditDates showDepartment />
+            <TaskCard key={item.id} item={item} canEditDates canRevert showDepartment />
           ))}
         </div>
       )}
@@ -308,7 +308,7 @@ export default async function ProjectDetailPage({
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-fg">Step timeline</h2>
           {canEditEverything && (
-            <span className="text-xs text-fg-subtle">Editable — status, blocking, and dates</span>
+            <span className="text-xs text-fg-subtle">Editable — status, blocking, dates, and revert</span>
           )}
         </div>
 

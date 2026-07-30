@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { getSession, isAdminEditor } from "@/lib/auth";
 import { ProjectFilters } from "@/components/projects/ProjectFilters";
+import { DeleteProjectButton } from "@/components/projects/DeleteProjectButton";
 import { getEffectiveOverallStatus, projectHasOverrun } from "@/lib/overrun";
 import {
   PHASE_LABELS,
@@ -40,6 +42,8 @@ export default async function ProjectsPage({
   }>;
 }) {
   const params = await searchParams;
+  const session = await getSession();
+  const canDelete = !!session && isAdminEditor(session);
   const phase = params.phase as ProjectPhase | undefined;
   const status = params.status as OverallStatus | undefined;
   const department = params.department as Department | undefined;
@@ -112,26 +116,34 @@ export default async function ProjectsPage({
           {/* Mobile: stacked cards */}
           <div className="flex flex-col gap-3 sm:hidden">
             {projects.map((project) => (
-              <Link
+              // The delete control sits outside the Link rather than inside it — a button nested
+              // in an anchor is invalid, and tapping it would otherwise also navigate.
+              <div
                 key={project.id}
-                href={`/projects/${project.id}`}
                 className="flex flex-col gap-2 rounded-xl border border-edge bg-surface p-4 transition-colors hover:border-edge-2"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <span className="font-medium text-fg">{project.name}</span>
-                  <span
-                    className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${OVERALL_STATUS_COLORS[project.effectiveStatus]}`}
-                  >
-                    {OVERALL_STATUS_LABELS[project.effectiveStatus]}
-                  </span>
-                </div>
-                <div className="text-sm text-fg-muted">{project.clientName}</div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-fg-muted">{PHASE_LABELS[project.currentPhase]}</span>
-                  <span className="font-mono tabular-nums text-fg-muted">{formatINR(Number(project.finalCost))}</span>
-                </div>
-                <div className="text-xs text-fg-subtle">Payment: {PAYMENT_STATUS_LABELS[project.paymentStatus]}</div>
-              </Link>
+                <Link href={`/projects/${project.id}`} className="flex flex-col gap-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-medium text-fg">{project.name}</span>
+                    <span
+                      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${OVERALL_STATUS_COLORS[project.effectiveStatus]}`}
+                    >
+                      {OVERALL_STATUS_LABELS[project.effectiveStatus]}
+                    </span>
+                  </div>
+                  <div className="text-sm text-fg-muted">{project.clientName}</div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-fg-muted">{PHASE_LABELS[project.currentPhase]}</span>
+                    <span className="font-mono tabular-nums text-fg-muted">{formatINR(Number(project.finalCost))}</span>
+                  </div>
+                  <div className="text-xs text-fg-subtle">Payment: {PAYMENT_STATUS_LABELS[project.paymentStatus]}</div>
+                </Link>
+                {canDelete && (
+                  <div className="flex justify-end border-t border-edge pt-2">
+                    <DeleteProjectButton projectId={project.id} projectName={project.name} />
+                  </div>
+                )}
+              </div>
             ))}
           </div>
 
@@ -146,6 +158,7 @@ export default async function ProjectsPage({
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Payment</th>
                   <th className="px-4 py-3 font-medium text-right">Final cost</th>
+                  {canDelete && <th className="px-4 py-3 font-medium text-right">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-edge">
@@ -169,6 +182,11 @@ export default async function ProjectsPage({
                     <td className="px-4 py-3 text-right font-mono tabular-nums text-fg-muted">
                       {formatINR(Number(project.finalCost))}
                     </td>
+                    {canDelete && (
+                      <td className="px-4 py-3 text-right">
+                        <DeleteProjectButton projectId={project.id} projectName={project.name} />
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

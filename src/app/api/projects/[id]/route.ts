@@ -87,3 +87,37 @@ export async function PATCH(
 
   return NextResponse.json(project);
 }
+
+/**
+ * Removes a project from the app without removing it from the database — deleted_at is stamped
+ * and every read path filters on it (see lib/prisma.ts), so the project and all its history stay
+ * intact but stop being visible anywhere in the front end.
+ *
+ * Admin-only. The read below goes through the filtered client, so calling this twice returns 404
+ * the second time rather than silently re-stamping an already-deleted project.
+ */
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!isAdminEditor(session)) {
+    return NextResponse.json(
+      { error: "Forbidden — only owner_admin and HR & Admin can delete a project" },
+      { status: 403 }
+    );
+  }
+
+  const { id } = await params;
+  const project = await prisma.project.findUnique({ where: { id }, select: { id: true } });
+  if (!project) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
+
+  await prisma.project.update({ where: { id }, data: { deletedAt: new Date() } });
+
+  return NextResponse.json({ id, deleted: true });
+}

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { PHASE_GATE_STEP_CODE } from "@/lib/step-template";
 
 function addDays(date: Date, days: number): Date {
   const result = new Date(date);
@@ -30,6 +31,7 @@ export async function rescheduleProjectDates(projectId: string, pinnedStepCode?:
     select: {
       id: true,
       stepCode: true,
+      phase: true,
       dependsOn: true,
       status: true,
       plannedDurationDays: true,
@@ -38,6 +40,20 @@ export async function rescheduleProjectDates(projectId: string, pinnedStepCode?:
       actualEndDate: true,
     },
   });
+
+  const statusByCode = new Map(steps.map((s) => [s.stepCode, s.status]));
+
+  /**
+   * A phase's steps only carry a schedule once the gate step that unlocks the phase is complete.
+   * Normally that is automatic — the rows are seeded at the moment the gate completes — but a
+   * revert can un-complete a gate while its phase's rows are already there. Those rows must then
+   * go back to having no planned dates rather than projecting from a gate that, as far as the
+   * record now goes, has not finished: a fresh project has no phase 2 schedule either.
+   */
+  const phaseIsUnlocked = (phase: keyof typeof PHASE_GATE_STEP_CODE | "phase_1") => {
+    const gate = PHASE_GATE_STEP_CODE[phase as keyof typeof PHASE_GATE_STEP_CODE];
+    return !gate || statusByCode.get(gate) === "completed";
+  };
 
   // Ground truth for a step's "end", for the purposes of scheduling what comes after it:
   // a completed step's actual end date if known, else its current planned end date.
@@ -58,7 +74,9 @@ export async function rescheduleProjectDates(projectId: string, pinnedStepCode?:
       if (step.stepCode === pinnedStepCode) continue;
 
       let newStart: Date | null;
-      if (step.dependsOn.length === 0) {
+      if (!phaseIsUnlocked(step.phase)) {
+        newStart = null; // phase not unlocked — nothing here is scheduled yet
+      } else if (step.dependsOn.length === 0) {
         newStart = step.plannedStartDate; // no upstream to react to — leave as is
       } else {
         const depEnds = step.dependsOn.map((code) => endDates.get(code));
