@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 
 /**
  * Models that are only ever meaningful inside a project, and the path from each one back to it.
@@ -39,8 +39,8 @@ const FILTERED_OPERATIONS = new Set([
  * condition. Looking a row up by its own unique id and getting nothing back when its project is
  * deleted is exactly the intent — a stale link to a deleted project should 404, not resolve.
  */
-function withSoftDelete(client: PrismaClient) {
-  return client.$extends({
+const withSoftDelete = Prisma.defineExtension((client) =>
+  client.$extends({
     name: "softDeleteProjects",
     query: {
       $allModels: {
@@ -68,14 +68,55 @@ function withSoftDelete(client: PrismaClient) {
         },
       },
     },
-  });
+  })
+);
+
+const CONNECT_RETRY_DELAYS_MS = [400, 900];
+
+/**
+ * Neon (our Postgres host) suspends its compute after a period of no traffic; the first
+ * query after a quiet spell has to wait for it to resume, and that wake-up can outrun
+ * Prisma's connection attempt. That surfaces as PrismaClientInitializationError on the
+ * very first query, with every query right after succeeding once the compute is warm —
+ * so a short retry-with-backoff clears it without the caller ever seeing a failure.
+ *
+ * Applied before withSoftDelete in the chain (below) so its retry also covers the
+ * findFirst/findFirstOrThrow calls that extension issues internally.
+ */
+const withConnectionRetry = Prisma.defineExtension((client) =>
+  client.$extends({
+    name: "retryOnColdStart",
+    query: {
+      $allModels: {
+        async $allOperations({ args, query }) {
+          for (let attempt = 0; ; attempt++) {
+            try {
+              return await query(args);
+            } catch (error) {
+              if (
+                !(error instanceof Prisma.PrismaClientInitializationError) ||
+                attempt >= CONNECT_RETRY_DELAYS_MS.length
+              ) {
+                throw error;
+              }
+              await new Promise((resolve) => setTimeout(resolve, CONNECT_RETRY_DELAYS_MS[attempt]));
+            }
+          }
+        },
+      },
+    },
+  })
+);
+
+function createPrismaClient() {
+  return new PrismaClient().$extends(withConnectionRetry).$extends(withSoftDelete);
 }
 
 const globalForPrisma = globalThis as unknown as {
-  prisma: ReturnType<typeof withSoftDelete> | undefined;
+  prisma: ReturnType<typeof createPrismaClient> | undefined;
 };
 
-export const prisma = globalForPrisma.prisma ?? withSoftDelete(new PrismaClient());
+export const prisma = globalForPrisma.prisma ?? createPrismaClient();
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
