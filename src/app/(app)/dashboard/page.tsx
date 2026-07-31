@@ -14,15 +14,21 @@ import { UpcomingStepsWidget } from "@/components/dashboard/UpcomingStepsWidget"
 import { RecentActivityWidget } from "@/components/dashboard/RecentActivityWidget";
 
 export default async function DashboardPage() {
-  const [situationCounts, blocked, departmentWorkload, projectProgress, dueThisWeek, recentActivity] =
-    await Promise.all([
-      getProjectSituationCounts(),
-      getBlockedStepsSorted(),
-      getDepartmentWorkload(),
-      getProjectProgressList(),
-      getStepsDueThisWeek(),
-      getRecentActivity(),
-    ]);
+  let situationCounts, blocked, departmentWorkload, projectProgress, dueThisWeek, recentActivity;
+  try {
+    [situationCounts, blocked, departmentWorkload, projectProgress, dueThisWeek, recentActivity] =
+      await Promise.all([
+        getProjectSituationCounts(),
+        getBlockedStepsSorted(),
+        getDepartmentWorkload(),
+        getProjectProgressList(),
+        getStepsDueThisWeek(),
+        getRecentActivity(),
+      ]);
+  } catch (error) {
+    console.error("[dashboard] failed to load dashboard data", error);
+    throw new Error("Unable to load dashboard data. Please try again shortly.");
+  }
 
   return (
     <div className="flex flex-col gap-4">
