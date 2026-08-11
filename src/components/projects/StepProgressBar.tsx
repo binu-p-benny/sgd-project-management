@@ -60,9 +60,9 @@ const ICON_RING: Record<StepStatus, string> = {
 };
 
 const LABEL_COLOR: Record<StepStatus, string> = {
-  completed: "text-emerald-400",
-  in_progress: "text-blue-400",
-  blocked: "text-red-400",
+  completed: "text-emerald-600 dark:text-emerald-400",
+  in_progress: "text-blue-600 dark:text-blue-400",
+  blocked: "text-red-600 dark:text-red-400",
   not_started: "text-fg-subtle",
 };
 
@@ -105,7 +105,16 @@ export function StepProgressBar({ steps }: { steps: ProgressStep[] }) {
   if (rows.length === 0) return null;
 
   return (
-    <div className="flex flex-col gap-5 rounded-xl border border-edge bg-surface p-4 sm:p-6">
+    <div className="flex flex-col gap-5 rounded-xl border border-edge border-t-4 border-t-accent bg-gradient-to-br from-indigo-50 to-70% to-surface p-4 shadow-[var(--shadow-sm)] dark:from-indigo-500/10 sm:p-6">
+      <div className="flex items-center gap-2.5">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent ring-1 ring-inset ring-accent/20">
+          <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-5 w-5 stroke-current">
+            <path d="M4 15.5 9.5 10l3.5 3.5L20 6" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M15 6h5v5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+        <h2 className="text-sm font-semibold text-fg">Progress overview</h2>
+      </div>
       {rows.map(({ phase, steps: phaseSteps }) => (
         <div key={phase} className="flex flex-col gap-2">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-fg-subtle">
@@ -148,7 +157,7 @@ export function StepProgressBar({ steps }: { steps: ProgressStep[] }) {
                   {i < phaseSteps.length - 1 && (
                     <div
                       className={`mx-1 mt-[14px] h-0.5 flex-1 sm:mx-2 sm:mt-[18px] ${
-                        step.status === "completed" ? "bg-emerald-500" : "bg-white/10"
+                        step.status === "completed" ? "bg-emerald-500" : "bg-surface-3"
                       }`}
                     />
                   )}

@@ -31,10 +31,10 @@ export const OVERALL_STATUS_LABELS: Record<OverallStatus, string> = {
 };
 
 export const OVERALL_STATUS_COLORS: Record<OverallStatus, string> = {
-  on_track: "bg-emerald-500/10 text-emerald-400 ring-1 ring-inset ring-emerald-500/25",
-  delayed: "bg-amber-500/10 text-amber-400 ring-1 ring-inset ring-amber-500/25",
-  blocked: "bg-red-500/10 text-red-400 ring-1 ring-inset ring-red-500/25",
-  completed: "bg-white/[0.06] text-fg-muted ring-1 ring-inset ring-white/10",
+  on_track: "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/25",
+  delayed: "bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25",
+  blocked: "bg-red-50 text-red-700 ring-1 ring-inset ring-red-200 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/25",
+  completed: "bg-overlay text-fg-muted ring-1 ring-inset ring-edge",
 };
 
 export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
@@ -51,10 +51,10 @@ export const STEP_STATUS_LABELS: Record<StepStatus, string> = {
 };
 
 export const STEP_STATUS_COLORS: Record<StepStatus, string> = {
-  not_started: "bg-white/[0.06] text-fg-muted ring-1 ring-inset ring-white/10",
-  in_progress: "bg-blue-500/10 text-blue-400 ring-1 ring-inset ring-blue-500/25",
-  blocked: "bg-red-500/10 text-red-400 ring-1 ring-inset ring-red-500/25",
-  completed: "bg-emerald-500/10 text-emerald-400 ring-1 ring-inset ring-emerald-500/25",
+  not_started: "bg-overlay text-fg-muted ring-1 ring-inset ring-edge",
+  in_progress: "bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:ring-blue-500/25",
+  blocked: "bg-red-50 text-red-700 ring-1 ring-inset ring-red-200 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/25",
+  completed: "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/25",
 };
 
 export const BLOCKED_REASON_LABELS: Record<BlockedReason, string> = {

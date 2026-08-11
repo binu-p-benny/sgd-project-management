@@ -67,7 +67,7 @@ export default function NewProjectPage() {
         className="flex flex-col gap-4 rounded-xl border border-edge bg-surface p-5 sm:p-6"
       >
         {error && (
-          <div className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-400 ring-1 ring-inset ring-red-500/25">
+          <div className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-600 ring-1 ring-inset ring-red-500/25 dark:text-red-400">
             {error}
           </div>
         )}

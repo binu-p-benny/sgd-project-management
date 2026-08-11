@@ -1,47 +1,95 @@
 @import "tailwindcss";
 
-/* Linear-style dark slate theme — single fixed theme, no light mode */
+/* Light (default) and dark themes, switched via [data-theme] on <html>. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 :root {
-  --background: #0b0f17;
-  --foreground: #e7eaf0;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-
   /* Surfaces */
-  --color-bg: #0b0f17;
-  --color-surface: #161c24;
-  --color-surface-2: #1b2330;
-  --color-surface-3: #212a39;
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --surface-3: #e2e8f0;
 
   /* Borders */
-  --color-edge: rgba(255, 255, 255, 0.08);
-  --color-edge-2: rgba(255, 255, 255, 0.14);
+  --edge: rgba(15, 23, 42, 0.09);
+  --edge-2: rgba(15, 23, 42, 0.16);
+
+  /* Subtle fills — hovers/chips */
+  --overlay: rgba(15, 23, 42, 0.045);
+  --overlay-2: rgba(15, 23, 42, 0.08);
 
   /* Text */
-  --color-fg: #e7eaf0;
-  --color-fg-muted: #99a2b3;
-  --color-fg-subtle: #6b7482;
+  --fg: #0f172a;
+  --fg-muted: #64748b;
+  --fg-subtle: #94a3b8;
 
-  /* Accent */
-  --color-accent: #6e79f7;
-  --color-accent-2: #8b93ff;
+  /* Accent — indigo blue */
+  --accent: #6366f1;
+  --accent-2: #4f46e5;
+  --accent-soft: rgba(99, 102, 241, 0.1);
 
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Chart palette — tuned to sit on --surface */
+  --chart-surface: #ffffff;
+  --chart-text-primary: #0f172a;
+  --chart-text-secondary: #64748b;
+  --chart-muted: #94a3b8;
+  --chart-grid: rgba(15, 23, 42, 0.06);
+  --chart-axis: rgba(15, 23, 42, 0.14);
+  --chart-series-1: #6366f1;
+  --chart-series-2: #0d9488;
+  --chart-series-3: #d97706;
+  --chart-series-4: #10b981;
+  --chart-series-5: #a855f7;
+  --chart-series-6: #ef4444;
+  --chart-series-7: #db2777;
+  --chart-series-8: #ea580c;
+  --chart-status-good: #10b981;
+  --chart-status-warning: #f59e0b;
+  --chart-status-serious: #f97316;
+  --chart-status-critical: #ef4444;
+  --chart-diverging-pos: #ef4444;
+  --chart-diverging-neg: #6366f1;
+
+  /* Elevation — soft, low-contrast shadows for a clean SaaS feel on white cards */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 16px -4px rgba(15, 23, 42, 0.12), 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-lg: 0 16px 40px -12px rgba(15, 23, 42, 0.18), 0 2px 8px rgba(15, 23, 42, 0.08);
+  --shadow-accent: 0 8px 24px -8px rgba(99, 102, 241, 0.35);
 }
 
-/* Chart palette — dark slate, tuned to sit on --color-surface */
-:root {
-  --chart-surface: #161c24;
-  --chart-text-primary: #e7eaf0;
-  --chart-text-secondary: #99a2b3;
-  --chart-muted: #6b7482;
+[data-theme="dark"] {
+  /* Surfaces */
+  --bg: #0a0a0c;
+  --surface: #131316;
+  --surface-2: #19191d;
+  --surface-3: #212126;
+
+  /* Borders */
+  --edge: rgba(255, 255, 255, 0.07);
+  --edge-2: rgba(255, 255, 255, 0.13);
+
+  /* Subtle fills — hovers/chips */
+  --overlay: rgba(255, 255, 255, 0.05);
+  --overlay-2: rgba(255, 255, 255, 0.09);
+
+  /* Text */
+  --fg: #f1f1f4;
+  --fg-muted: #9c9ca6;
+  --fg-subtle: #67676f;
+
+  /* Accent — electric violet */
+  --accent: #7c6cff;
+  --accent-2: #9686ff;
+  --accent-soft: rgba(124, 108, 255, 0.12);
+
+  /* Chart palette — tuned to sit on --surface */
+  --chart-surface: #131316;
+  --chart-text-primary: #f1f1f4;
+  --chart-text-secondary: #9c9ca6;
+  --chart-muted: #67676f;
   --chart-grid: rgba(255, 255, 255, 0.06);
   --chart-axis: rgba(255, 255, 255, 0.12);
-  --chart-series-1: #6e79f7;
+  --chart-series-1: #7c6cff;
   --chart-series-2: #2dd4bf;
   --chart-series-3: #f0b429;
   --chart-series-4: #34d399;
@@ -54,22 +102,65 @@
   --chart-status-serious: #fb923c;
   --chart-status-critical: #f87171;
   --chart-diverging-pos: #f87171;
-  --chart-diverging-neg: #6e79f7;
+  --chart-diverging-neg: #7c6cff;
+
+  /* Elevation — heavier, darker shadows for a matte-glass feel on dark surfaces */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px -4px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 40px -12px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-accent: 0 8px 24px -8px rgba(124, 108, 255, 0.35);
 }
 
-html {
-  color-scheme: dark;
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+
+  --color-edge: var(--edge);
+  --color-edge-2: var(--edge-2);
+
+  --color-overlay: var(--overlay);
+  --color-overlay-2: var(--overlay-2);
+
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-accent-soft: var(--accent-soft);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--bg);
+  color: var(--fg);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
-/* Thin, unobtrusive scrollbars to match the dark slate surfaces */
+::selection {
+  background: var(--accent);
+  color: white;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.01em;
+}
+
+/* Thin, unobtrusive scrollbars matched to the active theme */
 * {
-  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  scrollbar-color: var(--edge-2) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -78,6 +169,6 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.14);
+  background-color: var(--edge-2);
   border-radius: 9999px;
 }

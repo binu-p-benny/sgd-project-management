@@ -18,7 +18,7 @@ function ProgressRow({ row }: { row: ProjectProgressRow }) {
     <li>
       <Link
         href={`/projects/${row.projectId}`}
-        className="-mx-1 flex flex-col gap-1.5 rounded-lg p-1 hover:bg-white/[0.04]"
+        className="-mx-1 flex flex-col gap-1.5 rounded-lg p-1 hover:bg-overlay"
       >
         <div className="flex items-center justify-between gap-2">
           <span className="truncate text-sm font-medium text-fg">{row.projectName}</span>
@@ -29,7 +29,7 @@ function ProgressRow({ row }: { row: ProjectProgressRow }) {
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
+          <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface-3">
             <div
               className={`h-full rounded-full ${BAR_COLOR[row.effectiveStatus]}`}
               style={{ width: `${row.percentComplete}%` }}
@@ -68,9 +68,17 @@ export function ProjectProgressWidget({ initialData }: { initialData: ProjectPro
   }
 
   return (
-    <div className="rounded-xl border border-edge bg-surface p-4 sm:p-5">
+    <div className="rounded-xl border border-edge border-t-4 border-t-accent bg-gradient-to-br from-indigo-50 to-70% to-surface p-4 dark:from-indigo-500/10 shadow-[var(--shadow-sm)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)] sm:p-5">
       <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-fg">Project progress</h3>
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent ring-1 ring-inset ring-accent/20">
+            <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-5 w-5 stroke-current">
+              <path d="M4 15.5 9.5 10l3.5 3.5L20 6" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M15 6h5v5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </span>
+          <h3 className="text-sm font-semibold text-fg">Project progress</h3>
+        </div>
         <Link href="/projects" className="text-xs font-medium text-fg-muted hover:text-fg hover:underline">
           View all →
         </Link>
@@ -86,14 +94,14 @@ export function ProjectProgressWidget({ initialData }: { initialData: ProjectPro
             ))}
           </ul>
 
-          {error && <p className="mt-3 text-center text-xs text-red-400">{error}</p>}
+          {error && <p className="mt-3 text-center text-xs text-red-600 dark:text-red-400">{error}</p>}
 
           <div className="mt-4 flex items-center justify-between border-t border-edge pt-3">
             <button
               type="button"
               onClick={() => goToPage(data.page - 1)}
               disabled={loading || data.page <= 1}
-              className="rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-white/[0.04] hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
             >
               ← Previous
             </button>
@@ -104,7 +112,7 @@ export function ProjectProgressWidget({ initialData }: { initialData: ProjectPro
               type="button"
               onClick={() => goToPage(data.page + 1)}
               disabled={loading || data.page >= data.totalPages}
-              className="rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-white/[0.04] hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
             >
               Next →
             </button>

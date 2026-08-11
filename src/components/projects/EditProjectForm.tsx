@@ -87,7 +87,7 @@ export function EditProjectForm({
       className="flex flex-col gap-4 rounded-xl border border-edge bg-surface p-5 sm:p-6"
     >
       {error && (
-        <div className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-400 ring-1 ring-inset ring-red-500/25">
+        <div className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-600 ring-1 ring-inset ring-red-500/25 dark:text-red-400">
           {error}
         </div>
       )}
@@ -174,7 +174,7 @@ export function EditProjectForm({
         />
       </div>
 
-      <div className="rounded-lg bg-white/[0.06] px-3 py-2 text-xs text-fg-muted">
+      <div className="rounded-lg bg-overlay px-3 py-2 text-xs text-fg-muted">
         Final cost, glass type, and workflow status aren&apos;t editable here — final cost is fixed
         by design, and the others are driven by the step timeline to avoid getting out of sync
         with it. Payment, and every step&apos;s status, blocking, and dates, are editable from the

@@ -2,33 +2,61 @@ import Link from "next/link";
 import type { ProjectSituationCounts } from "@/lib/dashboard";
 
 type Severity = "good" | "warning" | "serious" | "critical";
+// Overview tiles get a decorative hue (no severity meaning); alert tiles map their
+// severity onto one of these so red/orange/amber keep their warning connotation.
+type Hue = "indigo" | "violet" | "teal" | "emerald" | "amber" | "orange" | "red";
 type IconName = "folder" | "check" | "checks" | "trend" | "block" | "clock" | "wallet";
 
 interface Tile {
   label: string;
   subtitle: string;
   value: number;
-  color: Severity;
+  hue: Hue;
   href: string;
   icon: IconName;
 }
 
-const SEVERITY_ICON_WRAP: Record<Severity, string> = {
-  good: "bg-emerald-500/10 text-emerald-400",
-  warning: "bg-amber-500/10 text-amber-400",
-  serious: "bg-orange-500/10 text-orange-400",
-  critical: "bg-red-500/10 text-red-400",
+const SEVERITY_TO_HUE: Record<Severity, Hue> = {
+  good: "emerald",
+  warning: "amber",
+  serious: "orange",
+  critical: "red",
 };
 
-const SEVERITY_BORDER_VAR: Record<Severity, string> = {
-  good: "var(--chart-status-good)",
-  warning: "var(--chart-status-warning)",
-  serious: "var(--chart-status-serious)",
-  critical: "var(--chart-status-critical)",
+const HUE_ICON_WRAP: Record<Hue, string> = {
+  indigo: "bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-400 dark:ring-indigo-500/25",
+  violet: "bg-violet-50 text-violet-700 ring-1 ring-inset ring-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:ring-violet-500/25",
+  teal: "bg-teal-50 text-teal-700 ring-1 ring-inset ring-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:ring-teal-500/25",
+  emerald: "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/25",
+  amber: "bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25",
+  orange: "bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200 dark:bg-orange-500/10 dark:text-orange-400 dark:ring-orange-500/25",
+  red: "bg-red-50 text-red-700 ring-1 ring-inset ring-red-200 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/25",
+};
+
+const HUE_BORDER_VAR: Record<Hue, string> = {
+  indigo: "#6366f1",
+  violet: "#8b5cf6",
+  teal: "#0d9488",
+  emerald: "var(--chart-status-good)",
+  amber: "var(--chart-status-warning)",
+  orange: "var(--chart-status-serious)",
+  red: "var(--chart-status-critical)",
+};
+
+// Soft tinted wash from a hue-50 corner into the card surface — gives each tile its
+// own identity without turning the dashboard into a wall of flat white cards.
+const HUE_WASH: Record<Hue, string> = {
+  indigo: "from-indigo-50 dark:from-indigo-500/10",
+  violet: "from-violet-50 dark:from-violet-500/10",
+  teal: "from-teal-50 dark:from-teal-500/10",
+  emerald: "from-emerald-50 dark:from-emerald-500/10",
+  amber: "from-amber-50 dark:from-amber-500/10",
+  orange: "from-orange-50 dark:from-orange-500/10",
+  red: "from-red-50 dark:from-red-500/10",
 };
 
 function TileIcon({ name, className }: { name: IconName; className?: string }) {
-  const common = { viewBox: "0 0 24 24", fill: "none", strokeWidth: 1.8, className };
+  const common = { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, className };
   switch (name) {
     case "folder":
       return (
@@ -86,17 +114,17 @@ function StatTile({ tile }: { tile: Tile }) {
   return (
     <Link
       href={tile.href}
-      className="group flex flex-col overflow-hidden rounded-xl border border-edge bg-surface p-4 transition-all hover:border-edge-2 hover:bg-surface-2 hover:shadow-[0_0_0_1px_rgba(255,255,255,0.04)] sm:p-5"
-      style={{ borderTopWidth: 3, borderTopColor: SEVERITY_BORDER_VAR[tile.color] }}
+      className={`group relative flex flex-col overflow-hidden rounded-xl border border-edge bg-gradient-to-br to-70% to-surface p-4 shadow-[var(--shadow-sm)] transition-all hover:-translate-y-0.5 hover:border-edge-2 hover:shadow-[var(--shadow-md)] sm:p-5 ${HUE_WASH[tile.hue]}`}
+      style={{ borderTopWidth: 3, borderTopColor: HUE_BORDER_VAR[tile.hue] }}
     >
       <div className="flex items-center gap-2.5">
-        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${SEVERITY_ICON_WRAP[tile.color]}`}>
-          <TileIcon name={tile.icon} className="h-4 w-4" />
+        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${HUE_ICON_WRAP[tile.hue]}`}>
+          <TileIcon name={tile.icon} className="h-5 w-5" />
         </span>
         <div className="min-w-0 text-[11px] font-semibold uppercase tracking-wider text-fg-muted">{tile.label}</div>
       </div>
       <div className="mt-4 flex items-end justify-between gap-2">
-        <span className="font-mono text-3xl font-semibold tabular-nums text-fg transition-colors group-hover:text-white sm:text-4xl">
+        <span className="font-mono text-3xl font-semibold tabular-nums text-fg transition-colors group-hover:text-accent sm:text-4xl">
           {tile.value}
         </span>
         <span className="pb-1 text-xs text-fg-subtle">{tile.subtitle}</span>
@@ -119,7 +147,7 @@ export function ProjectStatTiles({ counts }: { counts: ProjectSituationCounts })
       label: "Total projects",
       subtitle: "All time",
       value: counts.total,
-      color: "good",
+      hue: "indigo",
       href: "/projects",
       icon: "folder",
     },
@@ -127,7 +155,7 @@ export function ProjectStatTiles({ counts }: { counts: ProjectSituationCounts })
       label: "On track",
       subtitle: "Current",
       value: counts.onTrack,
-      color: "good",
+      hue: "emerald",
       href: "/projects?status=on_track",
       icon: "check",
     },
@@ -135,7 +163,7 @@ export function ProjectStatTiles({ counts }: { counts: ProjectSituationCounts })
       label: "Completed",
       subtitle: "All time",
       value: counts.completed,
-      color: "good",
+      hue: "teal",
       href: "/projects?status=completed",
       icon: "checks",
     },
@@ -143,7 +171,7 @@ export function ProjectStatTiles({ counts }: { counts: ProjectSituationCounts })
       label: "New projects",
       subtitle: "Last 30 days",
       value: counts.newLast30Days,
-      color: "good",
+      hue: "violet",
       href: "/projects?newDays=30",
       icon: "trend",
     },
@@ -154,7 +182,7 @@ export function ProjectStatTiles({ counts }: { counts: ProjectSituationCounts })
       label: "Blocked",
       subtitle: "Projects",
       value: counts.blocked,
-      color: severity(counts.blocked, 1, 1, 1),
+      hue: SEVERITY_TO_HUE[severity(counts.blocked, 1, 1, 1)],
       href: "/projects?status=blocked",
       icon: "block",
     },
@@ -162,7 +190,7 @@ export function ProjectStatTiles({ counts }: { counts: ProjectSituationCounts })
       label: "Delayed",
       subtitle: "Projects",
       value: counts.delayed,
-      color: severity(counts.delayed, 1, 4, 10),
+      hue: SEVERITY_TO_HUE[severity(counts.delayed, 1, 4, 10)],
       href: "/projects?status=delayed",
       icon: "clock",
     },
@@ -170,7 +198,7 @@ export function ProjectStatTiles({ counts }: { counts: ProjectSituationCounts })
       label: "Payment pending",
       subtitle: "Projects",
       value: counts.paymentPending,
-      color: severity(counts.paymentPending, 1, 6, 15),
+      hue: SEVERITY_TO_HUE[severity(counts.paymentPending, 1, 6, 15)],
       href: "/projects?paymentStatus=pending",
       icon: "wallet",
     },

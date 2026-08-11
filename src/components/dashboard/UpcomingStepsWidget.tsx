@@ -14,8 +14,8 @@ function formatDueLabel(daysRemaining: number): string {
 }
 
 function urgencyClasses(daysRemaining: number): string {
-  if (daysRemaining <= 1) return "bg-amber-500/10 text-amber-400 ring-1 ring-inset ring-amber-500/25";
-  return "bg-white/[0.06] text-fg-muted ring-1 ring-inset ring-white/10";
+  if (daysRemaining <= 1) return "bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25";
+  return "bg-overlay text-fg-muted ring-1 ring-inset ring-edge";
 }
 
 export function UpcomingStepsWidget({ data }: { data: UpcomingStepRow[] }) {
@@ -25,8 +25,16 @@ export function UpcomingStepsWidget({ data }: { data: UpcomingStepRow[] }) {
   const pageData = data.slice(start, start + PAGE_SIZE);
 
   return (
-    <div className="rounded-xl border border-edge bg-surface p-4 sm:p-5">
-      <h3 className="mb-4 text-sm font-semibold text-fg">Due this week ({data.length})</h3>
+    <div className="rounded-xl border border-edge border-t-4 border-t-amber-500 bg-gradient-to-br from-amber-50 to-70% to-surface p-4 dark:from-amber-500/10 shadow-[var(--shadow-sm)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)] sm:p-5">
+      <div className="mb-4 flex items-center gap-2.5">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25">
+          <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-5 w-5 stroke-current">
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M12 7.5V12l3 2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+        <h3 className="text-sm font-semibold text-fg">Due this week ({data.length})</h3>
+      </div>
 
       {data.length === 0 ? (
         <p className="py-6 text-center text-sm text-fg-muted">Nothing due in the next 7 days.</p>
@@ -94,7 +102,7 @@ export function UpcomingStepsWidget({ data }: { data: UpcomingStepRow[] }) {
                 type="button"
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={page <= 1}
-                className="rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-white/[0.04] hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+                className="rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
               >
                 ← Previous
               </button>
@@ -105,7 +113,7 @@ export function UpcomingStepsWidget({ data }: { data: UpcomingStepRow[] }) {
                 type="button"
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 disabled={page >= totalPages}
-                className="rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-white/[0.04] hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+                className="rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Next →
               </button>

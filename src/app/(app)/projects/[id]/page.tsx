@@ -109,7 +109,7 @@ function ReadOnlyStepRow({ step }: { step: PhaseStep }) {
             {STEP_STATUS_LABELS[step.status]}
           </span>
           {isStepOverrun(step.plannedEndDate, step.status) && (
-            <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-400 ring-1 ring-inset ring-amber-500/25">
+            <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-500/25 dark:text-amber-400">
               Overdue
             </span>
           )}
@@ -122,13 +122,13 @@ function ReadOnlyStepRow({ step }: { step: PhaseStep }) {
         Planned {formatDate(step.plannedStartDate)} – {formatDate(step.plannedEndDate)}
       </div>
       {step.status === "blocked" && step.blockedReason && (
-        <div className="mt-1 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-400 ring-1 ring-inset ring-red-500/25">
+        <div className="mt-1 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-600 ring-1 ring-inset ring-red-500/25 dark:text-red-400">
           Blocked: {BLOCKED_REASON_LABELS[step.blockedReason]}
           {step.blockedNote ? ` — ${step.blockedNote}` : ""}
         </div>
       )}
       {step.notes && (
-        <div className="rounded-lg bg-white/[0.06] px-3 py-2 text-xs italic text-fg-muted">
+        <div className="rounded-lg bg-overlay px-3 py-2 text-xs italic text-fg-muted">
           &ldquo;{step.notes}&rdquo;
         </div>
       )}
@@ -252,14 +252,21 @@ export default async function ProjectDetailPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-3 rounded-xl border border-edge bg-surface p-5 sm:p-6">
+      <div className="flex flex-col gap-3 rounded-xl border border-edge border-t-4 border-t-accent bg-gradient-to-br from-indigo-50 to-70% to-surface p-5 shadow-[var(--shadow-sm)] dark:from-indigo-500/10 sm:p-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-fg">{project.name}</h1>
-            <p className="text-sm text-fg-muted">
-              {project.clientName} · {project.clientPhone}
-            </p>
-            <p className="text-sm text-fg-muted">{project.clientAddress}</p>
+          <div className="flex items-start gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent ring-1 ring-inset ring-accent/20">
+              <svg viewBox="0 0 24 24" fill="none" strokeWidth={1.8} className="h-5 w-5 stroke-current">
+                <path d="M4 6a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6Z" strokeLinejoin="round" />
+              </svg>
+            </span>
+            <div>
+              <h1 className="text-xl font-semibold text-fg">{project.name}</h1>
+              <p className="text-sm text-fg-muted">
+                {project.clientName} · {project.clientPhone}
+              </p>
+              <p className="text-sm text-fg-muted">{project.clientAddress}</p>
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <span
@@ -270,7 +277,7 @@ export default async function ProjectDetailPage({
             {canEditEverything && (
               <Link
                 href={`/projects/${project.id}/edit`}
-                className="flex h-8 items-center justify-center rounded-lg border border-edge px-3 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-white/[0.04] hover:text-fg"
+                className="flex h-8 items-center justify-center rounded-lg border border-edge px-3 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-overlay hover:text-fg"
               >
                 Edit project
               </Link>
@@ -306,7 +313,17 @@ export default async function ProjectDetailPage({
 
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-fg">Step timeline</h2>
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent ring-1 ring-inset ring-accent/20">
+              <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-5 w-5 stroke-current">
+                <circle cx="5" cy="6" r="1.5" fill="currentColor" stroke="none" />
+                <circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none" />
+                <circle cx="5" cy="18" r="1.5" fill="currentColor" stroke="none" />
+                <path d="M9.5 6h9M9.5 12h9M9.5 18h9" strokeLinecap="round" />
+              </svg>
+            </span>
+            <h2 className="text-lg font-semibold text-fg">Step timeline</h2>
+          </div>
           {canEditEverything && (
             <span className="text-xs text-fg-subtle">Editable — status, blocking, dates, and revert</span>
           )}
@@ -342,7 +359,15 @@ export default async function ProjectDetailPage({
       )}
 
       <div className="flex flex-col gap-3">
-        <h2 className="text-lg font-semibold text-fg">Blocker history</h2>
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600 ring-1 ring-inset ring-red-200 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/25">
+            <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-5 w-5 stroke-current">
+              <circle cx="12" cy="12" r="8.5" />
+              <path d="M6.4 6.4 17.6 17.6" strokeLinecap="round" />
+            </svg>
+          </span>
+          <h2 className="text-lg font-semibold text-fg">Blocker history</h2>
+        </div>
         {blockerHistory.length === 0 ? (
           <p className="rounded-lg border border-dashed border-edge-2 py-8 text-center text-sm text-fg-muted">
             This project has never been blocked.
@@ -359,8 +384,8 @@ export default async function ProjectDetailPage({
                   <span
                     className={`rounded-full px-2 py-0.5 font-mono text-xs font-medium tabular-nums ${
                       entry.resolvedAt
-                        ? "bg-white/[0.06] text-fg-muted ring-1 ring-inset ring-white/10"
-                        : "bg-red-500/10 text-red-400 ring-1 ring-inset ring-red-500/25"
+                        ? "bg-overlay text-fg-muted ring-1 ring-inset ring-edge"
+                        : "bg-red-50 text-red-700 ring-1 ring-inset ring-red-200 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/25"
                     }`}
                   >
                     {entry.resolvedAt ? `Resolved in ${entry.durationDays}d` : `Ongoing · ${entry.durationDays}d`}

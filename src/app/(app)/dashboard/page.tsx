@@ -32,7 +32,17 @@ export default async function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-xl font-semibold text-fg">Dashboard</h1>
+      <div className="flex items-center gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent ring-1 ring-inset ring-accent/20">
+          <svg viewBox="0 0 24 24" fill="none" strokeWidth={1.8} className="h-5 w-5 stroke-current">
+            <rect x="4" y="4" width="7" height="9" rx="1" />
+            <rect x="13" y="4" width="7" height="5" rx="1" />
+            <rect x="13" y="11" width="7" height="9" rx="1" />
+            <rect x="4" y="15" width="7" height="5" rx="1" />
+          </svg>
+        </span>
+        <h1 className="text-xl font-semibold text-fg">Dashboard</h1>
+      </div>
 
       <ProjectStatTiles counts={situationCounts} />
 

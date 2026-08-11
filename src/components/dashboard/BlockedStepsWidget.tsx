@@ -5,8 +5,16 @@ import type { BlockedReason } from "@prisma/client";
 
 export function BlockedStepsWidget({ data }: { data: BlockedStepRow[] }) {
   return (
-    <div className="rounded-xl border border-edge bg-surface p-4 sm:p-5">
-      <h3 className="mb-4 text-sm font-semibold text-fg">Currently blocked ({data.length})</h3>
+    <div className="rounded-xl border border-edge border-t-4 border-t-red-500 bg-gradient-to-br from-red-50 to-70% to-surface p-4 dark:from-red-500/10 shadow-[var(--shadow-sm)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)] sm:p-5">
+      <div className="mb-4 flex items-center gap-2.5">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600 ring-1 ring-inset ring-red-200 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/25">
+          <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-5 w-5 stroke-current">
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M6.4 6.4 17.6 17.6" strokeLinecap="round" />
+          </svg>
+        </span>
+        <h3 className="text-sm font-semibold text-fg">Currently blocked ({data.length})</h3>
+      </div>
 
       {data.length === 0 ? (
         <p className="py-6 text-center text-sm text-fg-muted">Nothing is blocked right now.</p>
@@ -22,7 +30,7 @@ export function BlockedStepsWidget({ data }: { data: BlockedStepRow[] }) {
               >
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium text-fg">{row.projectName}</span>
-                  <span className="rounded-full bg-red-500/10 px-2 py-0.5 font-mono text-xs font-medium tabular-nums text-red-400 ring-1 ring-inset ring-red-500/25">
+                  <span className="rounded-full bg-red-500/10 px-2 py-0.5 font-mono text-xs font-medium tabular-nums text-red-600 ring-1 ring-inset ring-red-500/25 dark:text-red-400">
                     {row.daysBlocked}d
                   </span>
                 </div>
@@ -62,7 +70,7 @@ export function BlockedStepsWidget({ data }: { data: BlockedStepRow[] }) {
                       {row.blockedReason ? BLOCKED_REASON_LABELS[row.blockedReason as BlockedReason] : "—"}
                     </td>
                     <td className="py-2 pr-4 text-right">
-                      <span className="rounded-full bg-red-500/10 px-2 py-0.5 font-mono text-xs font-medium tabular-nums text-red-400 ring-1 ring-inset ring-red-500/25">
+                      <span className="rounded-full bg-red-500/10 px-2 py-0.5 font-mono text-xs font-medium tabular-nums text-red-600 ring-1 ring-inset ring-red-500/25 dark:text-red-400">
                         {row.daysBlocked}d
                       </span>
                     </td>

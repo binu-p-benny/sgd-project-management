@@ -46,13 +46,52 @@ const DATE_FIELDS: { key: "plannedStartDate" | "plannedEndDate" | "actualStartDa
 const btnPrimary =
   "flex-1 flex h-11 items-center justify-center rounded-lg bg-accent px-3 text-sm font-medium text-white transition-colors hover:bg-accent-2 disabled:opacity-40";
 const btnSecondary =
-  "flex-1 flex h-11 items-center justify-center rounded-lg border border-edge px-3 text-sm font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-white/[0.04] hover:text-fg disabled:opacity-40";
+  "flex-1 flex h-11 items-center justify-center rounded-lg border border-edge px-3 text-sm font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-overlay hover:text-fg disabled:opacity-40";
 const btnAdminSmall =
   "flex flex-1 h-9 items-center justify-center rounded-lg border border-edge px-3 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:text-fg";
 const selectClass =
   "h-11 w-full rounded-lg border border-edge bg-bg px-3 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30";
 const textareaClass =
   "w-full rounded-lg border border-edge bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30";
+
+const STATUS_ICON_WRAP: Record<string, string> = {
+  not_started: "bg-overlay text-fg-subtle ring-1 ring-inset ring-edge",
+  in_progress: "bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:ring-blue-500/25",
+  blocked: "bg-red-50 text-red-600 ring-1 ring-inset ring-red-200 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/25",
+  completed: "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/25",
+};
+
+function StatusIcon({ status, className }: { status: string; className?: string }) {
+  const common = { viewBox: "0 0 24 24", fill: "none", strokeWidth: 2, className };
+  if (status === "completed") {
+    return (
+      <svg {...common}>
+        <path d="M5 12.5 10 17l9-10" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (status === "blocked") {
+    return (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M6.4 6.4 17.6 17.6" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (status === "in_progress") {
+    return (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M12 7.5V12l3 2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common}>
+      <circle cx="12" cy="12" r="8.5" strokeDasharray="3 3" />
+    </svg>
+  );
+}
 
 type Panel = "none" | "block" | "complete1a" | "dates" | "revert";
 
@@ -252,29 +291,34 @@ export function TaskCard({
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-edge bg-surface p-4">
       <div className="flex items-start justify-between gap-2">
-        <div>
-          <Link
-            href={`/projects/${item.project.id}`}
-            className="text-xs font-medium text-fg-muted hover:text-fg hover:underline"
-          >
-            {item.project.name}
-          </Link>
-          <div className="mt-0.5">
-            <span className="font-mono text-xs text-fg-subtle">{item.stepCode}</span>{" "}
-            <span className="font-medium text-fg">{item.stepName}</span>
+        <div className="flex items-start gap-2.5">
+          <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${STATUS_ICON_WRAP[item.status]}`}>
+            <StatusIcon status={item.status} className="h-5 w-5 stroke-current" />
+          </span>
+          <div>
+            <Link
+              href={`/projects/${item.project.id}`}
+              className="text-xs font-medium text-fg-muted hover:text-fg hover:underline"
+            >
+              {item.project.name}
+            </Link>
+            <div className="mt-0.5">
+              <span className="font-mono text-xs text-fg-subtle">{item.stepCode}</span>{" "}
+              <span className="font-medium text-fg">{item.stepName}</span>
+            </div>
+            {showDepartment && (
+              <span className="mt-1 inline-block rounded-full bg-overlay px-2 py-0.5 text-[10px] font-medium text-fg-muted ring-1 ring-inset ring-edge">
+                {DEPARTMENT_LABELS[item.owningDepartment]}
+              </span>
+            )}
           </div>
-          {showDepartment && (
-            <span className="mt-1 inline-block rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] font-medium text-fg-muted ring-1 ring-inset ring-white/10">
-              {DEPARTMENT_LABELS[item.owningDepartment]}
-            </span>
-          )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STEP_STATUS_COLORS[item.status]}`}>
             {STEP_STATUS_LABELS[item.status]}
           </span>
           {item.overrun && item.status !== "blocked" && (
-            <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-400 ring-1 ring-inset ring-amber-500/25">
+            <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-500/25 dark:text-amber-400">
               Overdue
             </span>
           )}
@@ -284,7 +328,7 @@ export function TaskCard({
       <div className="text-xs text-fg-muted">Planned finish: {formatDate(item.plannedEndDate)}</div>
 
       {item.status === "blocked" && item.blockedReason && (
-        <div className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-400 ring-1 ring-inset ring-red-500/25">
+        <div className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-600 ring-1 ring-inset ring-red-500/25 dark:text-red-400">
           <div className="font-medium">
             {BLOCKED_REASON_LABELS[item.blockedReason as keyof typeof BLOCKED_REASON_LABELS]}
             {item.daysBlocked !== null && ` · blocked ${item.daysBlocked}d`}
@@ -294,26 +338,26 @@ export function TaskCard({
       )}
 
       {item.isDerived && item.derivedSummary && (
-        <div className="rounded-lg bg-white/[0.06] px-3 py-2 text-xs text-fg-muted">
+        <div className="rounded-lg bg-overlay px-3 py-2 text-xs text-fg-muted">
           Auto-computed from procurement —{" "}
           {item.derivedSummary.map((d) => `${d.itemType}: ${d.done ? "done" : "pending"}`).join(", ")}
         </div>
       )}
 
       {item.notes && (
-        <div className="rounded-lg bg-white/[0.06] px-3 py-2 text-xs italic text-fg-muted">
+        <div className="rounded-lg bg-overlay px-3 py-2 text-xs italic text-fg-muted">
           &ldquo;{item.notes}&rdquo;
         </div>
       )}
 
       {!item.isDerived && !canStartOrComplete && item.gateBlockedBy && (
-        <div className="rounded-lg bg-white/[0.06] px-3 py-2 text-xs text-fg-muted">
+        <div className="rounded-lg bg-overlay px-3 py-2 text-xs text-fg-muted">
           Waiting on: {item.gateBlockedBy.join(", ")}
         </div>
       )}
 
       {error && (
-        <div className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-400 ring-1 ring-inset ring-red-500/25">
+        <div className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-600 ring-1 ring-inset ring-red-500/25 dark:text-red-400">
           {error}
         </div>
       )}
@@ -399,7 +443,7 @@ export function TaskCard({
               {(revertPlan.procurementReset ||
                 revertPlan.projectDataClears.length > 0 ||
                 revertPlan.clearsStepNotes) && (
-                <div className="flex flex-col gap-2 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-400 ring-1 ring-inset ring-red-500/25">
+                <div className="flex flex-col gap-2 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-600 ring-1 ring-inset ring-red-500/25 dark:text-red-400">
                   <div className="font-medium">Data recorded after this step is discarded</div>
                   <ul className="flex list-disc flex-col gap-1 pl-4">
                     {revertPlan.procurementReset && (
@@ -434,7 +478,7 @@ export function TaskCard({
               )}
 
               {revertPlan.cascade.length > 0 && (
-                <div className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-400 ring-1 ring-inset ring-amber-500/25">
+                <div className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-500/25 dark:text-amber-400">
                   <div className="font-medium">
                     {revertPlan.cascade.length} downstream{" "}
                     {revertPlan.cascade.length === 1 ? "step" : "steps"} will reset to Not started

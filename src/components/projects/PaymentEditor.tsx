@@ -72,7 +72,7 @@ export function PaymentEditor({
   return (
     <div className="flex flex-col gap-2">
       <div className="text-fg-subtle">Payment</div>
-      {error && <div className="text-xs text-red-400">{error}</div>}
+      {error && <div className="text-xs text-red-600 dark:text-red-400">{error}</div>}
       <div className="flex min-w-0 flex-col gap-2">
         <select
           value={paymentStatus}

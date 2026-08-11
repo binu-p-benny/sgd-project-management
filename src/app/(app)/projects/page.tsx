@@ -83,12 +83,23 @@ export default async function ProjectsPage({
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl font-semibold text-fg">Projects</h1>
+        <div className="flex items-center gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent ring-1 ring-inset ring-accent/20">
+            <svg viewBox="0 0 24 24" fill="none" strokeWidth={1.8} className="h-5 w-5 stroke-current">
+              <rect x="4" y="5" width="16" height="15" rx="1.5" />
+              <path d="M8 3v4M16 3v4M4 10h16" strokeLinecap="round" />
+            </svg>
+          </span>
+          <h1 className="text-xl font-semibold text-fg">Projects</h1>
+        </div>
         <Link
           href="/projects/new"
-          className="flex h-11 items-center justify-center rounded-lg bg-accent px-4 text-sm font-medium text-white transition-colors hover:bg-accent-2"
+          className="flex h-11 items-center justify-center gap-1.5 rounded-lg bg-accent px-4 text-sm font-medium text-white transition-colors hover:bg-accent-2"
         >
-          + New project
+          <svg viewBox="0 0 24 24" fill="none" strokeWidth={2.2} className="h-5 w-5 stroke-current">
+            <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+          </svg>
+          New project
         </Link>
       </div>
 
@@ -97,7 +108,7 @@ export default async function ProjectsPage({
       {activeFilters.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 text-sm">
           {activeFilters.map(([key, value]) => (
-            <span key={key} className="rounded-full bg-white/[0.06] px-3 py-1 text-xs font-medium text-fg-muted ring-1 ring-inset ring-white/10">
+            <span key={key} className="rounded-full bg-overlay px-3 py-1 text-xs font-medium text-fg-muted ring-1 ring-inset ring-edge">
               {ACTIVE_FILTER_LABEL[key]?.(value as string) ?? `${key}: ${value}`}
             </span>
           ))}

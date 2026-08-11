@@ -15,13 +15,21 @@ export default async function AdminPage({
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-xl font-semibold text-fg">Admin</h1>
-        <p className="text-sm text-fg-muted">
-          Every open step across every department — update on anyone&apos;s behalf.
-          {department ? ` Showing ${DEPARTMENT_LABELS[department]}.` : ""} {items.length} open step
-          {items.length === 1 ? "" : "s"}
-        </p>
+      <div className="flex items-center gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent ring-1 ring-inset ring-accent/20">
+          <svg viewBox="0 0 24 24" fill="none" strokeWidth={1.8} className="h-5 w-5 stroke-current">
+            <path d="M12 3.5 18.5 6v5.5c0 4.5-2.8 7.7-6.5 9-3.7-1.3-6.5-4.5-6.5-9V6L12 3.5Z" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M9.3 12.2l1.9 1.9 3.5-3.9" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+        <div>
+          <h1 className="text-xl font-semibold text-fg">Admin</h1>
+          <p className="text-sm text-fg-muted">
+            Every open step across every department — update on anyone&apos;s behalf.
+            {department ? ` Showing ${DEPARTMENT_LABELS[department]}.` : ""} {items.length} open step
+            {items.length === 1 ? "" : "s"}
+          </p>
+        </div>
       </div>
 
       <AdminFilters />

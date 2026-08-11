@@ -42,7 +42,7 @@ export function DeleteProjectButton({
 
   if (error) {
     return (
-      <span className="text-xs text-red-400" title={error}>
+      <span className="text-xs text-red-600 dark:text-red-400" title={error}>
         {error}
       </span>
     );
@@ -54,7 +54,7 @@ export function DeleteProjectButton({
         type="button"
         aria-label={`Delete ${projectName}`}
         onClick={() => setConfirming(true)}
-        className="rounded-lg border border-edge px-2.5 py-1 text-xs font-medium text-fg-muted transition-colors hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-400"
+        className="rounded-lg border border-edge px-2.5 py-1 text-xs font-medium text-fg-muted transition-colors hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
       >
         Delete
       </button>
@@ -75,7 +75,7 @@ export function DeleteProjectButton({
         type="button"
         onClick={remove}
         disabled={deleting}
-        className="rounded-lg bg-red-500/15 px-2.5 py-1 text-xs font-medium text-red-400 ring-1 ring-inset ring-red-500/30 transition-colors hover:bg-red-500/25 disabled:opacity-40"
+        className="rounded-lg bg-red-500/15 px-2.5 py-1 text-xs font-medium text-red-600 ring-1 ring-inset ring-red-500/30 transition-colors hover:bg-red-500/25 disabled:opacity-40 dark:text-red-400"
       >
         {deleting ? "Removing…" : "Confirm"}
       </button>

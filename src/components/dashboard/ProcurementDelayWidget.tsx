@@ -15,9 +15,17 @@ export function ProcurementDelayWidget({ data }: { data: ProcurementDelayRow[] }
   const rows = data.map((r) => ({ ...r, label: ITEM_TYPE_LABEL[r.itemType] }));
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900 sm:p-5">
-      <h3 className="mb-1 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Procurement delays</h3>
-      <p className="mb-4 text-xs text-zinc-500 dark:text-zinc-400">
+    <div className="rounded-xl border border-edge border-t-4 border-t-orange-500 bg-gradient-to-br from-orange-50 to-70% to-surface p-4 dark:from-orange-500/10 shadow-[var(--shadow-sm)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)] sm:p-5">
+      <div className="mb-1 flex items-center gap-2.5">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200 dark:bg-orange-500/10 dark:text-orange-400 dark:ring-orange-500/25">
+          <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-5 w-5 stroke-current">
+            <rect x="3.5" y="7" width="17" height="12" rx="1.5" />
+            <path d="M3.5 11h17M8 7V5.5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1V7" strokeLinecap="round" />
+          </svg>
+        </span>
+        <h3 className="text-sm font-semibold text-fg">Procurement delays</h3>
+      </div>
+      <p className="mb-4 text-xs text-fg-muted">
         Share of items that missed their expected arrival date
       </p>
 
@@ -56,12 +64,12 @@ export function ProcurementDelayWidget({ data }: { data: ProcurementDelayRow[] }
         {rows.map((row) => (
           <div key={row.itemType} className="flex flex-col gap-1">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-zinc-900 dark:text-zinc-50">{row.label}</span>
-              <span className="text-zinc-500 dark:text-zinc-400">
+              <span className="text-fg">{row.label}</span>
+              <span className="text-fg-muted">
                 {row.overrunRate}% ({row.overrunCount}/{row.totalCount})
               </span>
             </div>
-            <div className="h-2.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+            <div className="h-2.5 w-full overflow-hidden rounded-full bg-surface-3">
               <div
                 className="h-full rounded-full"
                 style={{ width: `${row.overrunRate}%`, backgroundColor: ITEM_TYPE_COLOR_VAR[row.itemType] }}

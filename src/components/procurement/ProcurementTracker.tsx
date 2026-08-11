@@ -3,6 +3,41 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+// Matches the chart-series-1/2/3 mapping used for these item types elsewhere on the dashboard.
+const ITEM_TYPE_WRAP: Record<string, string> = {
+  section: "bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-400 dark:ring-indigo-500/25",
+  hardware: "bg-teal-50 text-teal-700 ring-1 ring-inset ring-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:ring-teal-500/25",
+  gasket: "bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25",
+};
+
+function ItemTypeIcon({ itemType, className }: { itemType: string; className?: string }) {
+  const common = { viewBox: "0 0 24 24", fill: "none", strokeWidth: 1.8, className };
+  if (itemType === "hardware") {
+    return (
+      <svg {...common}>
+        <path
+          d="M14.5 6.5a3.5 3.5 0 0 0-4.6 4.6L4 17v3h3l5.9-5.9a3.5 3.5 0 0 0 4.6-4.6l-2.3 2.3-2-2 2.3-2.3Z"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+  if (itemType === "gasket") {
+    return (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="8" />
+        <circle cx="12" cy="12" r="3.5" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common}>
+      <path d="M4 6a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6Z" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 interface ProcurementItemData {
   id: string;
   itemType: string;
@@ -185,11 +220,16 @@ function ItemCard({
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-edge bg-surface p-4">
       <div className="flex items-center justify-between">
-        <span className="font-medium capitalize text-fg">{item.itemType}</span>
+        <div className="flex items-center gap-2.5">
+          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${ITEM_TYPE_WRAP[item.itemType] ?? "bg-overlay text-fg-muted"}`}>
+            <ItemTypeIcon itemType={item.itemType} className="h-5 w-5 stroke-current" />
+          </span>
+          <span className="font-medium capitalize text-fg">{item.itemType}</span>
+        </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-fg-muted">Expected: {formatDate(item.expectedArrivalDate)}</span>
           {item.overrun && (
-            <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-400 ring-1 ring-inset ring-amber-500/25">
+            <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-500/25 dark:text-amber-400">
               Overdue
             </span>
           )}
@@ -197,7 +237,7 @@ function ItemCard({
       </div>
 
       {error && (
-        <div className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-400 ring-1 ring-inset ring-red-500/25">
+        <div className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-600 ring-1 ring-inset ring-red-500/25 dark:text-red-400">
           {error}
         </div>
       )}
@@ -259,7 +299,7 @@ function ItemCard({
         </div>
       ) : (
         item.notes && (
-          <div className="rounded-lg bg-white/[0.06] px-3 py-2 text-xs italic text-fg-muted">
+          <div className="rounded-lg bg-overlay px-3 py-2 text-xs italic text-fg-muted">
             &ldquo;{item.notes}&rdquo;
           </div>
         )
