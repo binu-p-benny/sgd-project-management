@@ -14,12 +14,19 @@ const dateOrNull = z
 
 const updateSchema = z.object({
   requirementCreatedAt: dateOrNull,
+  requirementNote: z.string().nullable().optional(),
   quoteCreatedAt: dateOrNull,
+  quoteNote: z.string().nullable().optional(),
   orderConfirmedAt: dateOrNull,
+  orderNote: z.string().nullable().optional(),
   paymentSettledAt: dateOrNull,
+  paymentNote: z.string().nullable().optional(),
   paymentDetails: z.string().nullable().optional(),
   actualArrivalDate: dateOrNull,
+  arrivalNote: z.string().nullable().optional(),
   qcCheckedAt: dateOrNull,
+  qcPassed: z.boolean().nullable().optional(),
+  qcNote: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
 });
 
@@ -45,10 +52,12 @@ export async function PATCH(
   }
 
   // Procurement (quote/order/payment/arrival/QC) is Purchase's domain, but the
-  // "Requirement created" date is 2A's own gate and 2A belongs to Design Engineer —
-  // so a request touching only requirementCreatedAt is authorized for them too.
+  // "Requirement created" row is 2A's own gate and 2A belongs to Design Engineer —
+  // so a request touching only that row's date and/or note is authorized for them too.
   const touchedFields = Object.keys(parsed.data);
-  const isRequirementOnlyUpdate = touchedFields.every((k) => k === "requirementCreatedAt");
+  const isRequirementOnlyUpdate = touchedFields.every(
+    (k) => k === "requirementCreatedAt" || k === "requirementNote"
+  );
   const authorized =
     isAdminEditor(session) ||
     session.department === "purchase" ||
@@ -57,7 +66,19 @@ export async function PATCH(
     return NextResponse.json({ error: "Forbidden — not your department's field" }, { status: 403 });
   }
 
-  const { requirementCreatedAt, qcCheckedAt, ...dateFields } = parsed.data;
+  const { requirementCreatedAt, qcCheckedAt, qcPassed, ...dateFields } = parsed.data;
+
+  // What qcPassed will actually be after this write — clearing qcCheckedAt (reverting the
+  // check) always resets it to null, since "not checked" has no result; otherwise it's
+  // whatever this request sets it to, or the existing value if this request doesn't touch it
+  // (e.g. a plain date correction on an already-resolved row).
+  const effectiveQcPassed = qcCheckedAt === null ? null : qcPassed !== undefined ? qcPassed : item.qcPassed;
+  if (effectiveQcPassed === false) {
+    const effectiveNote = dateFields.qcNote !== undefined ? dateFields.qcNote : item.qcNote;
+    if (!effectiveNote?.trim()) {
+      return NextResponse.json({ error: "A note is required when QC fails" }, { status: 400 });
+    }
+  }
 
   const updated = await prisma.procurementItem.update({
     where: { id },
@@ -76,8 +97,11 @@ export async function PATCH(
             qcCheckedAt,
             qcChecked: qcCheckedAt !== null,
             qcCheckedBy: qcCheckedAt ? session.userId : null,
+            qcPassed: qcCheckedAt === null ? null : qcPassed,
           }
-        : {}),
+        : qcPassed !== undefined
+          ? { qcPassed }
+          : {}),
     },
   });
 

@@ -24,10 +24,15 @@ export async function patchProcurementItem(
   projectId: string,
   itemType: ItemType,
   userId: string,
-  data: Partial<{ requirementCreatedAt: Date | null; actualArrivalDate: Date | null; qcCheckedAt: Date | null }>
+  data: Partial<{
+    requirementCreatedAt: Date | null;
+    actualArrivalDate: Date | null;
+    qcCheckedAt: Date | null;
+    qcPassed: boolean | null;
+  }>
 ) {
   const item = await prisma.procurementItem.findFirstOrThrow({ where: { projectId, itemType } });
-  const { requirementCreatedAt, qcCheckedAt, ...rest } = data;
+  const { requirementCreatedAt, qcCheckedAt, qcPassed, ...rest } = data;
   const updateData: Record<string, unknown> = { ...rest };
   if (requirementCreatedAt !== undefined) {
     updateData.requirementCreatedAt = requirementCreatedAt;
@@ -39,6 +44,12 @@ export async function patchProcurementItem(
     updateData.qcCheckedAt = qcCheckedAt;
     updateData.qcChecked = qcCheckedAt !== null;
     updateData.qcCheckedBy = qcCheckedAt ? userId : null;
+    // Callers that only set qcCheckedAt (the common case, mirroring most existing tests) mean
+    // "checked and passed" unless they say otherwise — same default the UI's Pass button
+    // bundles into one action. An explicit qcPassed always wins.
+    updateData.qcPassed = qcPassed !== undefined ? qcPassed : qcCheckedAt ? true : null;
+  } else if (qcPassed !== undefined) {
+    updateData.qcPassed = qcPassed;
   }
   await prisma.procurementItem.update({ where: { id: item.id }, data: updateData });
   await syncDerivedStepStatus(projectId, "2A", userId);

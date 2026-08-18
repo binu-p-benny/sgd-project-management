@@ -129,7 +129,12 @@ describe("a revert leaves nothing behind from after the step", () => {
     expect((await getStep(project.id, "1A")).notes).toBe("kept");
   });
 
-  it("blanks the planned dates of a phase whose gate step is no longer complete", async () => {
+  it("keeps projecting the phase's planned dates from 1D's own schedule after its gate step is reverted", async () => {
+    // Phase 2's planned dates are no longer gate-locked — they exist from project creation and
+    // are purely dependency-driven, same as Phase 1. Reverting 1D clears its *actual* end date,
+    // which un-completes it — so Phase 2 now projects from 1D's (unchanged) *planned* end date
+    // instead of the actual end date it had while 1D was complete. Either way, Phase 2 always
+    // carries a real projected schedule; it never goes null the way a gate-locked phase used to.
     const project = await createTestProject();
     await advanceThroughPhase1(project.id, users, "emergency");
 
@@ -140,34 +145,22 @@ describe("a revert leaves nothing behind from after the step", () => {
     const oneD = await getStep(project.id, "1D");
     await revertStep(oneD.id, users.owner_admin, { reason: REASON, clearDerivedProcurement: true });
 
-    // Phase 2 is no longer unlocked, so it carries no schedule — same as a project that has
-    // not reached it yet. Projecting from a gate that has not finished would be a claim the
-    // record no longer supports.
-    for (const code of ["2A", "2D1", "2D2", "2F"]) {
-      const step = await getStep(project.id, code);
-      expect(step.plannedStartDate).toBeNull();
-      expect(step.plannedEndDate).toBeNull();
-      expect(step.actualStartDate).toBeNull();
-      expect(step.actualEndDate).toBeNull();
-    }
-    // Phase 1 has no gate above it, so it keeps its ordinary forward projection.
-    expect((await getStep(project.id, "1D")).plannedEndDate).not.toBeNull();
-  });
+    const oneDAfter = await getStep(project.id, "1D");
+    expect(oneDAfter.actualEndDate).toBeNull(); // the revert's actual effect
+    expect(oneDAfter.plannedEndDate).not.toBeNull(); // planned dates are never cleared by a revert
 
-  it("restores the phase's planned dates when the gate is completed again", async () => {
-    const project = await createTestProject();
-    await advanceThroughPhase1(project.id, users, "emergency");
+    // 2A depends directly on 1D, so its start is exactly 1D's (now-planned) end date.
+    const twoA = await getStep(project.id, "2A");
+    expect(twoA.plannedStartDate).toEqual(oneDAfter.plannedEndDate);
 
-    const oneD = await getStep(project.id, "1D");
-    await revertStep(oneD.id, users.owner_admin, { reason: REASON, clearDerivedProcurement: true });
-    expect((await getStep(project.id, "2A")).plannedStartDate).toBeNull();
-
-    await updateStepStatus(oneD.id, "completed", users.accounts);
-
+    // Everything further downstream still carries a real projected schedule — none of it
+    // goes null, unlike the old gate-locked behavior.
     for (const code of ["2A", "2D1", "2D2", "2F"]) {
       const step = await getStep(project.id, code);
       expect(step.plannedStartDate).not.toBeNull();
       expect(step.plannedEndDate).not.toBeNull();
+      expect(step.actualStartDate).toBeNull();
+      expect(step.actualEndDate).toBeNull();
     }
   });
 

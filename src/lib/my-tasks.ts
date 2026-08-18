@@ -73,7 +73,9 @@ export async function getMyTasks(
       derivedSummary = s.items.map((i) => ({ itemType: i.itemType, done: i.arrived }));
     } else if (step.stepCode === "2F") {
       const s = await getMaterialQCStatus(step.projectId);
-      derivedSummary = s.items.map((i) => ({ itemType: i.itemType, done: i.qcChecked }));
+      // A failed item isn't "done" — checked-but-failed still needs correcting and
+      // re-checking before it counts, same as the completion gate itself.
+      derivedSummary = s.items.map((i) => ({ itemType: i.itemType, done: i.qcChecked && i.qcPassed === true }));
     }
 
     let gateBlockedBy: string[] | null = null;

@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import { buildPhase1Steps, computePlannedDates } from "@/lib/step-template";
+import { buildPhase1Steps, buildPhase2Steps, computePlannedDates } from "@/lib/step-template";
+import { createEmptyProcurementItemsForProject } from "@/lib/procurement";
 import type { OverallStatus, PaymentStatus, ProjectPhase } from "@prisma/client";
 
 const createProjectSchema = z.object({
@@ -29,8 +30,13 @@ export async function POST(request: NextRequest) {
   const data = parsed.data;
   const now = new Date();
 
-  const phase1Steps = buildPhase1Steps();
-  const plannedDates = computePlannedDates(phase1Steps, now);
+  // Visit urgency isn't known yet at creation — it's decided on the actual welcome call
+  // (see the 1A completion flow in TaskCard.tsx / applyVisitUrgency in step-actions.ts).
+  // 1B's plannedDurationDays stays null until then, which computePlannedDates propagates
+  // forward as unresolved (null) planned dates for 1C, 1D, and every Phase 2 step — they
+  // resolve once 1A completes and visit urgency sets 1B's duration.
+  const steps = [...buildPhase1Steps(), ...buildPhase2Steps()];
+  const plannedDates = computePlannedDates(steps, now);
 
   const project = await prisma.$transaction(async (tx) => {
     const created = await tx.project.create({
@@ -48,7 +54,7 @@ export async function POST(request: NextRequest) {
     });
 
     await tx.phaseStep.createMany({
-      data: phase1Steps.map((step) => {
+      data: steps.map((step) => {
         const dates = plannedDates.get(step.stepCode)!;
         return {
           projectId: created.id,
@@ -67,6 +73,10 @@ export async function POST(request: NextRequest) {
 
     return created;
   });
+
+  // Idempotent (only creates missing item types) — safe to create Phase 2's procurement
+  // rows up front now that Phase 2 steps exist from day one, rather than waiting for 1D.
+  await createEmptyProcurementItemsForProject(project.id);
 
   return NextResponse.json(project, { status: 201 });
 }

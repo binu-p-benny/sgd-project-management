@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { DEPARTMENT_LABELS } from "@/lib/labels";
 import { ThemeToggle } from "./ThemeToggle";
+import { NotificationBell } from "./NotificationBell";
 import type { Department } from "@prisma/client";
 
 interface NavItem {
@@ -108,6 +109,9 @@ export function AppShell({
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-accent to-accent-2 text-xs font-bold text-white shadow-[var(--shadow-accent)]">
             S
           </span>
+          <span className="shrink-0">
+            <NotificationBell />
+          </span>
           <span className="whitespace-nowrap text-base font-semibold tracking-tight text-fg opacity-0 transition-opacity duration-150 group-hover:opacity-100">
             SGD Monitoring
           </span>
@@ -164,6 +168,7 @@ export function AppShell({
             SGD Monitoring
           </span>
           <div className="flex items-center gap-3">
+            <NotificationBell />
             <ThemeToggle variant="iconOnly" />
             <button onClick={handleLogout} className="text-sm font-medium text-fg-muted">
               Log out

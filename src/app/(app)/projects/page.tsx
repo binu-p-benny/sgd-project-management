@@ -4,6 +4,7 @@ import { getSession, isAdminEditor } from "@/lib/auth";
 import { ProjectFilters } from "@/components/projects/ProjectFilters";
 import { DeleteProjectButton } from "@/components/projects/DeleteProjectButton";
 import { getEffectiveOverallStatus, projectHasOverrun } from "@/lib/overrun";
+import { buildAllStepCodes } from "@/lib/step-template";
 import {
   PHASE_LABELS,
   OVERALL_STATUS_LABELS,
@@ -11,6 +12,24 @@ import {
   PAYMENT_STATUS_LABELS,
 } from "@/lib/labels";
 import type { Department, OverallStatus, PaymentStatus, ProjectPhase } from "@prisma/client";
+
+const STEP_NAME_BY_CODE = new Map(buildAllStepCodes().map((s) => [s.stepCode, s.stepName]));
+
+/**
+ * The earliest not-yet-completed step, by step_code — lexicographic order matches the
+ * intended workflow sequence for every code in this schema (1A<1B<1C<1D, 2A<2D1<2D2<2F,
+ * 3A<3B<3C1<3C2<3E), same convention StepProgressBar and step-actions.ts rely on. This is
+ * the concrete process step a project is sitting at right now, one level more specific
+ * than current_phase.
+ */
+function getCurrentStep(
+  steps: { stepCode: string; stepName: string; status: string }[]
+): { stepCode: string; stepName: string } | null {
+  const open = steps
+    .filter((s) => s.status !== "completed")
+    .sort((a, b) => a.stepCode.localeCompare(b.stepCode));
+  return open[0] ?? null;
+}
 
 function formatINR(amount: number): string {
   return new Intl.NumberFormat("en-IN", {
@@ -27,6 +46,7 @@ const ACTIVE_FILTER_LABEL: Record<string, (value: string) => string> = {
   paymentStatus: (v) => `Payment: ${PAYMENT_STATUS_LABELS[v as PaymentStatus] ?? v}`,
   newDays: (v) => `Created in last ${v} days`,
   overdue: () => `Has an overdue step`,
+  currentStep: (v) => `Current step: ${v}${STEP_NAME_BY_CODE.has(v) ? ` · ${STEP_NAME_BY_CODE.get(v)}` : ""}`,
 };
 
 export default async function ProjectsPage({
@@ -39,6 +59,7 @@ export default async function ProjectsPage({
     paymentStatus?: string;
     newDays?: string;
     overdue?: string;
+    currentStep?: string;
   }>;
 }) {
   const params = await searchParams;
@@ -50,6 +71,7 @@ export default async function ProjectsPage({
   const paymentStatus = params.paymentStatus as PaymentStatus | undefined;
   const newDays = params.newDays ? Number(params.newDays) : undefined;
   const overdueOnly = params.overdue === "1";
+  const currentStepFilter = params.currentStep;
 
   const rawProjects = await prisma.project.findMany({
     where: {
@@ -58,7 +80,7 @@ export default async function ProjectsPage({
       ...(paymentStatus ? { paymentStatus } : {}),
     },
     include: {
-      phaseSteps: { select: { plannedEndDate: true, status: true } },
+      phaseSteps: { select: { stepCode: true, stepName: true, plannedEndDate: true, status: true } },
       procurementItems: { select: { expectedArrivalDate: true, actualArrivalDate: true } },
     },
     orderBy: { createdAt: "desc" },
@@ -73,10 +95,12 @@ export default async function ProjectsPage({
       ...p,
       effectiveStatus: getEffectiveOverallStatus(p.overallStatus, projectHasOverrun(p.phaseSteps, p.procurementItems)),
       hasOverdue: projectHasOverrun(p.phaseSteps, p.procurementItems),
+      currentStep: getCurrentStep(p.phaseSteps),
     }))
     .filter((p) => !status || p.effectiveStatus === status)
     .filter((p) => !newSince || p.createdAt >= newSince)
-    .filter((p) => !overdueOnly || p.hasOverdue);
+    .filter((p) => !overdueOnly || p.hasOverdue)
+    .filter((p) => !currentStepFilter || p.currentStep?.stepCode === currentStepFilter);
 
   const activeFilters = Object.entries(params).filter(([, v]) => v);
 
@@ -142,10 +166,21 @@ export default async function ProjectsPage({
                       {OVERALL_STATUS_LABELS[project.effectiveStatus]}
                     </span>
                   </div>
-                  <div className="text-sm text-fg-muted">{project.clientName}</div>
+                  {project.clientName !== project.name && (
+                    <div className="text-sm text-fg-muted">{project.clientName}</div>
+                  )}
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-fg-muted">{PHASE_LABELS[project.currentPhase]}</span>
                     <span className="font-mono tabular-nums text-fg-muted">{formatINR(Number(project.finalCost))}</span>
+                  </div>
+                  <div className="text-xs leading-snug text-fg-subtle">
+                    {project.currentStep ? (
+                      <>
+                        <span className="font-mono">{project.currentStep.stepCode}</span> {project.currentStep.stepName}
+                      </>
+                    ) : (
+                      "Completed"
+                    )}
                   </div>
                   <div className="text-xs text-fg-subtle">Payment: {PAYMENT_STATUS_LABELS[project.paymentStatus]}</div>
                 </Link>
@@ -164,8 +199,8 @@ export default async function ProjectsPage({
               <thead className="bg-surface text-[11px] uppercase tracking-wider text-fg-subtle">
                 <tr>
                   <th className="px-4 py-3 font-medium">Project</th>
-                  <th className="px-4 py-3 font-medium">Client</th>
                   <th className="px-4 py-3 font-medium">Phase</th>
+                  <th className="w-56 px-4 py-3 font-medium">Current step</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Payment</th>
                   <th className="px-4 py-3 font-medium text-right">Final cost</th>
@@ -176,12 +211,24 @@ export default async function ProjectsPage({
                 {projects.map((project) => (
                   <tr key={project.id} className="cursor-pointer bg-surface transition-colors hover:bg-surface-2">
                     <td className="px-4 py-3">
-                      <Link href={`/projects/${project.id}`} className="font-medium text-fg hover:underline">
-                        {project.name}
+                      <Link href={`/projects/${project.id}`} className="flex flex-col gap-0.5">
+                        <span className="font-medium text-fg hover:underline">{project.name}</span>
+                        {project.clientName !== project.name && (
+                          <span className="text-xs text-fg-muted">{project.clientName}</span>
+                        )}
                       </Link>
                     </td>
-                    <td className="px-4 py-3 text-fg-muted">{project.clientName}</td>
                     <td className="px-4 py-3 text-fg-muted">{PHASE_LABELS[project.currentPhase]}</td>
+                    <td className="max-w-[14rem] px-4 py-3 text-fg-muted">
+                      {project.currentStep ? (
+                        <span className="leading-snug">
+                          <span className="font-mono text-xs text-fg-subtle">{project.currentStep.stepCode}</span>{" "}
+                          {project.currentStep.stepName}
+                        </span>
+                      ) : (
+                        "Completed"
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <span
                         className={`rounded-full px-2 py-0.5 text-xs font-medium ${OVERALL_STATUS_COLORS[project.effectiveStatus]}`}

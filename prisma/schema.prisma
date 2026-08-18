@@ -120,6 +120,7 @@ model User {
 
   statusChanges  StepStatusLog[]   @relation("StatusChangedBy")
   qcCheckedItems ProcurementItem[] @relation("QcCheckedBy")
+  notifications  Notification[]
 
   @@index([department])
   @@map("users")
@@ -162,6 +163,7 @@ model Project {
 
   phaseSteps       PhaseStep[]
   procurementItems ProcurementItem[]
+  notifications    Notification[]
 
   @@index([currentPhase])
   @@index([overallStatus])
@@ -196,16 +198,45 @@ model PhaseStep {
   blockedNote   String?        @map("blocked_note") @db.Text
   notes         String?        @db.Text
 
+  // Idempotency guard for the overdue-notification cron (see notify-overdue.ts): set the
+  // moment notifications go out for this step being overdue, so a daily run doesn't re-notify
+  // the same step every day. Cleared back to null wherever planned_end_date changes, so a step
+  // that slips further (or is corrected) is eligible to be (re-)notified.
+  notifiedOverdueAt DateTime? @map("notified_overdue_at") @db.Timestamptz(3)
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  statusLogs StepStatusLog[]
+  statusLogs    StepStatusLog[]
+  notifications Notification[]
 
   @@index([projectId])
   @@index([stepCode])
   @@index([owningDepartment])
   @@index([status])
   @@map("phase_steps")
+}
+
+model Notification {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id])
+
+  // Plain string rather than a Prisma enum — future notification kinds shouldn't need a migration.
+  type    String @default("step_overdue")
+  message String @db.Text
+
+  projectId   String?    @map("project_id")
+  project     Project?   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseStepId String?    @map("phase_step_id")
+  phaseStep   PhaseStep? @relation(fields: [phaseStepId], references: [id], onDelete: Cascade)
+
+  readAt DateTime? @map("read_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([userId, readAt])
+  @@map("notifications")
 }
 
 model ProcurementItem {
@@ -215,18 +246,34 @@ model ProcurementItem {
 
   itemType ItemType @map("item_type")
 
+  // Overrides the project-wide planned-date anchor (1D's actual end + 1 day) for this item
+  // alone — set when restarting an item after a QC failure, per the client's own new timeline
+  // for it. Every planned date on this item (requirement/quote/payment/order/arrival/QC) is
+  // computed from this instead of the shared anchor once it's set. Null means "use the
+  // project default", same as every item behaves today.
+  planAnchorOverride DateTime? @map("plan_anchor_override") @db.Timestamptz(3)
+
   requirementCreatedAt DateTime? @map("requirement_created_at") @db.Timestamptz(3)
+  requirementNote      String?   @map("requirement_note") @db.Text
   quoteCreatedAt       DateTime? @map("quote_created_at") @db.Timestamptz(3)
+  quoteNote            String?   @map("quote_note") @db.Text
   orderConfirmedAt     DateTime? @map("order_confirmed_at") @db.Timestamptz(3)
+  orderNote            String?   @map("order_note") @db.Text
   paymentSettledAt     DateTime? @map("payment_settled_at") @db.Timestamptz(3)
+  paymentNote          String?   @map("payment_note") @db.Text
   paymentDetails       String?   @map("payment_details") @db.Text
   expectedArrivalDate  DateTime? @map("expected_arrival_date") @db.Timestamptz(3)
   actualArrivalDate    DateTime? @map("actual_arrival_date") @db.Timestamptz(3)
+  arrivalNote          String?   @map("arrival_note") @db.Text
 
   qcChecked   Boolean   @default(false) @map("qc_checked")
   qcCheckedAt DateTime? @map("qc_checked_at") @db.Timestamptz(3)
   qcCheckedBy String?   @map("qc_checked_by")
   qcCheckedByUser User? @relation("QcCheckedBy", fields: [qcCheckedBy], references: [id])
+  // null = not yet checked, true = passed, false = failed. 2F only derives as complete once
+  // every item is checked AND passed — a failed item blocks phase 3 until it's corrected.
+  qcPassed Boolean? @map("qc_passed")
+  qcNote      String?   @map("qc_note") @db.Text
 
   notes String? @db.Text
 

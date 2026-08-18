@@ -12,12 +12,19 @@ export function isStepOverrun(
   return new Date() > plannedEndDate;
 }
 
+/** Generic form behind isProcurementItemOverrun — true once `expected` has passed with
+ *  nothing recorded against `actual` yet. Reused for the quote/payment due-date checks in
+ *  the procurement tracker, which follow the same "expected but not done" shape as arrival. */
+export function isProcurementStageOverrun(expected: Date | null, actual: Date | null): boolean {
+  if (!expected || actual) return false;
+  return new Date() > expected;
+}
+
 export function isProcurementItemOverrun(
   expectedArrivalDate: Date | null,
   actualArrivalDate: Date | null
 ): boolean {
-  if (!expectedArrivalDate || actualArrivalDate) return false;
-  return new Date() > expectedArrivalDate;
+  return isProcurementStageOverrun(expectedArrivalDate, actualArrivalDate);
 }
 
 export function daysBlocked(updatedAt: Date): number {

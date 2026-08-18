@@ -78,7 +78,10 @@ describe("Phase 1 — 1B duration auto-derived from visit_urgency", () => {
 
       const oneB = await getStep(project.id, "1B");
       expect(oneB.plannedDurationDays).toBe(expectedDays);
-      expect(oneB.status).toBe("not_started");
+      // 1B has nothing left to gate it once 1A wraps up, so it auto-starts rather than
+      // sitting at not_started waiting for someone to click Start.
+      expect(oneB.status).toBe("in_progress");
+      expect(oneB.actualStartDate).not.toBeNull();
       expect(oneB.plannedStartDate).not.toBeNull();
       expect(oneB.plannedEndDate).toEqual(
         new Date(oneB.plannedStartDate!.getTime() + expectedDays * 24 * 60 * 60 * 1000)
@@ -88,6 +91,25 @@ describe("Phase 1 — 1B duration auto-derived from visit_urgency", () => {
       expect(project2.visitUrgency).toBe(urgency);
     });
   }
+
+  it("completing 1B auto-starts 1C the same way 1A auto-starts 1B", async () => {
+    const project = await createTestProject();
+    const oneA = await getStep(project.id, "1A");
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency" });
+
+    const oneC = await getStep(project.id, "1C");
+    expect(oneC.status).toBe("not_started"); // 1B isn't done yet
+
+    const oneB = await getStep(project.id, "1B");
+    await updateStepStatus(oneB.id, "completed", users.project_engineer);
+
+    const oneCAfter = await getStep(project.id, "1C");
+    expect(oneCAfter.status).toBe("in_progress");
+    expect(oneCAfter.actualStartDate).not.toBeNull();
+
+    const logs = await getStatusLogs(oneC.id);
+    expect(logs.at(-1)).toMatchObject({ oldStatus: "not_started", newStatus: "in_progress" });
+  });
 
   it("site_not_ready sends 1B straight to blocked with no duration, and the project shows blocked", async () => {
     const project = await createTestProject();

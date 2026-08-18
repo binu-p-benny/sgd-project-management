@@ -2,6 +2,9 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { PHASE_LABELS, OVERALL_STATUS_LABELS, DEPARTMENT_LABELS } from "@/lib/labels";
+import { buildAllStepCodes } from "@/lib/step-template";
+
+const STEP_OPTIONS = buildAllStepCodes();
 
 export function ProjectFilters() {
   const router = useRouter();
@@ -60,6 +63,20 @@ export function ProjectFilters() {
         {Object.entries(DEPARTMENT_LABELS).map(([value, label]) => (
           <option key={value} value={value}>
             {label}
+          </option>
+        ))}
+      </select>
+
+      <select
+        aria-label="Filter by current step"
+        className={selectClass}
+        value={searchParams.get("currentStep") ?? ""}
+        onChange={(e) => setParam("currentStep", e.target.value)}
+      >
+        <option value="">All current steps</option>
+        {STEP_OPTIONS.map(({ stepCode, stepName }) => (
+          <option key={stepCode} value={stepCode}>
+            {stepCode} · {stepName}
           </option>
         ))}
       </select>

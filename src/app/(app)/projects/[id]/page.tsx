@@ -9,7 +9,16 @@ import { StepProgressBar } from "@/components/projects/StepProgressBar";
 import { TaskCard } from "@/components/my-tasks/TaskCard";
 import { getMyTasks, type MyTaskItem } from "@/lib/my-tasks";
 import { getBlockerHistory } from "@/lib/blocker-history";
-import { isStepOverrun, isProcurementItemOverrun, getEffectiveOverallStatus, projectHasOverrun } from "@/lib/overrun";
+import { isStepOverrun, isProcurementStageOverrun, getEffectiveOverallStatus, projectHasOverrun } from "@/lib/overrun";
+import {
+  computeExpectedRequirementDate,
+  computeExpectedQuoteDate,
+  computeExpectedPaymentDate,
+  computeExpectedOrderDate,
+  computeExpectedArrivalDate,
+  computeExpectedQCDate,
+} from "@/lib/procurement";
+import { addDays } from "@/lib/step-template";
 import {
   PHASE_LABELS,
   OVERALL_STATUS_LABELS,
@@ -227,26 +236,117 @@ export default async function ProjectDetailPage({
   const editableBeforePhase3 = editableStepsByPhase.filter((g) => g.phase !== "phase_3");
   const editablePhase3Only = editableStepsByPhase.filter((g) => g.phase === "phase_3");
 
+  // Planned dates for every row are anchored to the same fixed point — 1D's actual end + 1
+  // day, the day Phase 2 begins — rather than to each item's own (manually-entered) actual
+  // dates. Anchoring to the actual dates would mean the plan couldn't show until the very
+  // fields it's meant to be compared against were already filled in, and would shift every
+  // time one of them changed.
+  const oneD = project.phaseSteps.find((s) => s.stepCode === "1D");
+  const phase2PlanAnchor = oneD?.actualEndDate ? addDays(oneD.actualEndDate, 1) : null;
+
   const procurementTracker = (
     <ProcurementTracker
       canEdit={!!session && (isAdminEditor(session) || session.department === "purchase")}
       canEditRequirement={!!session && session.department === "design_engineer"}
       items={[...project.procurementItems]
         .sort((a, b) => ITEM_TYPE_ORDER[a.itemType] - ITEM_TYPE_ORDER[b.itemType])
-        .map((item) => ({
-        id: item.id,
-        itemType: item.itemType,
-        requirementCreatedAt: item.requirementCreatedAt?.toISOString() ?? null,
-        quoteCreatedAt: item.quoteCreatedAt?.toISOString() ?? null,
-        orderConfirmedAt: item.orderConfirmedAt?.toISOString() ?? null,
-        paymentSettledAt: item.paymentSettledAt?.toISOString() ?? null,
-        paymentDetails: item.paymentDetails,
-        expectedArrivalDate: item.expectedArrivalDate?.toISOString() ?? null,
-        actualArrivalDate: item.actualArrivalDate?.toISOString() ?? null,
-        qcCheckedAt: item.qcCheckedAt?.toISOString() ?? null,
-        overrun: isProcurementItemOverrun(item.expectedArrivalDate, item.actualArrivalDate),
-        notes: item.notes,
-      }))}
+        .map((item) => {
+          // A restarted item (after a QC failure) carries its own client-given planned date
+          // instead of the project's default — see resetProcurementItem in step-actions.ts.
+          // Every other item keeps following the shared anchor as before.
+          const itemPlanAnchor = item.planAnchorOverride ?? phase2PlanAnchor;
+          const planned = (compute: (t: ItemType, anchor: Date) => Date) =>
+            itemPlanAnchor ? compute(item.itemType, itemPlanAnchor) : null;
+
+          const stages = [
+            {
+              id: "requirement",
+              label: "Requirement created",
+              dateField: "requirementCreatedAt" as const,
+              noteField: "requirementNote" as const,
+              actualDate: item.requirementCreatedAt,
+              note: item.requirementNote,
+              // No item-type offset — every item's requirement is expected within 24 hours
+              // of 1D closing out, unlike quote/order/arrival/QC which vary by supplier.
+              plannedDate: itemPlanAnchor ? computeExpectedRequirementDate(itemPlanAnchor) : null,
+              requirementGated: true,
+              qcPassed: null,
+            },
+            {
+              id: "quote",
+              label: "Quote created",
+              dateField: "quoteCreatedAt" as const,
+              noteField: "quoteNote" as const,
+              actualDate: item.quoteCreatedAt,
+              note: item.quoteNote,
+              plannedDate: planned(computeExpectedQuoteDate),
+              requirementGated: false,
+              qcPassed: null,
+            },
+            {
+              id: "payment",
+              label: "Payment done",
+              dateField: "paymentSettledAt" as const,
+              noteField: "paymentNote" as const,
+              actualDate: item.paymentSettledAt,
+              note: item.paymentNote,
+              plannedDate: planned(computeExpectedPaymentDate),
+              requirementGated: false,
+              qcPassed: null,
+            },
+            {
+              id: "order",
+              label: "Order confirmed",
+              dateField: "orderConfirmedAt" as const,
+              noteField: "orderNote" as const,
+              actualDate: item.orderConfirmedAt,
+              note: item.orderNote,
+              plannedDate: planned(computeExpectedOrderDate),
+              requirementGated: false,
+              qcPassed: null,
+            },
+            {
+              id: "arrival",
+              label: "Actual arrival",
+              dateField: "actualArrivalDate" as const,
+              noteField: "arrivalNote" as const,
+              actualDate: item.actualArrivalDate,
+              note: item.arrivalNote,
+              plannedDate: planned(computeExpectedArrivalDate),
+              requirementGated: false,
+              qcPassed: null,
+            },
+            {
+              id: "qc",
+              label: "QC checked",
+              dateField: "qcCheckedAt" as const,
+              noteField: "qcNote" as const,
+              actualDate: item.qcCheckedAt,
+              note: item.qcNote,
+              plannedDate: planned(computeExpectedQCDate),
+              requirementGated: false,
+              qcPassed: item.qcPassed,
+            },
+          ].map((stage) => ({
+            id: stage.id,
+            label: stage.label,
+            dateField: stage.dateField,
+            noteField: stage.noteField,
+            plannedDate: stage.plannedDate?.toISOString() ?? null,
+            actualDate: stage.actualDate?.toISOString() ?? null,
+            note: stage.note,
+            overrun: isProcurementStageOverrun(stage.plannedDate, stage.actualDate),
+            requirementGated: stage.requirementGated,
+            qcPassed: stage.qcPassed,
+          }));
+
+          return {
+            id: item.id,
+            itemType: item.itemType,
+            stages,
+            planAnchorOverride: item.planAnchorOverride?.toISOString() ?? null,
+          };
+        })}
     />
   );
 

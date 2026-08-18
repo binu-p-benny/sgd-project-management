@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { checkDependencyGate } from "@/lib/dependency-gate";
 import { BLOCKED_REASON_LABELS } from "@/lib/labels";
 import {
+  addDays,
   buildPhase2Steps,
   buildPhase3Steps,
   computePlannedDates,
@@ -62,6 +63,7 @@ async function applyVisitUrgency(projectId: string, visitUrgency: VisitUrgency, 
         plannedDurationDays: null,
         plannedStartDate: anchor,
         plannedEndDate: null,
+        notifiedOverdueAt: null,
       },
     });
     await prisma.stepStatusLog.create({
@@ -89,12 +91,105 @@ async function applyVisitUrgency(projectId: string, visitUrgency: VisitUrgency, 
 
   for (const stepCode of ["1B", "1C", "1D"]) {
     const d = dates.get(stepCode)!;
-    const extra = stepCode === "1B" ? { plannedDurationDays: duration } : {};
+    // 1B is next in line with nothing left to gate it once 1A's welcome call wraps up, so
+    // there's no "not started" limbo for the department to notice and act on — it moves
+    // straight to in_progress instead of waiting on a manual Start. Its actual start is the
+    // day after 1A's actual end, not the same day: the two are separate visits in practice,
+    // even though nothing blocks 1B from being picked up immediately.
+    const extra: { plannedDurationDays?: number | null; status?: StepStatus; actualStartDate?: Date } =
+      stepCode === "1B"
+        ? { plannedDurationDays: duration, status: "in_progress", actualStartDate: addDays(anchor, 1) }
+        : {};
     await prisma.phaseStep.updateMany({
       where: { projectId, stepCode },
-      data: { plannedStartDate: d.plannedStartDate, plannedEndDate: d.plannedEndDate, ...extra },
+      data: {
+        plannedStartDate: d.plannedStartDate,
+        plannedEndDate: d.plannedEndDate,
+        notifiedOverdueAt: null,
+        ...extra,
+      },
     });
   }
+
+  await prisma.stepStatusLog.create({
+    data: {
+      phaseStepId: oneB.id,
+      changedByUserId: actorId,
+      oldStatus: oneB.status,
+      newStatus: "in_progress",
+      reason: "Auto-started: welcome call (1A) completed",
+    },
+  });
+}
+
+/**
+ * Flips a step straight to in_progress with its actual start stamped, the same treatment
+ * 1B gets in applyVisitUrgency once 1A wraps up: the step immediately after a just-completed
+ * one has nothing left to gate it, so there's no "not started" limbo for the department to
+ * notice and act on. `anchor` is expected to already be the day after the dependency's actual
+ * end (see the 1B/1C/1D call sites) rather than "now" — the actual start is a function of when
+ * the prior step's work finished, not of when someone happened to click the button. No-ops if
+ * the step isn't sitting at not_started (already touched, or blocked) — this only ever fires
+ * the moment its sole dependency completes.
+ */
+async function autoStartStep(projectId: string, stepCode: string, actorId: string, anchor: Date, reason: string) {
+  const step = await prisma.phaseStep.findFirst({ where: { projectId, stepCode } });
+  if (!step || step.status !== "not_started") return;
+
+  await prisma.phaseStep.update({
+    where: { id: step.id },
+    data: { status: "in_progress", actualStartDate: anchor },
+  });
+
+  await prisma.stepStatusLog.create({
+    data: {
+      phaseStepId: step.id,
+      changedByUserId: actorId,
+      oldStatus: step.status,
+      newStatus: "in_progress",
+      reason,
+    },
+  });
+}
+
+// The phase-1 chain this auto-fill runs along — kept separate from `dependsOn` since it's
+// only ever these three hops, not a general graph walk.
+const PHASE1_NEXT_STEP: Record<string, string> = { "1A": "1B", "1B": "1C", "1C": "1D" };
+
+/**
+ * Keeps the next phase-1 step's actual start following its dependency's actual end, any time
+ * that end date changes — not just at the moment autoStartStep/applyVisitUrgency first stamps
+ * it. Without this, editing a completed step's actual end later (the standalone date-save on
+ * an already-completed TaskCard) leaves the next step's actual start stale. No-ops once the
+ * next step is itself completed — a finished step's own history isn't rewritten by an edit
+ * further up the chain.
+ */
+export async function cascadeActualStart(
+  projectId: string,
+  stepCode: string,
+  actualEndDate: Date,
+  actorId: string
+) {
+  const nextCode = PHASE1_NEXT_STEP[stepCode];
+  if (!nextCode) return;
+
+  const next = await prisma.phaseStep.findFirst({ where: { projectId, stepCode: nextCode } });
+  if (!next || next.status === "completed") return;
+
+  const newStart = addDays(actualEndDate, 1);
+  if (next.actualStartDate?.getTime() === newStart.getTime()) return;
+
+  await prisma.phaseStep.update({ where: { id: next.id }, data: { actualStartDate: newStart } });
+
+  await prisma.stepStatusLog.create({
+    data: {
+      phaseStepId: next.id,
+      changedByUserId: actorId,
+      oldStatus: next.status,
+      newStatus: next.status,
+      reason: `Actual start recalculated — ${stepCode}'s actual end changed`,
+    },
+  });
 }
 
 /**
@@ -112,7 +207,11 @@ async function seedPhaseSteps(
 ) {
   const existing = await prisma.phaseStep.count({ where: { projectId, phase } });
   if (existing === 0) {
-    const dates = computePlannedDates(template, anchor, new Map([[anchorStepCode, anchor]]));
+    // Phase 3 never gets planned dates — only Phase 1/2 are auto-scheduled. Phase 2 rows
+    // only reach here for projects created before day-one seeding existed (see the
+    // existing-rows check above), so this still computes real dates for that legacy path.
+    const dates =
+      phase === "phase_3" ? null : computePlannedDates(template, anchor, new Map([[anchorStepCode, anchor]]));
     await prisma.phaseStep.createMany({
       data: template.map((s) => ({
         projectId,
@@ -123,8 +222,8 @@ async function seedPhaseSteps(
         secondaryDepartment: s.secondaryDepartment,
         plannedDurationDays: s.plannedDurationDays,
         dependsOn: s.dependsOn,
-        plannedStartDate: dates.get(s.stepCode)!.plannedStartDate,
-        plannedEndDate: dates.get(s.stepCode)!.plannedEndDate,
+        plannedStartDate: dates?.get(s.stepCode)?.plannedStartDate ?? null,
+        plannedEndDate: dates?.get(s.stepCode)?.plannedEndDate ?? null,
       })),
     });
   }
@@ -141,6 +240,8 @@ async function seedNextPhaseIfNeeded(
     await seedPhaseSteps(projectId, "phase_2", buildPhase2Steps(), completedAt, "1D");
     // 2A is derived from these rows' requirement checkboxes — create them empty now,
     // rather than waiting for 2A to "complete" (that's backwards once 2A is derived).
+    // Requirement created stays a manual checkbox — Design Engineer ticks each of the 3
+    // items themselves; only the planned dates shown alongside them are computed up front.
     await createEmptyProcurementItemsForProject(projectId);
   }
 
@@ -359,14 +460,38 @@ export async function syncDerivedStepStatus(
 
   let complete: boolean;
   let anyProgress: boolean;
+  // Derived steps stamp their actual start/end from the procurement data that drives them,
+  // not from "now" (the moment this sync happens to run) — real dates can be backdated or
+  // simply lag behind when the sync actually fires. `derivedStartAnchor` covers the first
+  // progress made (only 2D1 uses it — 2A's own case is handled separately below, off its own
+  // planned finish); `derivedCompletedAt` covers full completion, for both 2A and 2D1.
+  let derivedStartAnchor: Date | null = null;
+  let derivedCompletedAt: Date | null = null;
   if (stepCode === "2A") {
     const s = await getRequirementCreatedStatus(projectId);
     complete = s.complete;
     anyProgress = s.items.some((i) => i.created);
+    if (complete) {
+      const dates = s.items
+        .map((i) => i.requirementCreatedAt)
+        .filter((d): d is Date => d !== null);
+      derivedCompletedAt = dates.length > 0 ? new Date(Math.max(...dates.map((d) => d.getTime()))) : null;
+    }
   } else if (stepCode === "2D1") {
     const s = await getMaterialsArrivedStatus(projectId);
     complete = s.complete;
     anyProgress = s.items.some((i) => i.arrived);
+
+    // Once any item has actually arrived, 2D1 is treated as having started the moment the
+    // last order was confirmed — that's the point goods were fully in transit, not whatever
+    // instant the first arrival happened to get checked.
+    const orderDates = s.items.map((i) => i.orderConfirmedAt).filter((d): d is Date => d !== null);
+    derivedStartAnchor = orderDates.length > 0 ? new Date(Math.max(...orderDates.map((d) => d.getTime()))) : null;
+
+    if (complete) {
+      const arrivalDates = s.items.map((i) => i.actualArrivalDate).filter((d): d is Date => d !== null);
+      derivedCompletedAt = arrivalDates.length > 0 ? new Date(Math.max(...arrivalDates.map((d) => d.getTime()))) : null;
+    }
   } else {
     const s = await getMaterialQCStatus(projectId);
     complete = s.complete;
@@ -379,6 +504,21 @@ export async function syncDerivedStepStatus(
   const isDowngrade = STATUS_RANK[newStatus] < STATUS_RANK[step.status];
   const now = new Date();
 
+  // 2A's actual start, the first time real progress is made, is set to 2A's own planned
+  // finish (same day) rather than whatever moment the first requirement box happened to get
+  // checked. plannedEndDate is 2A's single source of truth for "when it was expected to
+  // begin" — already 1D's actual end + 1 day by construction (1 day duration, dependsOn 1D —
+  // see step-template.ts), so this stays in sync with the schedule automatically rather than
+  // re-deriving the same anchor by hand. 2D1 uses derivedStartAnchor instead (see above).
+  let actualStartAnchor = now;
+  if (newStatus !== "not_started" && !step.actualStartDate) {
+    if (stepCode === "2A" && step.plannedEndDate) {
+      actualStartAnchor = step.plannedEndDate;
+    } else if (derivedStartAnchor) {
+      actualStartAnchor = derivedStartAnchor;
+    }
+  }
+
   await prisma.phaseStep.update({
     where: { id: step.id },
     data: {
@@ -389,8 +529,8 @@ export async function syncDerivedStepStatus(
       // no longer complete must not keep advertising an actual_end_date, and one back at
       // not_started must not keep an actual_start_date either.
       actualStartDate:
-        newStatus === "not_started" ? null : !step.actualStartDate ? now : undefined,
-      actualEndDate: newStatus === "completed" ? now : null,
+        newStatus === "not_started" ? null : !step.actualStartDate ? actualStartAnchor : undefined,
+      actualEndDate: newStatus === "completed" ? (derivedCompletedAt ?? now) : null,
     },
   });
 
@@ -474,7 +614,10 @@ export async function updateStepStatus(
       blockedNote: newStatus === "blocked" ? options.blockedNote ?? null : null,
       notes: options.notes !== undefined ? options.notes : undefined,
       actualStartDate: newStatus === "in_progress" && !step.actualStartDate ? now : undefined,
-      actualEndDate: newStatus === "completed" ? now : undefined,
+      // Mirrors the actualStartDate guard just above: don't clobber an actual_end_date the
+      // caller already set (e.g. via the dates PATCH bundled into the same "Mark complete"
+      // click — see submitWithDates in TaskCard.tsx) by defaulting it to "now" a moment later.
+      actualEndDate: newStatus === "completed" && !step.actualEndDate ? now : undefined,
     },
   });
 
@@ -496,7 +639,27 @@ export async function updateStepStatus(
       await applyVisitUrgency(step.projectId, options.visitUrgency, actorId);
     }
 
-    await seedNextPhaseIfNeeded(step.projectId, step.stepCode, now, step.project.glassType);
+    if (step.stepCode === "1B") {
+      await autoStartStep(
+        step.projectId,
+        "1C",
+        actorId,
+        addDays(updated.actualEndDate ?? now, 1),
+        "Auto-started: site visit (1B) completed"
+      );
+    }
+
+    if (step.stepCode === "1C") {
+      await autoStartStep(
+        step.projectId,
+        "1D",
+        actorId,
+        addDays(updated.actualEndDate ?? now, 1),
+        "Auto-started: revised drawing confirmation (1C) completed"
+      );
+    }
+
+    await seedNextPhaseIfNeeded(step.projectId, step.stepCode, updated.actualEndDate ?? now, step.project.glassType);
 
     if (step.stepCode === "3E") {
       await prisma.project.update({

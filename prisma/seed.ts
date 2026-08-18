@@ -408,6 +408,7 @@ export async function seedProject(
           qcChecked: true,
           qcCheckedAt: d(32),
           qcCheckedBy: purchaser.id,
+          qcPassed: true,
         },
       });
       const gasketItem = await prisma.procurementItem.findFirstOrThrow({
@@ -422,6 +423,7 @@ export async function seedProject(
           qcChecked: true,
           qcCheckedAt: d(32),
           qcCheckedBy: purchaser.id,
+          qcPassed: true,
         },
       });
       await startStep("2D2", designer.id, d(11));
@@ -450,6 +452,7 @@ export async function seedProject(
             qcChecked: true,
             qcCheckedAt: d(29),
             qcCheckedBy: purchaser.id,
+            qcPassed: true,
           },
         });
       }
@@ -484,6 +487,7 @@ export async function seedProject(
             qcChecked: true,
             qcCheckedAt: d(28),
             qcCheckedBy: purchaser.id,
+            qcPassed: true,
           },
         });
       }

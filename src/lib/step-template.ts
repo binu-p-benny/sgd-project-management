@@ -149,13 +149,39 @@ export function deriveVisitDurationDays(urgency: VisitUrgency): number | null {
   }
 }
 
+/**
+ * Phase 1 + Phase 2 combined, with 1B's duration resolved from a known visit_urgency —
+ * the template used to compute every Phase 1/2 planned date in one pass at project
+ * creation. Already topologically ordered (1A,1B,1C,1D,2A,2D1,2D2,2F), so a single
+ * computePlannedDates call resolves the whole chain without a separate anchor handoff
+ * between phases.
+ */
+export function buildPhase1And2Steps(visitUrgency: VisitUrgency): StepTemplateItem[] {
+  const phase1 = buildPhase1Steps().map((step) =>
+    step.stepCode === "1B" ? { ...step, plannedDurationDays: deriveVisitDurationDays(visitUrgency) } : step
+  );
+  return [...phase1, ...buildPhase2Steps()];
+}
+
+/**
+ * Every step_code/step_name in the workflow, in order — a fixed reference list (glass_type
+ * only affects 3B's duration, never its name) for UI that needs to enumerate "all possible
+ * steps" without scheduling anything, e.g. the project-list "current step" filter.
+ */
+export function buildAllStepCodes(): { stepCode: string; stepName: string }[] {
+  return [...buildPhase1Steps(), ...buildPhase2Steps(), ...buildPhase3Steps("normal")].map((s) => ({
+    stepCode: s.stepCode,
+    stepName: s.stepName,
+  }));
+}
+
 // The step_code that, on completion, triggers seeding of the next phase.
 export const PHASE_GATE_STEP_CODE = {
   phase_2: "1D",
   phase_3: "2F",
 } as const;
 
-function addDays(date: Date, days: number): Date {
+export function addDays(date: Date, days: number): Date {
   const result = new Date(date);
   result.setDate(result.getDate() + days);
   return result;

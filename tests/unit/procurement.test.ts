@@ -24,19 +24,19 @@ describe("section track: quote (2d) -> order+payment (2d) -> arrival (~21d)", ()
   });
 });
 
-describe("hardware/gasket track: quote day 13 -> order day 15 -> arrival before day 21", () => {
+describe("hardware/gasket track: quote day 13 -> order day 15 -> arrival day 21 (same as section)", () => {
   it("hardware: quote requested day 13", () => {
     expect(computeExpectedQuoteDate("hardware", requirementCreatedAt)).toEqual(daysLater(13));
   });
   it("hardware: order confirmed day 15", () => {
     expect(computeExpectedOrderDate("hardware", requirementCreatedAt)).toEqual(daysLater(15));
   });
-  it("hardware: arrival before day 21 (day 20)", () => {
-    expect(computeExpectedArrivalDate("hardware", requirementCreatedAt)).toEqual(daysLater(20));
+  it("hardware: arrival day 21, same as section — no longer a day ahead of it", () => {
+    expect(computeExpectedArrivalDate("hardware", requirementCreatedAt)).toEqual(daysLater(21));
   });
   it("gasket follows the same timing pattern as hardware", () => {
     expect(computeExpectedQuoteDate("gasket", requirementCreatedAt)).toEqual(daysLater(13));
     expect(computeExpectedOrderDate("gasket", requirementCreatedAt)).toEqual(daysLater(15));
-    expect(computeExpectedArrivalDate("gasket", requirementCreatedAt)).toEqual(daysLater(20));
+    expect(computeExpectedArrivalDate("gasket", requirementCreatedAt)).toEqual(daysLater(21));
   });
 });

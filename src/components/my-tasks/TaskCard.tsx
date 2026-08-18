@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { MyTaskItem } from "@/lib/my-tasks";
+import { useSyncedDraft } from "@/hooks/useSyncedDraft";
 import {
   STEP_STATUS_LABELS,
   STEP_STATUS_COLORS,
@@ -36,12 +37,26 @@ function openPicker(e: React.MouseEvent<HTMLInputElement>) {
   }
 }
 
-const DATE_FIELDS: { key: "plannedStartDate" | "plannedEndDate" | "actualStartDate" | "actualEndDate"; label: string }[] = [
-  { key: "plannedStartDate", label: "Planned start" },
-  { key: "plannedEndDate", label: "Planned end" },
+const DATE_FIELDS: { key: "actualStartDate" | "actualEndDate"; label: string }[] = [
   { key: "actualStartDate", label: "Actual start" },
   { key: "actualEndDate", label: "Actual end" },
 ];
+
+// Steps whose actual start isn't worth showing as an editable field — either because the
+// work happens in a single day (1A, 1B: the actual work, not the planned window leading up
+// to it, starts and finishes the same day), or because it's entirely system-derived and never
+// meant to be hand-edited (2A: always set to its own planned finish the moment real progress
+// begins — see syncDerivedStepStatus in step-actions.ts). Either way, only the completion
+// date is meaningful to correct here.
+const SINGLE_DATE_FIELD_STEP_CODES = new Set(["1A", "1B", "2A"]);
+
+// Steps that skip the Start->Mark complete two-click flow at not_started and jump straight to
+// a single completion button. Includes 1A/1B plus 1D, which — like 1B and 1C —
+// auto-starts the moment its dependency completes (see autoStartStep in step-actions.ts), so a
+// project moving through the normal flow never actually sees it sit at not_started. This only
+// matters for legacy data that reached 1D before that auto-start existed, where it's still
+// stuck at not_started: even there it should offer one click, not two.
+const SINGLE_COMPLETION_STEP_CODES = new Set(["1A", "1B", "1D"]);
 
 const btnPrimary =
   "flex-1 flex h-11 items-center justify-center rounded-lg bg-accent px-3 text-sm font-medium text-white transition-colors hover:bg-accent-2 disabled:opacity-40";
@@ -93,7 +108,7 @@ function StatusIcon({ status, className }: { status: string; className?: string 
   );
 }
 
-type Panel = "none" | "block" | "complete1a" | "dates" | "revert";
+type Panel = "none" | "block" | "complete1a" | "revert";
 
 interface RevertPlan {
   step: { stepCode: string; stepName: string; status: keyof typeof STEP_STATUS_LABELS };
@@ -130,12 +145,20 @@ export function TaskCard({
   const [blockedReason, setBlockedReason] = useState("");
   const [blockedNote, setBlockedNote] = useState("");
   const [visitUrgency, setVisitUrgency] = useState("");
-  const [dateFields, setDateFields] = useState({
-    plannedStartDate: toDateInputValue(item.plannedStartDate),
-    plannedEndDate: toDateInputValue(item.plannedEndDate),
-    actualStartDate: toDateInputValue(item.actualStartDate),
-    actualEndDate: toDateInputValue(item.actualEndDate),
-  });
+  // A plain useState would only ever seed this on first mount. router.refresh() re-fetches
+  // server data and passes this same card fresh props (same item.id, so React reuses the
+  // instance rather than remounting it) — useSyncedDraft is what makes a value computed
+  // server-side after this card mounted (e.g. this step's actual start auto-filled once its
+  // dependency completes) show up here without a full page reload.
+  const [dateFields, setDateFields] = useSyncedDraft(
+    `${item.actualStartDate ?? ""}|${item.actualEndDate ?? ""}`,
+    () => ({
+      actualStartDate: toDateInputValue(item.actualStartDate),
+      actualEndDate: toDateInputValue(item.actualEndDate),
+    })
+  );
+  const [dateSubmitting, setDateSubmitting] = useState(false);
+  const [dateMessage, setDateMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -166,12 +189,62 @@ export function TaskCard({
     }
   }
 
+  // Pushes whatever's currently in the (visible) date inputs, silently — errors surface
+  // through the same banner as the status change it's bundled with, not a separate one.
+  async function pushDatesSilently(): Promise<boolean> {
+    const body: Record<string, unknown> = {};
+    for (const { key } of visibleDateFields) {
+      body[key] = dateFields[key] ? new Date(dateFields[key]).toISOString() : null;
+    }
+    try {
+      const res = await fetch(`/api/phase-steps/${item.id}/dates`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(typeof data.error === "string" ? data.error : "Could not save dates");
+        return false;
+      }
+      return true;
+    } catch {
+      setError("Could not reach the server");
+      return false;
+    }
+  }
+
+  // Admins get one button, not two: whatever's in the date fields is saved as part of the
+  // same click that changes status, instead of requiring a separate "save dates" submit first.
+  async function submitWithDates(body: Record<string, unknown>) {
+    if (canEditDates) {
+      setSubmitting(true);
+      setError(null);
+      if (!(await pushDatesSilently())) {
+        setSubmitting(false);
+        return;
+      }
+    }
+    await submit(body);
+  }
+
   function startStep() {
-    submit({ status: "in_progress", notes: note || undefined });
+    submitWithDates({ status: "in_progress", notes: note || undefined });
   }
 
   function resumeStep() {
-    submit({ status: "in_progress", notes: note || undefined });
+    submitWithDates({ status: "in_progress", notes: note || undefined });
+  }
+
+  // Only meaningful when canEditDates: that's the only case where an actual-end value is
+  // sitting in this form waiting to be submitted at all (see submitWithDates) — a regular
+  // department user without date-editing rights has no field to have left blank.
+  function validateActualEnd(): boolean {
+    if (canEditDates && !dateFields.actualEndDate) {
+      setError("Actual end date is required to mark this step complete");
+      return false;
+    }
+    return true;
   }
 
   function completeStep() {
@@ -179,7 +252,12 @@ export function TaskCard({
       setPanel("complete1a");
       return;
     }
-    submit({ status: "completed", notes: note || undefined });
+    if (!validateActualEnd()) return;
+    if (needsLateReason) {
+      setError("Actual end is after the planned finish — add a note explaining why before marking complete");
+      return;
+    }
+    submitWithDates({ status: "completed", notes: note || undefined });
   }
 
   function confirmBlock() {
@@ -199,7 +277,12 @@ export function TaskCard({
       setError("Choose the visit urgency");
       return;
     }
-    submit({ status: "completed", visitUrgency, notes: note || undefined });
+    if (!validateActualEnd()) return;
+    if (needsLateReason) {
+      setError("Actual end is after the planned finish — add a note explaining why before marking complete");
+      return;
+    }
+    submitWithDates({ status: "completed", visitUrgency, notes: note || undefined });
   }
 
   // The preview is fetched rather than precomputed for every card, since a revert's blast
@@ -257,9 +340,13 @@ export function TaskCard({
     }
   }
 
-  async function confirmDates() {
-    setSubmitting(true);
-    setError(null);
+  function dismissDateMessageAfter(ms: number) {
+    setTimeout(() => setDateMessage((prev) => (prev ? null : prev)), ms);
+  }
+
+  async function saveDates() {
+    setDateSubmitting(true);
+    setDateMessage(null);
     const body: Record<string, unknown> = { note: note || undefined };
     for (const { key } of DATE_FIELDS) {
       body[key] = dateFields[key] ? new Date(dateFields[key]).toISOString() : null;
@@ -272,21 +359,43 @@ export function TaskCard({
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(typeof data.error === "string" ? data.error : "Update failed");
-        setSubmitting(false);
+        setDateMessage({ type: "error", text: typeof data.error === "string" ? data.error : "Update failed" });
+        setDateSubmitting(false);
+        dismissDateMessageAfter(5000);
         return;
       }
-      setPanel("none");
+      setDateMessage({ type: "success", text: "Dates updated" });
       setNote("");
-      router.refresh();
-      setSubmitting(false);
+      setDateSubmitting(false);
+      // Delayed so the success message is actually visible before router.refresh()'s
+      // re-render can remount this card and reset it away.
+      setTimeout(() => router.refresh(), 3000);
+      dismissDateMessageAfter(3000);
     } catch {
-      setError("Could not reach the server");
-      setSubmitting(false);
+      setDateMessage({ type: "error", text: "Could not reach the server" });
+      setDateSubmitting(false);
+      dismissDateMessageAfter(5000);
     }
   }
 
   const canStartOrComplete = item.gateBlockedBy === null || item.gateBlockedBy.length === 0;
+  // What actually gets saved as the actual-end value if a completion action is submitted
+  // right now — the date field's current value, or today if it's empty (mirrors the server's
+  // own default-to-now guard in updateStepStatus). Comparing against that, not just today, is
+  // what lets a deliberately-backdated late entry still require a reason even when the field
+  // wasn't left empty. Same rule as the procurement tracker's per-row "Mark complete" gate.
+  const effectiveActualEndDate = dateFields.actualEndDate || toDateInputValue(new Date().toISOString());
+  const isLateCompletion =
+    canEditDates && !!item.plannedEndDate && effectiveActualEndDate > toDateInputValue(item.plannedEndDate);
+  const needsLateReason = isLateCompletion && !note.trim();
+  const visibleDateFields = SINGLE_DATE_FIELD_STEP_CODES.has(item.stepCode)
+    ? DATE_FIELDS.filter((f) => f.key !== "actualStartDate")
+    : DATE_FIELDS;
+  // When there's a status button coming up below (Start/Mark complete/Resume), date edits
+  // ride along with that single click instead of needing their own separate save — see
+  // submitWithDates. Only steps with no such button (completed, derived) keep the standalone
+  // save-dates control, since nothing else would ever submit their date edits.
+  const hasStatusAction = !item.isDerived && item.status !== "completed";
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-edge bg-surface p-4">
@@ -413,15 +522,18 @@ export function TaskCard({
           <textarea
             className={textareaClass}
             rows={2}
-            placeholder="Note (optional)"
+            placeholder={needsLateReason ? "Note required — actual end is after planned finish" : "Note (optional)"}
             value={note}
             onChange={(e) => setNote(e.target.value)}
           />
+          {needsLateReason && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">Add a note before marking a late step complete</p>
+          )}
           <div className="flex gap-2">
             <button className={btnSecondary} onClick={() => setPanel("none")} disabled={submitting}>
               Cancel
             </button>
-            <button className={btnPrimary} onClick={confirmComplete1A} disabled={submitting}>
+            <button className={btnPrimary} onClick={confirmComplete1A} disabled={submitting || needsLateReason}>
               {submitting ? "Saving…" : "Confirm complete"}
             </button>
           </div>
@@ -531,10 +643,10 @@ export function TaskCard({
         </div>
       )}
 
-      {panel === "dates" && (
+      {canEditDates && (
         <div className="flex flex-col gap-2 border-t border-edge pt-3">
-          <div className="grid grid-cols-2 gap-2">
-            {DATE_FIELDS.map(({ key, label }) => (
+          <div className={`grid gap-2 ${visibleDateFields.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+            {visibleDateFields.map(({ key, label }) => (
               <div key={key} className="flex flex-col gap-1">
                 <label className="text-xs font-medium text-fg-muted">{label}</label>
                 <input
@@ -542,66 +654,101 @@ export function TaskCard({
                   value={dateFields[key]}
                   onChange={(e) => setDateFields((prev) => ({ ...prev, [key]: e.target.value }))}
                   onClick={openPicker}
-                  className="h-11 w-full rounded-lg border border-edge bg-bg px-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
+                  className="h-10 w-full rounded-lg border border-edge bg-bg px-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
                 />
               </div>
             ))}
           </div>
-          <p className="text-xs text-fg-subtle">
-            Not-yet-completed downstream steps will be rescheduled automatically.
-          </p>
+          {hasStatusAction ? (
+            <p className="text-xs text-fg-subtle">Dates are saved together with the button below.</p>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Note (optional)"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  className="h-10 flex-1 rounded-lg border border-edge bg-bg px-3 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
+                />
+                <button
+                  type="button"
+                  onClick={saveDates}
+                  disabled={dateSubmitting}
+                  title="Save dates"
+                  aria-label="Save dates"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent text-white transition-colors hover:bg-accent-2 disabled:opacity-40"
+                >
+                  {dateSubmitting ? (
+                    <svg viewBox="0 0 24 24" fill="none" strokeWidth={2.5} className="h-4 w-4 animate-spin stroke-current">
+                      <circle cx="12" cy="12" r="8.5" strokeDasharray="30 100" strokeLinecap="round" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" fill="none" strokeWidth={2.5} className="h-4 w-4 stroke-current">
+                      <path d="M5 12.5 10 17l9-10" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+              {dateMessage && (
+                <div
+                  className={`rounded-lg px-3 py-2 text-xs ${
+                    dateMessage.type === "success"
+                      ? "bg-emerald-500/10 text-emerald-600 ring-1 ring-inset ring-emerald-500/25 dark:text-emerald-400"
+                      : "bg-red-500/10 text-red-600 ring-1 ring-inset ring-red-500/25 dark:text-red-400"
+                  }`}
+                >
+                  {dateMessage.text}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Derived steps get this too: reverting one clears the procurement data it derives
+          from, which the confirmation panel spells out before anything is discarded. Only
+          offered once a step is actually completed — there's nothing to revert before then. */}
+      {panel === "none" && canRevert && item.status === "completed" && (
+        <div className="flex gap-2">
+          <button className={btnAdminSmall} onClick={openRevert}>
+            Revert
+          </button>
+        </div>
+      )}
+
+      {panel === "none" && hasStatusAction && (
+        <>
           <textarea
             className={textareaClass}
             rows={2}
-            placeholder="Note (optional) — why the dates changed"
+            placeholder={needsLateReason ? "Note required — actual end is after planned finish" : "Note (optional)"}
             value={note}
             onChange={(e) => setNote(e.target.value)}
           />
-          <div className="flex gap-2">
-            <button className={btnSecondary} onClick={() => setPanel("none")} disabled={submitting}>
-              Cancel
-            </button>
-            <button className={btnPrimary} onClick={confirmDates} disabled={submitting}>
-              {submitting ? "Saving…" : "Save dates"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {panel === "none" && (canEditDates || canRevert) && (
-        <div className="flex gap-2">
-          {canEditDates && (
-            <button className={btnAdminSmall} onClick={() => setPanel("dates")}>
-              Edit dates
-            </button>
+          {needsLateReason && item.stepCode !== "1A" && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">Add a note before marking a late step complete</p>
           )}
-          {/* Derived steps get this too: reverting one clears the procurement data it derives
-              from, which the confirmation panel spells out before anything is discarded. */}
-          {canRevert && item.status !== "not_started" && (
-            <button className={btnAdminSmall} onClick={openRevert}>
-              Revert
-            </button>
-          )}
-        </div>
-      )}
-
-      {panel === "none" && !item.isDerived && item.status !== "completed" && (
-        <textarea
-          className={textareaClass}
-          rows={2}
-          placeholder="Note (optional)"
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-        />
+        </>
       )}
 
       {panel === "none" && !item.isDerived && (
         <div className="flex gap-2">
           {item.status === "not_started" && (
             <>
-              <button className={btnPrimary} onClick={startStep} disabled={submitting || !canStartOrComplete}>
-                Start
-              </button>
+              {SINGLE_COMPLETION_STEP_CODES.has(item.stepCode) ? (
+                <button
+                  className={btnPrimary}
+                  onClick={completeStep}
+                  disabled={submitting || !canStartOrComplete || (item.stepCode !== "1A" && needsLateReason)}
+                >
+                  Completed
+                </button>
+              ) : (
+                <button className={btnPrimary} onClick={startStep} disabled={submitting || !canStartOrComplete}>
+                  Start
+                </button>
+              )}
               <button className={btnSecondary} onClick={() => setPanel("block")} disabled={submitting}>
                 Report blocked
               </button>
@@ -609,7 +756,11 @@ export function TaskCard({
           )}
           {item.status === "in_progress" && (
             <>
-              <button className={btnPrimary} onClick={completeStep} disabled={submitting || !canStartOrComplete}>
+              <button
+                className={btnPrimary}
+                onClick={completeStep}
+                disabled={submitting || !canStartOrComplete || (item.stepCode !== "1A" && needsLateReason)}
+              >
                 Mark complete
               </button>
               <button className={btnSecondary} onClick={() => setPanel("block")} disabled={submitting}>

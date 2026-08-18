@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession, isAdminEditor } from "@/lib/auth";
 import { rescheduleProjectDates } from "@/lib/reschedule";
+import { cascadeActualStart } from "@/lib/step-actions";
 
 const dateOrNull = z
   .string()
@@ -12,21 +13,19 @@ const dateOrNull = z
   .transform((v) => (v === undefined ? undefined : v === null ? null : new Date(v)));
 
 const updateDatesSchema = z.object({
-  plannedStartDate: dateOrNull,
-  plannedEndDate: dateOrNull,
   actualStartDate: dateOrNull,
   actualEndDate: dateOrNull,
-  plannedDurationDays: z.number().int().min(0).nullable().optional(),
   note: z.string().optional(),
 });
 
 /**
- * Direct date/duration overrides on a step — an admin-only escape hatch (owner_admin
- * or HR & Admin) for correcting dates by hand, e.g. backfilling history or fixing a
- * data-entry mistake. Regular department PATCH /api/phase-steps/:id never touches
- * these fields; status transitions are what normally drive dates. Any edit here
- * triggers a project-wide reschedule so every not-yet-completed downstream step's
- * planned dates stay consistent with the new anchor.
+ * Direct actual-date overrides on a step — an admin-only escape hatch (owner_admin
+ * or HR & Admin) for correcting history by hand, e.g. backfilling or fixing a
+ * data-entry mistake. Planned dates are fully system-computed and can't be edited
+ * here (or anywhere) — see step-template.ts/reschedule.ts. Regular department
+ * PATCH /api/phase-steps/:id never touches these fields either; status transitions
+ * are what normally drive actual dates. Any edit here triggers a project-wide
+ * reschedule so downstream planned dates stay consistent with the new actual end date.
  */
 export async function PATCH(
   request: NextRequest,
@@ -72,7 +71,11 @@ export async function PATCH(
     },
   });
 
-  await rescheduleProjectDates(step.projectId, step.stepCode);
+  if (dateFields.actualEndDate) {
+    await cascadeActualStart(step.projectId, step.stepCode, dateFields.actualEndDate, session.userId);
+  }
+
+  await rescheduleProjectDates(step.projectId);
 
   const refreshed = await prisma.phaseStep.findUnique({ where: { id } });
   return NextResponse.json(refreshed ?? updated);

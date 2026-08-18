@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildPhase1Steps,
+  buildPhase1And2Steps,
   buildPhase2Steps,
   buildPhase3Steps,
   computePlannedDates,
@@ -113,6 +114,42 @@ describe("buildPhase3Steps", () => {
     const byCode = Object.fromEntries(buildPhase3Steps("normal").map((s) => [s.stepCode, s]));
     expect(byCode["3E"].dependsOn.sort()).toEqual(["3B", "3C2"]);
     expect(byCode["3E"].plannedDurationDays).toBe(5);
+  });
+});
+
+describe("buildPhase1And2Steps", () => {
+  it("has all 8 Phase 1+2 steps, topologically ordered, with 1B's duration resolved", () => {
+    const steps = buildPhase1And2Steps("hot");
+    expect(steps.map((s) => s.stepCode)).toEqual(["1A", "1B", "1C", "1D", "2A", "2D1", "2D2", "2F"]);
+    expect(steps.find((s) => s.stepCode === "1B")!.plannedDurationDays).toBe(5);
+  });
+
+  it("site_not_ready leaves 1B's duration null (unresolved chain), same as deriveVisitDurationDays", () => {
+    const steps = buildPhase1And2Steps("site_not_ready");
+    expect(steps.find((s) => s.stepCode === "1B")!.plannedDurationDays).toBeNull();
+  });
+
+  it("computePlannedDates resolves every Phase 1+2 date in one pass for a known urgency", () => {
+    const anchor = new Date("2026-01-01T00:00:00.000Z");
+    const dates = computePlannedDates(buildPhase1And2Steps("emergency"), anchor);
+
+    for (const code of ["1A", "1B", "1C", "1D", "2A", "2D1", "2D2", "2F"]) {
+      expect(dates.get(code)!.plannedStartDate).not.toBeNull();
+      expect(dates.get(code)!.plannedEndDate).not.toBeNull();
+    }
+    // 2A starts when 1D ends: 1A(1d)+1B(2d emergency)+1C(2d)+1D(2d) = day 7 from anchor
+    expect(dates.get("2A")!.plannedStartDate).toEqual(new Date("2026-01-08T00:00:00.000Z"));
+  });
+
+  it("computePlannedDates leaves every Phase 1+2 date unresolved when urgency is site_not_ready", () => {
+    const anchor = new Date("2026-01-01T00:00:00.000Z");
+    const dates = computePlannedDates(buildPhase1And2Steps("site_not_ready"), anchor);
+
+    expect(dates.get("1B")!.plannedEndDate).toBeNull();
+    for (const code of ["1C", "1D", "2A", "2D1", "2D2", "2F"]) {
+      expect(dates.get(code)!.plannedStartDate).toBeNull();
+      expect(dates.get(code)!.plannedEndDate).toBeNull();
+    }
   });
 });
 

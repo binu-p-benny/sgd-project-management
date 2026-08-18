@@ -1,6 +1,7 @@
-import type { Department, GlassType } from "@prisma/client";
+import type { Department, GlassType, VisitUrgency } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { buildPhase1Steps, computePlannedDates } from "@/lib/step-template";
+import { buildPhase1Steps, buildPhase1And2Steps, computePlannedDates } from "@/lib/step-template";
+import { createEmptyProcurementItemsForProject } from "@/lib/procurement";
 
 export { prisma };
 
@@ -78,6 +79,53 @@ export async function createTestProject(
       };
     }),
   });
+
+  return project;
+}
+
+/** Mirrors POST /api/projects: seeds Phase 1+2 together with planned dates computed up front. */
+export async function createTestProjectDayOne(
+  overrides: Partial<{ name: string; glassType: GlassType; finalCost: number; visitUrgency: VisitUrgency }> = {}
+) {
+  const now = new Date();
+  const visitUrgency = overrides.visitUrgency ?? "hot";
+  const steps = buildPhase1And2Steps(visitUrgency);
+  const dates = computePlannedDates(steps, now);
+
+  const project = await prisma.project.create({
+    data: {
+      name: overrides.name ?? `${TEST_PREFIX}Project ${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      clientName: "Test Client",
+      clientPhone: "0000000000",
+      clientAddress: "Test Address",
+      finalCost: overrides.finalCost ?? 100000,
+      glassType: overrides.glassType ?? "normal",
+      visitUrgency,
+      plannedStartDate: now,
+      currentPhase: "phase_1",
+      overallStatus: "on_track",
+    },
+  });
+
+  await prisma.phaseStep.createMany({
+    data: steps.map((s) => {
+      const d = dates.get(s.stepCode)!;
+      return {
+        projectId: project.id,
+        phase: s.phase,
+        stepCode: s.stepCode,
+        stepName: s.stepName,
+        owningDepartment: s.owningDepartment,
+        secondaryDepartment: s.secondaryDepartment,
+        plannedDurationDays: s.plannedDurationDays,
+        dependsOn: s.dependsOn,
+        plannedStartDate: d.plannedStartDate,
+        plannedEndDate: d.plannedEndDate,
+      };
+    }),
+  });
+
+  await createEmptyProcurementItemsForProject(project.id);
 
   return project;
 }
