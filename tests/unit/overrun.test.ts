@@ -82,4 +82,15 @@ describe("getEffectiveOverallStatus", () => {
   it("on_track stays on_track when nothing is overrun", () => {
     expect(getEffectiveOverallStatus("on_track", false)).toBe("on_track");
   });
+  it("a QC failure becomes its own status, ranked above delayed", () => {
+    expect(getEffectiveOverallStatus("on_track", false, true)).toBe("qc_failed");
+    expect(getEffectiveOverallStatus("on_track", true, true)).toBe("qc_failed");
+  });
+  it("completed and blocked still win over a QC failure", () => {
+    expect(getEffectiveOverallStatus("completed", false, true)).toBe("completed");
+    expect(getEffectiveOverallStatus("blocked", false, true)).toBe("blocked");
+  });
+  it("defaults to no QC failure when the third argument is omitted", () => {
+    expect(getEffectiveOverallStatus("on_track", false)).toBe("on_track");
+  });
 });

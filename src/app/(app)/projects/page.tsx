@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession, isAdminEditor } from "@/lib/auth";
 import { ProjectFilters } from "@/components/projects/ProjectFilters";
 import { DeleteProjectButton } from "@/components/projects/DeleteProjectButton";
-import { getEffectiveOverallStatus, projectHasOverrun } from "@/lib/overrun";
+import { getEffectiveOverallStatus, projectHasOverrun, type EffectiveOverallStatus } from "@/lib/overrun";
 import { buildAllStepCodes } from "@/lib/step-template";
 import {
   PHASE_LABELS,
@@ -11,7 +11,7 @@ import {
   OVERALL_STATUS_COLORS,
   PAYMENT_STATUS_LABELS,
 } from "@/lib/labels";
-import type { Department, OverallStatus, PaymentStatus, ProjectPhase } from "@prisma/client";
+import type { Department, PaymentStatus, ProjectPhase } from "@prisma/client";
 
 const STEP_NAME_BY_CODE = new Map(buildAllStepCodes().map((s) => [s.stepCode, s.stepName]));
 
@@ -39,9 +39,15 @@ function formatINR(amount: number): string {
   }).format(amount);
 }
 
+// Pulled out of the component body: react-hooks/purity flags Date.now() called directly during
+// render, even in a Server Component that only ever runs once per request.
+function daysAgo(n: number): Date {
+  return new Date(Date.now() - n * 24 * 60 * 60 * 1000);
+}
+
 const ACTIVE_FILTER_LABEL: Record<string, (value: string) => string> = {
   phase: (v) => `Phase: ${PHASE_LABELS[v as ProjectPhase] ?? v}`,
-  status: (v) => `Status: ${OVERALL_STATUS_LABELS[v as OverallStatus] ?? v}`,
+  status: (v) => `Status: ${OVERALL_STATUS_LABELS[v as EffectiveOverallStatus] ?? v}`,
   department: (v) => `Department: ${v.replace("_", " ")}`,
   paymentStatus: (v) => `Payment: ${PAYMENT_STATUS_LABELS[v as PaymentStatus] ?? v}`,
   newDays: (v) => `Created in last ${v} days`,
@@ -66,7 +72,7 @@ export default async function ProjectsPage({
   const session = await getSession();
   const canDelete = !!session && isAdminEditor(session);
   const phase = params.phase as ProjectPhase | undefined;
-  const status = params.status as OverallStatus | undefined;
+  const status = params.status as EffectiveOverallStatus | undefined;
   const department = params.department as Department | undefined;
   const paymentStatus = params.paymentStatus as PaymentStatus | undefined;
   const newDays = params.newDays ? Number(params.newDays) : undefined;
@@ -81,19 +87,23 @@ export default async function ProjectsPage({
     },
     include: {
       phaseSteps: { select: { stepCode: true, stepName: true, plannedEndDate: true, status: true } },
-      procurementItems: { select: { expectedArrivalDate: true, actualArrivalDate: true } },
+      procurementItems: { select: { expectedArrivalDate: true, actualArrivalDate: true, qcPassed: true } },
     },
     orderBy: { createdAt: "desc" },
   });
 
-  const newSince = newDays ? new Date(Date.now() - newDays * 24 * 60 * 60 * 1000) : undefined;
+  const newSince = newDays ? daysAgo(newDays) : undefined;
 
-  // status=delayed and overdue=1 can't be stored-column filters — both are date-driven,
-  // not event-driven (see overrun.ts) — so they're computed and applied here in JS.
+  // status=delayed, status=qc_failed and overdue=1 can't be stored-column filters — none of
+  // them are event-driven (see overrun.ts) — so they're computed and applied here in JS.
   const projects = rawProjects
     .map((p) => ({
       ...p,
-      effectiveStatus: getEffectiveOverallStatus(p.overallStatus, projectHasOverrun(p.phaseSteps, p.procurementItems)),
+      effectiveStatus: getEffectiveOverallStatus(
+        p.overallStatus,
+        projectHasOverrun(p.phaseSteps, p.procurementItems),
+        p.procurementItems.some((i) => i.qcPassed === false)
+      ),
       hasOverdue: projectHasOverrun(p.phaseSteps, p.procurementItems),
       currentStep: getCurrentStep(p.phaseSteps),
     }))

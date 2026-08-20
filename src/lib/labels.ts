@@ -1,12 +1,12 @@
 import type {
   Department,
-  OverallStatus,
   PaymentStatus,
   ProjectPhase,
   StepStatus,
   BlockedReason,
   DelayCategory,
 } from "@prisma/client";
+import type { EffectiveOverallStatus } from "@/lib/overrun";
 
 export const DEPARTMENT_LABELS: Record<Department, string> = {
   hr_admin: "HR & Admin",
@@ -24,18 +24,22 @@ export const PHASE_LABELS: Record<ProjectPhase, string> = {
   completed: "Completed",
 };
 
-export const OVERALL_STATUS_LABELS: Record<OverallStatus, string> = {
+export const OVERALL_STATUS_LABELS: Record<EffectiveOverallStatus, string> = {
   on_track: "On track",
   delayed: "Delayed",
   blocked: "Blocked",
   completed: "Completed",
+  qc_failed: "QC failed",
 };
 
-export const OVERALL_STATUS_COLORS: Record<OverallStatus, string> = {
+export const OVERALL_STATUS_COLORS: Record<EffectiveOverallStatus, string> = {
   on_track: "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/25",
   delayed: "bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25",
   blocked: "bg-red-50 text-red-700 ring-1 ring-inset ring-red-200 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/25",
   completed: "bg-overlay text-fg-muted ring-1 ring-inset ring-edge",
+  // Distinct from blocked's red — a QC failure is a specific, correctable gate, not a generic
+  // "someone reported a blocker" state, and the two shouldn't be visually indistinguishable.
+  qc_failed: "bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200 dark:bg-orange-500/10 dark:text-orange-400 dark:ring-orange-500/25",
 };
 
 export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
