@@ -277,6 +277,18 @@ model ProcurementItem {
   orderConfirmedAt     DateTime? @map("order_confirmed_at") @db.Timestamptz(3)
   orderNote            String?   @map("order_note") @db.Text
   orderPlannedOverride DateTime? @map("order_planned_override") @db.Timestamptz(3)
+
+  // Section only — hardware/gasket never populate these two. Planned dates chain off the
+  // previous stage's own ground-truth date (actual once known, else planned) rather than the
+  // shared anchor — see computeSectionChainDates in procurement.ts. Each has its own manual
+  // override too, same "shift every later stage in the chain" principle as every other stage.
+  materialDespatchAt                  DateTime? @map("material_despatch_at") @db.Timestamptz(3)
+  materialDespatchNote                String?   @map("material_despatch_note") @db.Text
+  materialDespatchPlannedOverride     DateTime? @map("material_despatch_planned_override") @db.Timestamptz(3)
+  arrivedForPowderCoatingAt           DateTime? @map("arrived_for_powder_coating_at") @db.Timestamptz(3)
+  arrivedForPowderCoatingNote         String?   @map("arrived_for_powder_coating_note") @db.Text
+  arrivedForPowderCoatingPlannedOverride DateTime? @map("arrived_for_powder_coating_planned_override") @db.Timestamptz(3)
+
   paymentSettledAt     DateTime? @map("payment_settled_at") @db.Timestamptz(3)
   paymentNote          String?   @map("payment_note") @db.Text
   paymentDetails       String?   @map("payment_details") @db.Text

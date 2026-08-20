@@ -10,7 +10,11 @@ import { TaskCard } from "@/components/my-tasks/TaskCard";
 import { getMyTasks, type MyTaskItem } from "@/lib/my-tasks";
 import { getBlockerHistory } from "@/lib/blocker-history";
 import { isStepOverrun, isProcurementStageOverrun, getEffectiveOverallStatus, projectHasOverrun } from "@/lib/overrun";
-import { computeProcurementPlannedDates, computeExpectedActionPlanDate } from "@/lib/procurement";
+import {
+  computeProcurementPlannedDates,
+  computeExpectedActionPlanDate,
+  computeSectionChainDates,
+} from "@/lib/procurement";
 import { addDays } from "@/lib/step-template";
 import { findUpstreamDelay } from "@/lib/reschedule";
 import {
@@ -267,6 +271,25 @@ export default async function ProjectDetailPage({
             qc: item.qcPlannedOverride,
           });
 
+          // Section alone runs Material despatch/Arrived-for-powder-coating and, downstream of
+          // them, its own chained Arrival/QC dates — see computeSectionChainDates. Hardware and
+          // gasket keep using `planned` above untouched, exactly as before this existed.
+          const isSection = item.itemType === "section";
+          const sectionChain = isSection
+            ? computeSectionChainDates(
+                planned.order,
+                item.orderConfirmedAt,
+                item.materialDespatchAt,
+                item.arrivedForPowderCoatingAt,
+                {
+                  materialDespatch: item.materialDespatchPlannedOverride,
+                  powderCoatingArrival: item.arrivedForPowderCoatingPlannedOverride,
+                  arrival: item.arrivalPlannedOverride,
+                  qc: item.qcPlannedOverride,
+                }
+              )
+            : null;
+
           const stages = [
             {
               id: "requirement",
@@ -316,6 +339,37 @@ export default async function ProjectDetailPage({
               requirementGated: false,
               qcPassed: null,
             },
+            // Section only — plans off Order confirmed's own ground-truth date, not the shared
+            // anchor. Editable like the other fixed stages: an edit here re-anchors every later
+            // stage in the chain, same as the rest.
+            ...(isSection
+              ? [
+                  {
+                    id: "materialDespatch",
+                    label: "Material despatch",
+                    dateField: "materialDespatchAt" as const,
+                    noteField: "materialDespatchNote" as const,
+                    actualDate: item.materialDespatchAt,
+                    note: item.materialDespatchNote,
+                    plannedDate: sectionChain!.materialDespatch,
+                    plannedDateField: "materialDespatchPlannedOverride" as const,
+                    requirementGated: false,
+                    qcPassed: null,
+                  },
+                  {
+                    id: "arrivedForPowderCoating",
+                    label: "Arrived for powder coating",
+                    dateField: "arrivedForPowderCoatingAt" as const,
+                    noteField: "arrivedForPowderCoatingNote" as const,
+                    actualDate: item.arrivedForPowderCoatingAt,
+                    note: item.arrivedForPowderCoatingNote,
+                    plannedDate: sectionChain!.powderCoatingArrival,
+                    plannedDateField: "arrivedForPowderCoatingPlannedOverride" as const,
+                    requirementGated: false,
+                    qcPassed: null,
+                  },
+                ]
+              : []),
             {
               id: "arrival",
               label: "Actual arrival",
@@ -323,7 +377,7 @@ export default async function ProjectDetailPage({
               noteField: "arrivalNote" as const,
               actualDate: item.actualArrivalDate,
               note: item.arrivalNote,
-              plannedDate: planned.arrival,
+              plannedDate: isSection ? sectionChain!.arrival : planned.arrival,
               plannedDateField: "arrivalPlannedOverride" as const,
               requirementGated: false,
               qcPassed: null,
@@ -335,7 +389,7 @@ export default async function ProjectDetailPage({
               noteField: "qcNote" as const,
               actualDate: item.qcCheckedAt,
               note: item.qcNote,
-              plannedDate: planned.qc,
+              plannedDate: isSection ? sectionChain!.qc : planned.qc,
               plannedDateField: "qcPlannedOverride" as const,
               requirementGated: false,
               qcPassed: item.qcPassed,

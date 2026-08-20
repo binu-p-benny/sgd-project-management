@@ -622,9 +622,12 @@ function ItemTable({
     }
   }
 
-  // Excludes "action plan" — the header's "X / 6" refers to the fixed lifecycle only, and
-  // folding in a 7th (conditionally-shown) stage would make that denominator wrong.
-  const doneCount = item.stages.filter((s) => s.id !== "actionPlan" && s.actualDate !== null).length;
+  // Excludes "action plan" — the header count refers to the fixed lifecycle only, and folding
+  // in a conditionally-shown stage would make it wrong. The denominator itself is derived from
+  // the fixed stages actually present rather than hardcoded, since Section carries 8 and
+  // hardware/gasket carry 6.
+  const fixedStages = item.stages.filter((s) => s.id !== "actionPlan");
+  const doneCount = fixedStages.filter((s) => s.actualDate !== null).length;
   const qcStage = item.stages.find((s) => s.id === "qc");
   const canRestart = canEdit && qcStage?.qcPassed === false;
 
@@ -653,7 +656,9 @@ function ItemTable({
             </span>
           )}
         </div>
-        <span className="text-xs font-medium text-fg-subtle">{doneCount} / 6 done</span>
+        <span className="text-xs font-medium text-fg-subtle">
+          {doneCount} / {fixedStages.length} done
+        </span>
       </div>
 
       {item.upstreamDelay && (

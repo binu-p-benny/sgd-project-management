@@ -61,6 +61,97 @@ export function computeExpectedActionPlanDate(qcCheckedAt: Date): Date {
   return addDays(qcCheckedAt, 2);
 }
 
+/** Advances `date` by `days` working days, treating every day except Sunday as one. Walks
+ *  forward a calendar day at a time and only counts a day toward `days` when it isn't a Sunday —
+ *  so a Sunday inside the span costs an extra calendar day rather than shortening the count. */
+function addWorkingDays(date: Date, days: number): Date {
+  let result = date;
+  let remaining = days;
+  while (remaining > 0) {
+    result = addDays(result, 1);
+    if (result.getDay() !== 0) {
+      remaining -= 1;
+    }
+  }
+  return result;
+}
+
+/** Section only: material despatch is expected 7 working days after Order confirmed's own
+ *  ground-truth date (see computeSectionChainDates) — chains off the previous stage rather than
+ *  the shared anchor every stage before it uses. */
+export function computeExpectedMaterialDespatchDate(orderConfirmedAt: Date): Date {
+  return addWorkingDays(orderConfirmedAt, 7);
+}
+
+/** Section only: arrival for powder coating is expected 7 working days after Material
+ *  despatch's own ground-truth date — same reasoning as computeExpectedMaterialDespatchDate. */
+export function computeExpectedPowderCoatingArrivalDate(materialDespatchAt: Date): Date {
+  return addWorkingDays(materialDespatchAt, 7);
+}
+
+/** Section only: Actual arrival is expected 7 working days after Arrived-for-powder-coating's
+ *  own ground-truth date. This replaces computeExpectedArrivalDate's anchor-based formula for
+ *  this item type only — hardware/gasket keep using that function completely unchanged. */
+export function computeExpectedSectionArrivalDate(arrivedForPowderCoatingAt: Date): Date {
+  return addWorkingDays(arrivedForPowderCoatingAt, 7);
+}
+
+export interface SectionChainDates {
+  materialDespatch: Date | null;
+  powderCoatingArrival: Date | null;
+  arrival: Date | null;
+  qc: Date | null;
+}
+
+/**
+ * Section-only planned-date chain for the 3 stages from Material despatch through QC. Each one
+ * plans 7 working days (Sundays skipped) after the previous stage's own *ground truth* date —
+ * its actual date once that's happened, else its own (possibly manually overridden) planned
+ * date as a forecast in the meantime. Same "actual if known, else planned" rule
+ * rescheduleProjectDates already uses for phase steps (see reschedule.ts) — it's what prefills
+ * the whole chain from Order confirmed's planned date the moment that exists, rather than
+ * leaving every stage blank until Order is actually confirmed, and then lets each stage firm up
+ * in turn as its own actual date lands.
+ *
+ * All 4 stages have a manual override, same "shift every later stage in the chain" principle as
+ * every other stage in computeProcurementPlannedDates — an override always wins for that stage's
+ * own displayed planned date and for what the *next* stage forecasts from. A stage's actual date,
+ * once it exists, still wins over its own override for that propagation, the same way an
+ * un-overridden forecast would have: an override is a better guess before the real date is
+ * known, not a correction to a fact that has already happened.
+ */
+export function computeSectionChainDates(
+  orderConfirmedPlanned: Date | null,
+  orderConfirmedAt: Date | null,
+  materialDespatchAt: Date | null,
+  arrivedForPowderCoatingAt: Date | null,
+  overrides: {
+    materialDespatch?: Date | null;
+    powderCoatingArrival?: Date | null;
+    arrival?: Date | null;
+    qc?: Date | null;
+  }
+): SectionChainDates {
+  const orderGroundTruth = orderConfirmedAt ?? orderConfirmedPlanned;
+  const materialDespatchForecast = orderGroundTruth ? computeExpectedMaterialDespatchDate(orderGroundTruth) : null;
+  const materialDespatch = overrides.materialDespatch ?? materialDespatchForecast;
+
+  const materialDespatchGroundTruth = materialDespatchAt ?? materialDespatch;
+  const powderCoatingArrivalForecast = materialDespatchGroundTruth
+    ? computeExpectedPowderCoatingArrivalDate(materialDespatchGroundTruth)
+    : null;
+  const powderCoatingArrival = overrides.powderCoatingArrival ?? powderCoatingArrivalForecast;
+
+  const powderCoatingGroundTruth = arrivedForPowderCoatingAt ?? powderCoatingArrival;
+  const computedArrival = powderCoatingGroundTruth ? computeExpectedSectionArrivalDate(powderCoatingGroundTruth) : null;
+  const arrival = overrides.arrival ?? computedArrival;
+
+  const computedQC = arrival ? addDays(arrival, 3) : null;
+  const qc = overrides.qc ?? computedQC;
+
+  return { materialDespatch, powderCoatingArrival, arrival, qc };
+}
+
 export interface ProcurementPlannedOverrides {
   requirement?: Date | null;
   quote?: Date | null;
@@ -278,6 +369,20 @@ export const PROCUREMENT_LIFECYCLE = [
     fields: { paymentSettledAt: null, paymentNote: null, paymentDetails: null, paymentPlannedOverride: null },
   },
   { label: "order confirmations", fields: { orderConfirmedAt: null, orderNote: null, orderPlannedOverride: null } },
+  // Section only — always null already for hardware/gasket, so clearing these here on a
+  // project-wide reset is a no-op for those two item types.
+  {
+    label: "material despatch",
+    fields: { materialDespatchAt: null, materialDespatchNote: null, materialDespatchPlannedOverride: null },
+  },
+  {
+    label: "arrived for powder coating",
+    fields: {
+      arrivedForPowderCoatingAt: null,
+      arrivedForPowderCoatingNote: null,
+      arrivedForPowderCoatingPlannedOverride: null,
+    },
+  },
   { label: "arrival dates", fields: { actualArrivalDate: null, arrivalNote: null, arrivalPlannedOverride: null } },
   {
     label: "QC checks",
@@ -296,8 +401,11 @@ export const PROCUREMENT_LIFECYCLE = [
   { label: "action plan", fields: { actionPlanAt: null, actionPlanNote: null } },
 ] as const;
 
-/** Which lifecycle stage each derived step's status is computed from. */
-export const DERIVED_STEP_STAGE: Record<string, number> = { "2A": 0, "2D1": 4, "2F": 5 };
+/** Which lifecycle stage each derived step's status is computed from. Indices shift whenever
+ *  PROCUREMENT_LIFECYCLE gains a stage before "arrival dates"/"QC checks" — kept as literals
+ *  rather than looked up by label so a typo'd label fails loudly (TS literal narrowing) instead
+ *  of silently resolving to -1. */
+export const DERIVED_STEP_STAGE: Record<string, number> = { "2A": 0, "2D1": 6, "2F": 7 };
 
 // Found by label rather than assumed to be PROCUREMENT_LIFECYCLE.length - 1, so this stays
 // correct even if a stage is ever appended after "action plan". A clear/reset that reaches

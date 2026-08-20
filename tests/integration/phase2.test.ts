@@ -225,6 +225,12 @@ describe("resetProcurementItem (QC-failure restart) clears the action plan too",
     await prisma.procurementItem.update({
       where: { id: section.id },
       data: {
+        materialDespatchAt: new Date(),
+        materialDespatchNote: "despatched",
+        materialDespatchPlannedOverride: new Date(),
+        arrivedForPowderCoatingAt: new Date(),
+        arrivedForPowderCoatingNote: "arrived for coating",
+        arrivedForPowderCoatingPlannedOverride: new Date(),
         qcCheckedAt: new Date(),
         qcChecked: true,
         qcPassed: false,
@@ -238,6 +244,12 @@ describe("resetProcurementItem (QC-failure restart) clears the action plan too",
     await resetProcurementItem(section.id, newAnchor);
 
     const after = await prisma.procurementItem.findUniqueOrThrow({ where: { id: section.id } });
+    expect(after.materialDespatchAt).toBeNull();
+    expect(after.materialDespatchNote).toBeNull();
+    expect(after.materialDespatchPlannedOverride).toBeNull();
+    expect(after.arrivedForPowderCoatingAt).toBeNull();
+    expect(after.arrivedForPowderCoatingNote).toBeNull();
+    expect(after.arrivedForPowderCoatingPlannedOverride).toBeNull();
     expect(after.qcPassed).toBeNull();
     expect(after.qcNote).toBeNull();
     expect(after.actionPlanAt).toBeNull();
@@ -283,8 +295,8 @@ describe("clearProcurementFromStage also deletes action-plan follow-up rows, pro
       data: { procurementItemId: section.id, taskLabel: "Reorder", plannedDate: new Date() },
     });
 
-    // Stage 5 is "QC checks" — clearing from there reaches stage 6 ("action plan") too.
-    await clearProcurementFromStage(project.id, 5);
+    // Stage 7 is "QC checks" — clearing from there reaches stage 8 ("action plan") too.
+    await clearProcurementFromStage(project.id, 7);
 
     expect(await prisma.procurementActionItem.count({ where: { procurementItemId: section.id } })).toBe(0);
   });
@@ -298,10 +310,10 @@ describe("clearProcurementFromStage also deletes action-plan follow-up rows, pro
       data: { procurementItemId: section.id, taskLabel: "Reorder", plannedDate: new Date() },
     });
 
-    // clearProcurementFromStage only ever runs from stage 0-5 in practice (there's no step
+    // clearProcurementFromStage only ever runs from stage 0-7 in practice (there's no step
     // mapped past "QC checks" in DERIVED_STEP_STAGE), so this is a defensive bounds check
     // rather than a scenario that happens today.
-    await clearProcurementFromStage(project.id, 10);
+    await clearProcurementFromStage(project.id, 20);
 
     expect(await prisma.procurementActionItem.count({ where: { procurementItemId: section.id } })).toBe(1);
   });

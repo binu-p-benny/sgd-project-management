@@ -22,6 +22,15 @@ const updateSchema = z.object({
   orderConfirmedAt: dateOrNull,
   orderNote: z.string().nullable().optional(),
   orderPlannedOverride: dateOrNull,
+  // Section only — always null on hardware/gasket rows, but no need to reject writes to them on
+  // the wrong item type: nothing else ever reads these fields for hardware/gasket, so the value
+  // just sits there unused, same as any other stage no one has an opinion on.
+  materialDespatchAt: dateOrNull,
+  materialDespatchNote: z.string().nullable().optional(),
+  materialDespatchPlannedOverride: dateOrNull,
+  arrivedForPowderCoatingAt: dateOrNull,
+  arrivedForPowderCoatingNote: z.string().nullable().optional(),
+  arrivedForPowderCoatingPlannedOverride: dateOrNull,
   paymentSettledAt: dateOrNull,
   paymentNote: z.string().nullable().optional(),
   paymentDetails: z.string().nullable().optional(),
