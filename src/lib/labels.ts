@@ -5,6 +5,7 @@ import type {
   ProjectPhase,
   StepStatus,
   BlockedReason,
+  DelayCategory,
 } from "@prisma/client";
 
 export const DEPARTMENT_LABELS: Record<Department, string> = {
@@ -87,3 +88,12 @@ export const BLOCKED_REASON_LABELS: Record<BlockedReason, string> = {
 export const BLOCKED_REASON_OPTIONS: BlockedReason[] = Object.keys(
   BLOCKED_REASON_LABELS
 ) as BlockedReason[];
+
+export const DELAY_CATEGORY_LABELS: Record<DelayCategory, string> = {
+  client_side: "Client side delay",
+  in_house: "In house delay",
+};
+
+export const DELAY_CATEGORY_OPTIONS: DelayCategory[] = Object.keys(
+  DELAY_CATEGORY_LABELS
+) as DelayCategory[];

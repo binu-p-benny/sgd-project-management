@@ -1,4 +1,4 @@
-import type { BlockedReason, ProjectPhase, StepStatus, VisitUrgency } from "@prisma/client";
+import type { BlockedReason, DelayCategory, ProjectPhase, StepStatus, VisitUrgency } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { checkDependencyGate } from "@/lib/dependency-gate";
 import { BLOCKED_REASON_LABELS } from "@/lib/labels";
@@ -39,6 +39,7 @@ export interface UpdateStepStatusOptions {
   blockedNote?: string;
   notes?: string;
   visitUrgency?: VisitUrgency; // only meaningful when completing 1A
+  delayCategory?: DelayCategory; // only meaningful when completing 1B after its planned finish
 }
 
 /** Recomputes 1B/1C/1D's planned dates after 1A completes and visit_urgency is known. */
@@ -419,6 +420,7 @@ async function cascadeRevertLaterSteps(
           actualEndDate: null,
           blockedReason: null,
           blockedNote: null,
+          delayCategory: null,
           notes: null,
         },
       })
@@ -603,6 +605,22 @@ export async function updateStepStatus(
     throw new StepActionError(400, "visitUrgency is required to complete 1A");
   }
 
+  // 1B only: a late completion needs to say whether the client or the team caused the slip,
+  // since reschedule.ts reads it to decide whether 1C's planned finish should move with the
+  // late actual end (client_side) or stay put (in_house). Only reachable when the actual end
+  // was already set to a late date before this call (the admin canEditDates flow bundles the
+  // dates PATCH first — see submitWithDates in TaskCard.tsx); the plain "defaults to now"
+  // completion path never has a pre-existing actualEndDate here, so it's never blocked by this.
+  const isLate1B =
+    step.stepCode === "1B" &&
+    newStatus === "completed" &&
+    !!step.actualEndDate &&
+    !!step.plannedEndDate &&
+    step.actualEndDate.getTime() > step.plannedEndDate.getTime();
+  if (isLate1B && !options.delayCategory) {
+    throw new StepActionError(400, "delayCategory is required when 1B completes late");
+  }
+
   const now = new Date();
   const oldStatus = step.status;
 
@@ -612,6 +630,7 @@ export async function updateStepStatus(
       status: newStatus,
       blockedReason: newStatus === "blocked" ? options.blockedReason : null,
       blockedNote: newStatus === "blocked" ? options.blockedNote ?? null : null,
+      delayCategory: isLate1B ? options.delayCategory : null,
       notes: options.notes !== undefined ? options.notes : undefined,
       actualStartDate: newStatus === "in_progress" && !step.actualStartDate ? now : undefined,
       // Mirrors the actualStartDate guard just above: don't clobber an actual_end_date the
@@ -954,6 +973,7 @@ export async function revertStep(
           status: toStatus,
           blockedReason: null,
           blockedNote: null,
+          delayCategory: null,
           notes: null,
           actualStartDate: toStatus === "not_started" ? null : undefined,
           actualEndDate: null,

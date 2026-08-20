@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { notifyOverdueSteps } from "@/lib/notify-overdue";
 import { rescheduleProjectDates } from "@/lib/reschedule";
+import { getMyTasks } from "@/lib/my-tasks";
 import {
   createTestProjectDayOne,
   ensureTestUsers,
@@ -115,5 +116,38 @@ describe("rescheduleProjectDates clears the overdue-notified guard", () => {
     const oneBAfter = await getStep(project.id, "1B");
     expect(oneBAfter.plannedEndDate!.getTime()).not.toBe(oneB.plannedEndDate!.getTime());
     expect(oneBAfter.notifiedOverdueAt).toBeNull();
+  });
+});
+
+describe("getMyTasks surfaces overdue notification history", () => {
+  it("reports zero for a step that's never been flagged overdue", async () => {
+    const project = await createTestProjectDayOne({ visitUrgency: "hot" });
+    const items = await getMyTasks(null, { projectId: project.id, includeCompleted: true });
+    const oneA = items.find((i) => i.stepCode === "1A")!;
+    expect(oneA.timesOverdue).toBe(0);
+    expect(oneA.lastOverdueAt).toBeNull();
+  });
+
+  it("counts distinct overdue episodes and reports the most recent one", async () => {
+    const project = await createTestProjectDayOne({ visitUrgency: "hot" });
+    const oneA = await getStep(project.id, "1A");
+    await backdateStep(oneA.id, daysAgo(5));
+    await notifyOverdueSteps();
+
+    const afterFirst = await getMyTasks(null, { projectId: project.id, includeCompleted: true });
+    const itemAfterFirst = afterFirst.find((i) => i.stepCode === "1A")!;
+    expect(itemAfterFirst.timesOverdue).toBe(1);
+    expect(itemAfterFirst.lastOverdueAt).not.toBeNull();
+
+    // Slips further and gets caught by the cron a second time — backdateStep also clears
+    // notified_overdue_at, so this is eligible to be (re-)notified, same as reschedule.ts does.
+    const firstFlaggedAt = itemAfterFirst.lastOverdueAt;
+    await backdateStep(oneA.id, daysAgo(2));
+    await notifyOverdueSteps();
+
+    const afterSecond = await getMyTasks(null, { projectId: project.id, includeCompleted: true });
+    const itemAfterSecond = afterSecond.find((i) => i.stepCode === "1A")!;
+    expect(itemAfterSecond.timesOverdue).toBe(2);
+    expect(itemAfterSecond.lastOverdueAt).not.toBe(firstFlaggedAt);
   });
 });

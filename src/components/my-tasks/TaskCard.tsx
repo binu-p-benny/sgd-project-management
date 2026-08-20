@@ -10,6 +10,8 @@ import {
   STEP_STATUS_COLORS,
   BLOCKED_REASON_LABELS,
   BLOCKED_REASON_OPTIONS,
+  DELAY_CATEGORY_LABELS,
+  DELAY_CATEGORY_OPTIONS,
   DEPARTMENT_LABELS,
   PHASE_LABELS,
 } from "@/lib/labels";
@@ -44,11 +46,13 @@ const DATE_FIELDS: { key: "actualStartDate" | "actualEndDate"; label: string }[]
 
 // Steps whose actual start isn't worth showing as an editable field — either because the
 // work happens in a single day (1A, 1B: the actual work, not the planned window leading up
-// to it, starts and finishes the same day), or because it's entirely system-derived and never
+// to it, starts and finishes the same day), because it's entirely system-derived and never
 // meant to be hand-edited (2A: always set to its own planned finish the moment real progress
-// begins — see syncDerivedStepStatus in step-actions.ts). Either way, only the completion
-// date is meaningful to correct here.
-const SINGLE_DATE_FIELD_STEP_CODES = new Set(["1A", "1B", "2A"]);
+// begins — see syncDerivedStepStatus in step-actions.ts), because it's auto-stamped the
+// moment the dependency before it completes (1C, 1D — see autoStartStep in step-actions.ts),
+// or because only its completion date is worth tracking (2D2). Either way, only the completion
+// date is meaningful to show here.
+const SINGLE_DATE_FIELD_STEP_CODES = new Set(["1A", "1B", "1C", "1D", "2A", "2D2"]);
 
 // Steps that skip the Start->Mark complete two-click flow at not_started and jump straight to
 // a single completion button. Includes 1A/1B plus 1D, which — like 1B and 1C —
@@ -108,6 +112,19 @@ function StatusIcon({ status, className }: { status: string; className?: string 
   );
 }
 
+// A restore/history glyph (circular arrow + clock hands) rather than the plain clock used for
+// "in progress" above — this marks a step that has been flagged overdue before, which is a
+// distinct signal from its current status and shouldn't read as another status icon.
+function HistoryIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className={className}>
+      <path d="M3.5 12a8.5 8.5 0 1 0 2.7-6.2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M3.5 4.5v4h4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 7.5V12l3 2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 type Panel = "none" | "block" | "complete1a" | "revert";
 
 interface RevertPlan {
@@ -145,6 +162,7 @@ export function TaskCard({
   const [blockedReason, setBlockedReason] = useState("");
   const [blockedNote, setBlockedNote] = useState("");
   const [visitUrgency, setVisitUrgency] = useState("");
+  const [delayCategory, setDelayCategory] = useState("");
   // A plain useState would only ever seed this on first mount. router.refresh() re-fetches
   // server data and passes this same card fresh props (same item.id, so React reuses the
   // instance rather than remounting it) — useSyncedDraft is what makes a value computed
@@ -181,6 +199,7 @@ export function TaskCard({
       }
       setPanel("none");
       setNote("");
+      setDelayCategory("");
       router.refresh();
       setSubmitting(false);
     } catch {
@@ -257,7 +276,15 @@ export function TaskCard({
       setError("Actual end is after the planned finish — add a note explaining why before marking complete");
       return;
     }
-    submitWithDates({ status: "completed", notes: note || undefined });
+    if (needsDelayCategory) {
+      setError("Choose whether the delay was client side or in house before marking complete");
+      return;
+    }
+    submitWithDates({
+      status: "completed",
+      notes: note || undefined,
+      delayCategory: delayCategory || undefined,
+    });
   }
 
   function confirmBlock() {
@@ -388,6 +415,10 @@ export function TaskCard({
   const isLateCompletion =
     canEditDates && !!item.plannedEndDate && effectiveActualEndDate > toDateInputValue(item.plannedEndDate);
   const needsLateReason = isLateCompletion && !note.trim();
+  // 1B only: a late completion also needs to say whether the delay was the client's or the
+  // team's — reschedule.ts uses that to decide whether 1C's planned finish moves with it.
+  const needsDelayCategoryChoice = item.stepCode === "1B" && isLateCompletion;
+  const needsDelayCategory = needsDelayCategoryChoice && !delayCategory;
   const visibleDateFields = SINGLE_DATE_FIELD_STEP_CODES.has(item.stepCode)
     ? DATE_FIELDS.filter((f) => f.key !== "actualStartDate")
     : DATE_FIELDS;
@@ -396,9 +427,45 @@ export function TaskCard({
   // submitWithDates. Only steps with no such button (completed, derived) keep the standalone
   // save-dates control, since nothing else would ever submit their date edits.
   const hasStatusAction = !item.isDerived && item.status !== "completed";
+  // Same condition as the "Overdue" pill below — blocked steps already get their own red
+  // treatment via the blocked-reason banner, so this doesn't pile an amber highlight on top.
+  const isOverdueCard = item.overrun && item.status !== "blocked";
+  // This step itself finished after its own planned finish — a stronger, more specific signal
+  // than "was flagged overdue at some point" once it's actually done, so it takes over from the
+  // history color rather than stacking. delay_category (the "In house delay"/"Client side
+  // delay" box below) is 1B-only and always implies this, but plenty of other steps can also
+  // complete late without ever having a category recorded against them — this covers both.
+  const isDelayedCompletion =
+    item.status === "completed" &&
+    !!item.actualEndDate &&
+    !!item.plannedEndDate &&
+    item.actualEndDate > item.plannedEndDate;
+  const daysLate = isDelayedCompletion
+    ? Math.round(
+        (new Date(item.actualEndDate!).getTime() - new Date(item.plannedEndDate!).getTime()) / (1000 * 60 * 60 * 24)
+      )
+    : 0;
+  // A distinct, calmer color from the amber "overdue right now" state — this step has slipped
+  // before but isn't currently the urgent one, so it shouldn't compete for the same attention.
+  const hasDelayHistory = !isOverdueCard && !isDelayedCompletion && item.timesOverdue > 0;
+  // This step didn't slip itself, but something upstream of it did (see the note under Planned
+  // finish below) — the mildest of the four signals, so it only shows when nothing above applies.
+  const isUpstreamAffected = !isOverdueCard && !isDelayedCompletion && !hasDelayHistory && !!item.upstreamDelay;
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-edge bg-surface p-4">
+    <div
+      className={`flex flex-col gap-3 rounded-xl border p-4 ${
+        isOverdueCard
+          ? "border-amber-500/50 bg-amber-500/5 dark:border-amber-500/40 dark:bg-amber-500/[0.04]"
+          : isDelayedCompletion
+            ? "border-rose-500/50 bg-rose-500/5 dark:border-rose-500/40 dark:bg-rose-500/[0.04]"
+            : hasDelayHistory
+              ? "border-violet-500/50 bg-violet-500/5 dark:border-violet-500/40 dark:bg-violet-500/[0.04]"
+              : isUpstreamAffected
+                ? "border-cyan-500/50 bg-cyan-500/5 dark:border-cyan-500/40 dark:bg-cyan-500/[0.04]"
+                : "border-edge bg-surface"
+      }`}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-start gap-2.5">
           <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${STATUS_ICON_WRAP[item.status]}`}>
@@ -431,10 +498,38 @@ export function TaskCard({
               Overdue
             </span>
           )}
+          {item.timesOverdue > 0 && (
+            <span
+              title={`Flagged overdue ${item.timesOverdue} time${item.timesOverdue === 1 ? "" : "s"}${
+                item.lastOverdueAt ? ` · most recently ${formatDate(item.lastOverdueAt)}` : ""
+              }`}
+              className="flex items-center gap-1 rounded-full bg-overlay px-2 py-0.5 text-xs font-medium text-fg-muted ring-1 ring-inset ring-edge"
+            >
+              <HistoryIcon className="h-3 w-3 stroke-current" />
+              {item.timesOverdue}×
+            </span>
+          )}
         </div>
       </div>
 
       <div className="text-xs text-fg-muted">Planned finish: {formatDate(item.plannedEndDate)}</div>
+
+      {item.upstreamDelay && (
+        <div className="text-xs text-fg-subtle">
+          {DELAY_CATEGORY_LABELS[item.upstreamDelay.category as keyof typeof DELAY_CATEGORY_LABELS]} on{" "}
+          {item.upstreamDelay.stepCode} —{" "}
+          {item.upstreamDelay.category === "in_house"
+            ? "this step's schedule wasn't pushed out"
+            : "this step's schedule shifted to match"}
+        </div>
+      )}
+
+      {item.timesOverdue > 0 && (
+        <div className="text-xs text-fg-subtle">
+          Overdue history — flagged {item.timesOverdue} time{item.timesOverdue === 1 ? "" : "s"}
+          {item.lastOverdueAt && `, most recently ${formatDate(item.lastOverdueAt)}`}
+        </div>
+      )}
 
       {item.status === "blocked" && item.blockedReason && (
         <div className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-600 ring-1 ring-inset ring-red-500/25 dark:text-red-400">
@@ -443,6 +538,18 @@ export function TaskCard({
             {item.daysBlocked !== null && ` · blocked ${item.daysBlocked}d`}
           </div>
           {item.blockedNote && <div className="mt-0.5">{item.blockedNote}</div>}
+        </div>
+      )}
+
+      {item.status === "completed" && item.delayCategory && (
+        <div className="rounded-lg bg-overlay px-3 py-2 text-xs text-fg-muted">
+          {DELAY_CATEGORY_LABELS[item.delayCategory as keyof typeof DELAY_CATEGORY_LABELS]}
+        </div>
+      )}
+
+      {isDelayedCompletion && !item.delayCategory && (
+        <div className="text-xs text-fg-subtle">
+          Completed {daysLate} day{daysLate === 1 ? "" : "s"} late
         </div>
       )}
 
@@ -643,7 +750,7 @@ export function TaskCard({
         </div>
       )}
 
-      {canEditDates && (
+      {canEditDates && !item.isDerived && (
         <div className="flex flex-col gap-2 border-t border-edge pt-3">
           <div className={`grid gap-2 ${visibleDateFields.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
             {visibleDateFields.map(({ key, label }) => (
@@ -719,6 +826,20 @@ export function TaskCard({
 
       {panel === "none" && hasStatusAction && (
         <>
+          {needsDelayCategoryChoice && (
+            <select
+              className={selectClass}
+              value={delayCategory}
+              onChange={(e) => setDelayCategory(e.target.value)}
+            >
+              <option value="">Reason for delay…</option>
+              {DELAY_CATEGORY_OPTIONS.map((category) => (
+                <option key={category} value={category}>
+                  {DELAY_CATEGORY_LABELS[category]}
+                </option>
+              ))}
+            </select>
+          )}
           <textarea
             className={textareaClass}
             rows={2}
@@ -728,6 +849,11 @@ export function TaskCard({
           />
           {needsLateReason && item.stepCode !== "1A" && (
             <p className="text-xs text-amber-600 dark:text-amber-400">Add a note before marking a late step complete</p>
+          )}
+          {needsDelayCategory && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              Choose whether the delay was client side or in house
+            </p>
           )}
         </>
       )}
@@ -740,7 +866,11 @@ export function TaskCard({
                 <button
                   className={btnPrimary}
                   onClick={completeStep}
-                  disabled={submitting || !canStartOrComplete || (item.stepCode !== "1A" && needsLateReason)}
+                  disabled={
+                    submitting ||
+                    !canStartOrComplete ||
+                    (item.stepCode !== "1A" && (needsLateReason || needsDelayCategory))
+                  }
                 >
                   Completed
                 </button>
@@ -759,7 +889,11 @@ export function TaskCard({
               <button
                 className={btnPrimary}
                 onClick={completeStep}
-                disabled={submitting || !canStartOrComplete || (item.stepCode !== "1A" && needsLateReason)}
+                disabled={
+                  submitting ||
+                  !canStartOrComplete ||
+                  (item.stepCode !== "1A" && (needsLateReason || needsDelayCategory))
+                }
               >
                 Mark complete
               </button>

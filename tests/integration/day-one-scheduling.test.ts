@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { updateStepStatus } from "@/lib/step-actions";
 import { rescheduleProjectDates } from "@/lib/reschedule";
+import { addDays } from "@/lib/step-template";
+import { getMyTasks } from "@/lib/my-tasks";
 import { prisma } from "@/lib/prisma";
 import {
   createTestProjectDayOne,
@@ -119,5 +121,96 @@ describe("Actual-date edits cascade through the live Phase 1+2 schedule", () => 
     const oneBAfter = await getStep(project.id, "1B");
     expect(oneBAfter.plannedStartDate).toEqual(earlierEnd);
     expect(oneBAfter.plannedStartDate!.getTime()).toBeLessThan(oneBOriginal.plannedStartDate!.getTime());
+  });
+});
+
+describe("1B's delay_category controls whether a late completion moves 1C's planned finish", () => {
+  async function completeOneAAndGoLate(visitUrgency: "hot" = "hot") {
+    const project = await createTestProjectDayOne({ visitUrgency });
+    const oneA = await getStep(project.id, "1A");
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency });
+
+    const oneCFirst = await getStep(project.id, "1C");
+    const oneB = await getStep(project.id, "1B");
+    const lateEnd = addDays(oneB.plannedEndDate!, 10);
+    await prisma.phaseStep.update({ where: { id: oneB.id }, data: { actualEndDate: lateEnd } });
+
+    return { project, oneB, oneCFirst, lateEnd };
+  }
+
+  it("client_side delay still pushes 1C's planned finish out, same as before delay_category existed", async () => {
+    const { project, oneB, oneCFirst, lateEnd } = await completeOneAAndGoLate();
+
+    await updateStepStatus(oneB.id, "completed", users.project_engineer, { delayCategory: "client_side" });
+
+    const oneCAfter = await getStep(project.id, "1C");
+    expect(oneCAfter.plannedStartDate).toEqual(lateEnd);
+    expect(oneCAfter.plannedEndDate!.getTime()).toBeGreaterThan(oneCFirst.plannedEndDate!.getTime());
+  });
+
+  it("in_house delay leaves 1C's planned finish exactly where it was first set", async () => {
+    const { project, oneB, oneCFirst } = await completeOneAAndGoLate();
+
+    await updateStepStatus(oneB.id, "completed", users.project_engineer, { delayCategory: "in_house" });
+
+    const oneCAfter = await getStep(project.id, "1C");
+    expect(oneCAfter.plannedStartDate).toEqual(oneCFirst.plannedStartDate);
+    expect(oneCAfter.plannedEndDate).toEqual(oneCFirst.plannedEndDate);
+  });
+
+  it("rejects completing 1B late with no delayCategory, accepts and persists it when supplied", async () => {
+    const { oneB } = await completeOneAAndGoLate();
+
+    await expect(
+      updateStepStatus(oneB.id, "completed", users.project_engineer)
+    ).rejects.toMatchObject({ status: 400 });
+
+    const updated = await updateStepStatus(oneB.id, "completed", users.project_engineer, {
+      delayCategory: "in_house",
+    });
+    expect(updated.delayCategory).toBe("in_house");
+  });
+
+  it("an on-time 1B never requires or stores a delay_category", async () => {
+    const project = await createTestProjectDayOne({ visitUrgency: "hot" });
+    const oneA = await getStep(project.id, "1A");
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot" });
+    const oneB = await getStep(project.id, "1B");
+    await prisma.phaseStep.update({ where: { id: oneB.id }, data: { actualEndDate: oneB.plannedEndDate } });
+
+    const updated = await updateStepStatus(oneB.id, "completed", users.project_engineer);
+    expect(updated.delayCategory).toBeNull();
+  });
+
+  it("getMyTasks explains on every downstream item why its schedule did or didn't move", async () => {
+    const { project, oneB } = await completeOneAAndGoLate();
+    await updateStepStatus(oneB.id, "completed", users.project_engineer, { delayCategory: "in_house" });
+
+    const items = await getMyTasks(null, { projectId: project.id, includeCompleted: true });
+    const oneCItem = items.find((i) => i.stepCode === "1C")!;
+    expect(oneCItem.upstreamDelay).toEqual({ stepCode: "1B", category: "in_house" });
+
+    // 1B itself has nothing upstream of it to explain. 1D isn't a *direct* dependency of 1B,
+    // but the delay still traces back to it transitively through 1C — same as every step
+    // further down the Phase 1/2 chain (2A, 2D1, 2D2, 2F), not just the one right after 1B.
+    const oneBItem = items.find((i) => i.stepCode === "1B")!;
+    expect(oneBItem.upstreamDelay).toBeNull();
+    const oneDItem = items.find((i) => i.stepCode === "1D")!;
+    expect(oneDItem.upstreamDelay).toEqual({ stepCode: "1B", category: "in_house" });
+
+    // 2A depends on 1D depends on 1C depends on 1B — three hops back, still resolved.
+    const twoAItem = items.find((i) => i.stepCode === "2A")!;
+    expect(twoAItem.upstreamDelay).toEqual({ stepCode: "1B", category: "in_house" });
+  });
+
+  it("getMyTasks reports no upstream delay once 1B completes on time", async () => {
+    const project = await createTestProjectDayOne({ visitUrgency: "hot" });
+    const oneA = await getStep(project.id, "1A");
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot" });
+    const oneB = await getStep(project.id, "1B");
+    await updateStepStatus(oneB.id, "completed", users.project_engineer);
+
+    const items = await getMyTasks(null, { projectId: project.id, includeCompleted: true });
+    expect(items.find((i) => i.stepCode === "1C")!.upstreamDelay).toBeNull();
   });
 });

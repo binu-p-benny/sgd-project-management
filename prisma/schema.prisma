@@ -73,6 +73,11 @@ enum ItemType {
   gasket
 }
 
+enum DelayCategory {
+  client_side
+  in_house
+}
+
 enum BlockedReason {
   client_payment_hold
   client_hold
@@ -197,6 +202,12 @@ model PhaseStep {
   blockedReason BlockedReason? @map("blocked_reason")
   blockedNote   String?        @map("blocked_note") @db.Text
   notes         String?        @db.Text
+
+  // Set only when this step (currently just 1B) completes after its planned finish — records
+  // whether the slip was the client's fault or an internal one. Read by reschedule.ts: an
+  // in_house delay freezes the next step's planned dates at what was first computed instead of
+  // letting them shift out with the late actual end, the way a client_side delay still does.
+  delayCategory DelayCategory? @map("delay_category")
 
   // Idempotency guard for the overdue-notification cron (see notify-overdue.ts): set the
   // moment notifications go out for this step being overdue, so a daily run doesn't re-notify

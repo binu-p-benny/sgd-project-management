@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { checkDependencyGate } from "@/lib/dependency-gate";
 import { getRequirementCreatedStatus, getMaterialsArrivedStatus, getMaterialQCStatus } from "@/lib/procurement";
 import { isStepOverrun, daysBlocked } from "@/lib/overrun";
+import { findUpstreamDelay, type DelayGraphNode } from "@/lib/reschedule";
 import { DERIVED_STEP_CODES } from "@/lib/step-actions";
 
 export interface MyTaskItem {
@@ -19,10 +20,21 @@ export interface MyTaskItem {
   actualEndDate: string | null;
   blockedReason: string | null;
   blockedNote: string | null;
+  delayCategory: string | null;
   notes: string | null;
   project: { id: string; name: string; clientName: string };
   overrun: boolean;
   daysBlocked: number | null;
+  // Distinct times the overdue cron has flagged this step, and the most recent one — from
+  // Notification rows (type step_overdue), which persist even after the step catches up or
+  // notified_overdue_at gets cleared by a reschedule. 0/null means it's never slipped.
+  timesOverdue: number;
+  lastOverdueAt: string | null;
+  // Set when a step somewhere upstream of this one (not necessarily a direct dependency)
+  // completed late with a delay_category — explains why this step's own planned finish did or
+  // didn't move (see reschedule.ts): in_house freezes the chain at what was first computed,
+  // client_side lets it shift with the late actual end as normal.
+  upstreamDelay: { stepCode: string; category: string } | null;
   isDerived: boolean;
   derivedSummary: { itemType: string; done: boolean }[] | null;
   gateBlockedBy: string[] | null;
@@ -59,6 +71,44 @@ export async function getMyTasks(
     orderBy: [{ updatedAt: "asc" }],
   });
 
+  // Batched once for every step in this result set, rather than per-step: which of them have
+  // ever been flagged overdue by the cron (see notify-overdue.ts). Notification rows for the
+  // same overdue episode share one createdAt (Postgres's now() is stable within the createMany
+  // transaction that wrote them), so grouping by exact timestamp counts distinct episodes
+  // rather than one row per notified department.
+  const overdueNotifications = steps.length
+    ? await prisma.notification.findMany({
+        where: { phaseStepId: { in: steps.map((s) => s.id) }, type: "step_overdue" },
+        select: { phaseStepId: true, createdAt: true },
+      })
+    : [];
+  const overdueHistoryByStep = new Map<string, Date[]>();
+  for (const n of overdueNotifications) {
+    if (!n.phaseStepId) continue;
+    const list = overdueHistoryByStep.get(n.phaseStepId) ?? [];
+    list.push(n.createdAt);
+    overdueHistoryByStep.set(n.phaseStepId, list);
+  }
+
+  // Batched the same way: the full dependsOn/delay_category graph for every project referenced
+  // here — needed to trace an upstream delay transitively (e.g. 2F depends on 2D1 depends on
+  // 2A depends on 1D depends on 1C depends on 1B), not just one hop back. A department-filtered
+  // call might not include every ancestor step in `steps` itself, so this is fetched separately
+  // rather than reused from it. See findUpstreamDelay in reschedule.ts.
+  const projectIds = [...new Set(steps.map((s) => s.projectId))];
+  const allProjectSteps = projectIds.length
+    ? await prisma.phaseStep.findMany({
+        where: { projectId: { in: projectIds } },
+        select: { projectId: true, stepCode: true, dependsOn: true, delayCategory: true },
+      })
+    : [];
+  const graphNodesByProject = new Map<string, DelayGraphNode[]>();
+  for (const s of allProjectSteps) {
+    const list = graphNodesByProject.get(s.projectId) ?? [];
+    list.push({ stepCode: s.stepCode, dependsOn: s.dependsOn, delayCategory: s.delayCategory });
+    graphNodesByProject.set(s.projectId, list);
+  }
+
   const items: MyTaskItem[] = [];
 
   for (const step of steps) {
@@ -84,6 +134,13 @@ export async function getMyTasks(
       gateBlockedBy = gate.allowed ? [] : gate.blockedBy;
     }
 
+    const overdueDates = overdueHistoryByStep.get(step.id) ?? [];
+    const timesOverdue = new Set(overdueDates.map((d) => d.getTime())).size;
+    const lastOverdueAt =
+      overdueDates.length > 0 ? new Date(Math.max(...overdueDates.map((d) => d.getTime()))) : null;
+
+    const upstreamDelay = findUpstreamDelay(step.stepCode, graphNodesByProject.get(step.projectId) ?? []);
+
     items.push({
       id: step.id,
       stepCode: step.stepCode,
@@ -98,10 +155,14 @@ export async function getMyTasks(
       actualEndDate: step.actualEndDate?.toISOString() ?? null,
       blockedReason: step.blockedReason,
       blockedNote: step.blockedNote,
+      delayCategory: step.delayCategory,
       notes: step.notes,
       project: step.project,
       overrun: isStepOverrun(step.plannedEndDate, step.status),
       daysBlocked: step.status === "blocked" ? daysBlocked(step.updatedAt) : null,
+      timesOverdue,
+      lastOverdueAt: lastOverdueAt?.toISOString() ?? null,
+      upstreamDelay,
       isDerived,
       derivedSummary,
       gateBlockedBy,

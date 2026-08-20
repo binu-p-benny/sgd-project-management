@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { BlockedReason, StepStatus, VisitUrgency } from "@prisma/client";
+import { BlockedReason, DelayCategory, StepStatus, VisitUrgency } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getSession, isAdminEditor } from "@/lib/auth";
 import { StepActionError, updateStepStatus } from "@/lib/step-actions";
@@ -11,6 +11,7 @@ const updateSchema = z.object({
   blockedNote: z.string().optional(),
   notes: z.string().optional(),
   visitUrgency: z.nativeEnum(VisitUrgency).optional(),
+  delayCategory: z.nativeEnum(DelayCategory).optional(),
 });
 
 export async function PATCH(

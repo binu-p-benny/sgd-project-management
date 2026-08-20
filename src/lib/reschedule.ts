@@ -6,6 +6,55 @@ function addDays(date: Date, days: number): Date {
   return result;
 }
 
+export interface DelayGraphNode {
+  stepCode: string;
+  dependsOn: string[];
+  delayCategory: string | null;
+}
+
+/**
+ * Walks the dependsOn graph upward from `stepCode` and returns the nearest ancestor that
+ * completed with a delay_category set, however many hops back — not just a direct dependency.
+ * A step's own planned dates only ever move (or freeze) because of the endDates logic above,
+ * but that effect propagates forward through the whole chain (1B -> 1C -> 1D -> 2A -> ...), so
+ * every step downstream of a delayed one is worth explaining, not just the one right after it.
+ * Returns null once nothing upstream was ever delayed.
+ */
+export function findUpstreamDelay(
+  stepCode: string,
+  nodes: DelayGraphNode[]
+): { stepCode: string; category: string } | null {
+  const byCode = new Map(nodes.map((n) => [n.stepCode, n]));
+  const cache = new Map<string, { stepCode: string; category: string } | null>();
+
+  function resolve(code: string, seen: Set<string>): { stepCode: string; category: string } | null {
+    if (cache.has(code)) return cache.get(code)!;
+    if (seen.has(code)) return null; // guards against a cycle, which shouldn't exist in practice
+    seen.add(code);
+
+    const node = byCode.get(code);
+    let result: { stepCode: string; category: string } | null = null;
+    if (node) {
+      for (const dep of node.dependsOn) {
+        const depNode = byCode.get(dep);
+        if (depNode?.delayCategory) {
+          result = { stepCode: dep, category: depNode.delayCategory };
+          break;
+        }
+        const upstream = resolve(dep, seen);
+        if (upstream) {
+          result = upstream;
+          break;
+        }
+      }
+    }
+    cache.set(code, result);
+    return result;
+  }
+
+  return resolve(stepCode, new Set());
+}
+
 /**
  * Recomputes planned_start_date/planned_end_date for every not-yet-completed Phase 1/2
  * step in a project whenever a date changes anywhere upstream — an actual-date edit, or
@@ -33,13 +82,25 @@ export async function rescheduleProjectDates(projectId: string): Promise<void> {
       plannedStartDate: true,
       plannedEndDate: true,
       actualEndDate: true,
+      delayCategory: true,
     },
   });
 
   // Ground truth for a step's "end", for the purposes of scheduling what comes after it:
-  // a completed step's actual end date if known, else its current planned end date.
+  // a completed step's actual end date if known, else its current planned end date. A step
+  // completed with an in_house delayCategory is the one exception — everything downstream
+  // schedules as if it had finished on its planned end date instead, so an internal delay
+  // doesn't buy the rest of the chain any slack (a client_side delay still uses the real,
+  // late actual end, same as before delayCategory existed).
   const endDates = new Map<string, Date | null>(
-    steps.map((s) => [s.stepCode, s.status === "completed" ? (s.actualEndDate ?? s.plannedEndDate) : s.plannedEndDate])
+    steps.map((s) => [
+      s.stepCode,
+      s.status === "completed"
+        ? s.delayCategory === "in_house"
+          ? s.plannedEndDate
+          : (s.actualEndDate ?? s.plannedEndDate)
+        : s.plannedEndDate,
+    ])
   );
 
   const updates = new Map<
