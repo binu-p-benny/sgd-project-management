@@ -53,15 +53,19 @@ const withSoftDelete = Prisma.defineExtension((client) =>
             const a = args as { where?: object };
             // Cast through one model's delegate: every model here exposes the same
             // findFirst/findFirstOrThrow shape, and the `where` we pass is built above.
+            // Combined via AND, not a shallow spread: a caller's `where` can itself filter on
+            // the same relation key the project-scope filter uses (e.g. `phaseStep: { projectId }`
+            // alongside our injected `phaseStep: { project: { deletedAt: null } }`), and spreading
+            // would let one silently clobber the other instead of both applying.
             return client[model as "project"][rewritten]({
               ...a,
-              where: { ...(a.where ?? {}), ...filter },
+              where: { AND: [a.where ?? {}, filter] },
             });
           }
 
           if (FILTERED_OPERATIONS.has(operation)) {
             const a = args as { where?: object };
-            return query({ ...a, where: { ...(a.where ?? {}), ...filter } });
+            return query({ ...a, where: { AND: [a.where ?? {}, filter] } });
           }
 
           return query(args);

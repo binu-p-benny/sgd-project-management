@@ -17,6 +17,7 @@ import {
 import { updateStepStatus } from "@/lib/step-actions";
 import { createTestProject, ensureTestUsers, getStep, cleanupTestProjects } from "../helpers/db";
 import { advanceThroughPhase1 } from "../helpers/scenarios";
+import { BLOCKED_REASON_LABELS } from "@/lib/labels";
 import type { Department } from "@prisma/client";
 
 // A second, unextended client — the only way to see past the soft-delete filter and prove the
@@ -149,5 +150,34 @@ describe("deleting a project hides it without removing it", () => {
     const ids = (await filtered.project.findMany()).map((p) => p.id);
     expect(ids).not.toContain(doomed.id);
     expect(ids).toContain(keeper.id);
+  });
+
+  // Regression test: the project-scope filter the extension injects for StepStatusLog is
+  // `{ phaseStep: { project: { deletedAt: null } } }`, keyed on `phaseStep` — the same top-level
+  // key getBlockerHistory's own `where: { phaseStep: { projectId } }` uses. A shallow `{ ...where,
+  // ...filter }` merge lets the injected filter silently clobber the caller's `projectId` scoping
+  // instead of both applying, so every project's blocker history leaked into every other project's.
+  it("keeps blocker history scoped to its own project", async () => {
+    const projectA = await createTestProject();
+    const projectB = await createTestProject();
+    await advanceThroughPhase1(projectA.id, users, "emergency");
+    await advanceThroughPhase1(projectB.id, users, "emergency");
+
+    const stepA = await getStep(projectA.id, "2D2");
+    const stepB = await getStep(projectB.id, "2D2");
+    await updateStepStatus(stepA.id, "blocked", users.design_engineer, {
+      blockedReason: "vendor_issue_section",
+    });
+    await updateStepStatus(stepB.id, "blocked", users.design_engineer, {
+      blockedReason: "vendor_issue_hardware",
+    });
+
+    const historyA = await getBlockerHistory(projectA.id);
+    expect(historyA.some((e) => e.reason === BLOCKED_REASON_LABELS.vendor_issue_section)).toBe(true);
+    expect(historyA.some((e) => e.reason === BLOCKED_REASON_LABELS.vendor_issue_hardware)).toBe(false);
+
+    const historyB = await getBlockerHistory(projectB.id);
+    expect(historyB.some((e) => e.reason === BLOCKED_REASON_LABELS.vendor_issue_hardware)).toBe(true);
+    expect(historyB.some((e) => e.reason === BLOCKED_REASON_LABELS.vendor_issue_section)).toBe(false);
   });
 });
