@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { updateStepStatus } from "@/lib/step-actions";
 import { checkDependencyGate } from "@/lib/dependency-gate";
-import { computeExpectedArrivalDate } from "@/lib/procurement";
+import { computeExpectedArrivalDate, resetProcurementItem, clearProcurementFromStage } from "@/lib/procurement";
 import {
   createTestProject,
   ensureTestUsers,
@@ -11,6 +11,7 @@ import {
   getProcurementItems,
   getStatusLogs,
   cleanupTestProjects,
+  prisma,
 } from "../helpers/db";
 import { advanceThroughPhase1, patchProcurementItem, markAllRequirementsCreated } from "../helpers/scenarios";
 import type { Department } from "@prisma/client";
@@ -212,6 +213,97 @@ describe("2F requires all 3 QC checkboxes (section, hardware, gasket)", () => {
     await patchProcurementItem(project.id, "gasket", users.purchase, { qcCheckedAt: new Date() });
     const twoFAfter = await getStep(project.id, "2F");
     expect(twoFAfter.status).toBe("completed");
+  });
+});
+
+describe("resetProcurementItem (QC-failure restart) clears the action plan too", () => {
+  it("wipes action_plan_at/note along with every earlier stage, and sets the new anchor", async () => {
+    const project = await projectAtPhase2();
+    const items = await getProcurementItems(project.id);
+    const section = items.find((i) => i.itemType === "section")!;
+
+    await prisma.procurementItem.update({
+      where: { id: section.id },
+      data: {
+        qcCheckedAt: new Date(),
+        qcChecked: true,
+        qcPassed: false,
+        qcNote: "cracked on arrival",
+        actionPlanAt: new Date(),
+        actionPlanNote: "reordering from a different supplier",
+      },
+    });
+
+    const newAnchor = new Date("2026-09-01T00:00:00.000Z");
+    await resetProcurementItem(section.id, newAnchor);
+
+    const after = await prisma.procurementItem.findUniqueOrThrow({ where: { id: section.id } });
+    expect(after.qcPassed).toBeNull();
+    expect(after.qcNote).toBeNull();
+    expect(after.actionPlanAt).toBeNull();
+    expect(after.actionPlanNote).toBeNull();
+    expect(after.planAnchorOverride).toEqual(newAnchor);
+  });
+
+  it("also deletes the item's custom action-plan follow-up rows", async () => {
+    const project = await projectAtPhase2();
+    const items = await getProcurementItems(project.id);
+    const section = items.find((i) => i.itemType === "section")!;
+    const hardware = items.find((i) => i.itemType === "hardware")!;
+
+    await prisma.procurementItem.update({
+      where: { id: section.id },
+      data: { qcCheckedAt: new Date(), qcChecked: true, qcPassed: false, qcNote: "cracked", actionPlanAt: new Date() },
+    });
+    await prisma.procurementActionItem.createMany({
+      data: [
+        { procurementItemId: section.id, taskLabel: "Reorder from alternate vendor", plannedDate: new Date() },
+        { procurementItemId: section.id, taskLabel: "Re-inspect on arrival", plannedDate: new Date() },
+      ],
+    });
+    // A row on a different item, to prove the deletion is scoped to the one being restarted.
+    await prisma.procurementActionItem.create({
+      data: { procurementItemId: hardware.id, taskLabel: "Unrelated row", plannedDate: new Date() },
+    });
+
+    await resetProcurementItem(section.id, new Date("2026-09-01T00:00:00.000Z"));
+
+    expect(await prisma.procurementActionItem.count({ where: { procurementItemId: section.id } })).toBe(0);
+    expect(await prisma.procurementActionItem.count({ where: { procurementItemId: hardware.id } })).toBe(1);
+  });
+});
+
+describe("clearProcurementFromStage also deletes action-plan follow-up rows, project-wide", () => {
+  it("deletes them when the cleared range reaches the action-plan stage", async () => {
+    const project = await projectAtPhase2();
+    const items = await getProcurementItems(project.id);
+    const section = items.find((i) => i.itemType === "section")!;
+
+    await prisma.procurementActionItem.create({
+      data: { procurementItemId: section.id, taskLabel: "Reorder", plannedDate: new Date() },
+    });
+
+    // Stage 5 is "QC checks" — clearing from there reaches stage 6 ("action plan") too.
+    await clearProcurementFromStage(project.id, 5);
+
+    expect(await prisma.procurementActionItem.count({ where: { procurementItemId: section.id } })).toBe(0);
+  });
+
+  it("leaves them alone when the cleared range doesn't reach the action-plan stage", async () => {
+    const project = await projectAtPhase2();
+    const items = await getProcurementItems(project.id);
+    const section = items.find((i) => i.itemType === "section")!;
+
+    await prisma.procurementActionItem.create({
+      data: { procurementItemId: section.id, taskLabel: "Reorder", plannedDate: new Date() },
+    });
+
+    // clearProcurementFromStage only ever runs from stage 0-5 in practice (there's no step
+    // mapped past "QC checks" in DERIVED_STEP_STAGE), so this is a defensive bounds check
+    // rather than a scenario that happens today.
+    await clearProcurementFromStage(project.id, 10);
+
+    expect(await prisma.procurementActionItem.count({ where: { procurementItemId: section.id } })).toBe(1);
   });
 });
 

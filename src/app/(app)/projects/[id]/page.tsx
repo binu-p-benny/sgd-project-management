@@ -10,15 +10,9 @@ import { TaskCard } from "@/components/my-tasks/TaskCard";
 import { getMyTasks, type MyTaskItem } from "@/lib/my-tasks";
 import { getBlockerHistory } from "@/lib/blocker-history";
 import { isStepOverrun, isProcurementStageOverrun, getEffectiveOverallStatus, projectHasOverrun } from "@/lib/overrun";
-import {
-  computeExpectedRequirementDate,
-  computeExpectedQuoteDate,
-  computeExpectedPaymentDate,
-  computeExpectedOrderDate,
-  computeExpectedArrivalDate,
-  computeExpectedQCDate,
-} from "@/lib/procurement";
+import { computeProcurementPlannedDates, computeExpectedActionPlanDate } from "@/lib/procurement";
 import { addDays } from "@/lib/step-template";
+import { findUpstreamDelay } from "@/lib/reschedule";
 import {
   PHASE_LABELS,
   OVERALL_STATUS_LABELS,
@@ -201,7 +195,7 @@ export default async function ProjectDetailPage({
       // tiebreaker happens to sort correctly for every code in this schema (1A<1B<1C<1D,
       // 2A<2D1<2D2<2F, 3A<3B<3C1<3C2<3E — lexicographic order matches intended sequence).
       phaseSteps: { orderBy: [{ createdAt: "asc" }, { stepCode: "asc" }] },
-      procurementItems: true,
+      procurementItems: { include: { actionItems: { orderBy: { createdAt: "asc" } } } },
     },
   });
 
@@ -244,6 +238,15 @@ export default async function ProjectDetailPage({
   const oneD = project.phaseSteps.find((s) => s.stepCode === "1D");
   const phase2PlanAnchor = oneD?.actualEndDate ? addDays(oneD.actualEndDate, 1) : null;
 
+  // Procurement items sit "under" 2A rather than being phase_steps themselves, so they don't
+  // get their own upstreamDelay from getMyTasks — resolved here the same way, off the project's
+  // own step graph. A restarted item (its own planAnchorOverride) plans off a client-given date
+  // instead of the shared chain, so it no longer inherits whatever delayed that chain.
+  const procurementUpstreamDelay = findUpstreamDelay(
+    "2A",
+    project.phaseSteps.map((s) => ({ stepCode: s.stepCode, dependsOn: s.dependsOn, delayCategory: s.delayCategory }))
+  );
+
   const procurementTracker = (
     <ProcurementTracker
       canEdit={!!session && (isAdminEditor(session) || session.department === "purchase")}
@@ -255,8 +258,14 @@ export default async function ProjectDetailPage({
           // instead of the project's default — see resetProcurementItem in step-actions.ts.
           // Every other item keeps following the shared anchor as before.
           const itemPlanAnchor = item.planAnchorOverride ?? phase2PlanAnchor;
-          const planned = (compute: (t: ItemType, anchor: Date) => Date) =>
-            itemPlanAnchor ? compute(item.itemType, itemPlanAnchor) : null;
+          const planned = computeProcurementPlannedDates(item.itemType, itemPlanAnchor, {
+            requirement: item.requirementPlannedOverride,
+            quote: item.quotePlannedOverride,
+            payment: item.paymentPlannedOverride,
+            order: item.orderPlannedOverride,
+            arrival: item.arrivalPlannedOverride,
+            qc: item.qcPlannedOverride,
+          });
 
           const stages = [
             {
@@ -266,9 +275,8 @@ export default async function ProjectDetailPage({
               noteField: "requirementNote" as const,
               actualDate: item.requirementCreatedAt,
               note: item.requirementNote,
-              // No item-type offset — every item's requirement is expected within 24 hours
-              // of 1D closing out, unlike quote/order/arrival/QC which vary by supplier.
-              plannedDate: itemPlanAnchor ? computeExpectedRequirementDate(itemPlanAnchor) : null,
+              plannedDate: planned.requirement,
+              plannedDateField: "requirementPlannedOverride" as const,
               requirementGated: true,
               qcPassed: null,
             },
@@ -279,7 +287,8 @@ export default async function ProjectDetailPage({
               noteField: "quoteNote" as const,
               actualDate: item.quoteCreatedAt,
               note: item.quoteNote,
-              plannedDate: planned(computeExpectedQuoteDate),
+              plannedDate: planned.quote,
+              plannedDateField: "quotePlannedOverride" as const,
               requirementGated: false,
               qcPassed: null,
             },
@@ -290,7 +299,8 @@ export default async function ProjectDetailPage({
               noteField: "paymentNote" as const,
               actualDate: item.paymentSettledAt,
               note: item.paymentNote,
-              plannedDate: planned(computeExpectedPaymentDate),
+              plannedDate: planned.payment,
+              plannedDateField: "paymentPlannedOverride" as const,
               requirementGated: false,
               qcPassed: null,
             },
@@ -301,7 +311,8 @@ export default async function ProjectDetailPage({
               noteField: "orderNote" as const,
               actualDate: item.orderConfirmedAt,
               note: item.orderNote,
-              plannedDate: planned(computeExpectedOrderDate),
+              plannedDate: planned.order,
+              plannedDateField: "orderPlannedOverride" as const,
               requirementGated: false,
               qcPassed: null,
             },
@@ -312,7 +323,8 @@ export default async function ProjectDetailPage({
               noteField: "arrivalNote" as const,
               actualDate: item.actualArrivalDate,
               note: item.arrivalNote,
-              plannedDate: planned(computeExpectedArrivalDate),
+              plannedDate: planned.arrival,
+              plannedDateField: "arrivalPlannedOverride" as const,
               requirementGated: false,
               qcPassed: null,
             },
@@ -323,16 +335,38 @@ export default async function ProjectDetailPage({
               noteField: "qcNote" as const,
               actualDate: item.qcCheckedAt,
               note: item.qcNote,
-              plannedDate: planned(computeExpectedQCDate),
+              plannedDate: planned.qc,
+              plannedDateField: "qcPlannedOverride" as const,
               requirementGated: false,
               qcPassed: item.qcPassed,
             },
+            // Only exists once this item has actually failed QC — nothing to plan an action
+            // around before then. Plans off qc_checked_at itself, not the shared anchor, since
+            // that's the one date this stage can't predate. Its own Planned date stays
+            // system-computed — only the 6 fixed stages above get a manual override.
+            ...(item.qcPassed === false
+              ? [
+                  {
+                    id: "actionPlan",
+                    label: "Action plan",
+                    dateField: "actionPlanAt" as const,
+                    noteField: "actionPlanNote" as const,
+                    actualDate: item.actionPlanAt,
+                    note: item.actionPlanNote,
+                    plannedDate: item.qcCheckedAt ? computeExpectedActionPlanDate(item.qcCheckedAt) : null,
+                    plannedDateField: null,
+                    requirementGated: false,
+                    qcPassed: null,
+                  },
+                ]
+              : []),
           ].map((stage) => ({
             id: stage.id,
             label: stage.label,
             dateField: stage.dateField,
             noteField: stage.noteField,
             plannedDate: stage.plannedDate?.toISOString() ?? null,
+            plannedDateField: stage.plannedDateField,
             actualDate: stage.actualDate?.toISOString() ?? null,
             note: stage.note,
             overrun: isProcurementStageOverrun(stage.plannedDate, stage.actualDate),
@@ -345,6 +379,16 @@ export default async function ProjectDetailPage({
             itemType: item.itemType,
             stages,
             planAnchorOverride: item.planAnchorOverride?.toISOString() ?? null,
+            upstreamDelay: item.planAnchorOverride ? null : procurementUpstreamDelay,
+            canAddActionItem: item.qcPassed === false && !!item.actionPlanAt,
+            actionItems: item.actionItems.map((a) => ({
+              id: a.id,
+              taskLabel: a.taskLabel,
+              plannedDate: a.plannedDate.toISOString(),
+              actualDate: a.actualDate?.toISOString() ?? null,
+              note: a.note,
+              overrun: isProcurementStageOverrun(a.plannedDate, a.actualDate),
+            })),
           };
         })}
     />

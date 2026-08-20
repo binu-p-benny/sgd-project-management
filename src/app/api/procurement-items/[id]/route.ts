@@ -15,18 +15,26 @@ const dateOrNull = z
 const updateSchema = z.object({
   requirementCreatedAt: dateOrNull,
   requirementNote: z.string().nullable().optional(),
+  requirementPlannedOverride: dateOrNull,
   quoteCreatedAt: dateOrNull,
   quoteNote: z.string().nullable().optional(),
+  quotePlannedOverride: dateOrNull,
   orderConfirmedAt: dateOrNull,
   orderNote: z.string().nullable().optional(),
+  orderPlannedOverride: dateOrNull,
   paymentSettledAt: dateOrNull,
   paymentNote: z.string().nullable().optional(),
   paymentDetails: z.string().nullable().optional(),
+  paymentPlannedOverride: dateOrNull,
   actualArrivalDate: dateOrNull,
   arrivalNote: z.string().nullable().optional(),
+  arrivalPlannedOverride: dateOrNull,
   qcCheckedAt: dateOrNull,
   qcPassed: z.boolean().nullable().optional(),
   qcNote: z.string().nullable().optional(),
+  qcPlannedOverride: dateOrNull,
+  actionPlanAt: dateOrNull,
+  actionPlanNote: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
 });
 
@@ -53,10 +61,11 @@ export async function PATCH(
 
   // Procurement (quote/order/payment/arrival/QC) is Purchase's domain, but the
   // "Requirement created" row is 2A's own gate and 2A belongs to Design Engineer —
-  // so a request touching only that row's date and/or note is authorized for them too.
+  // so a request touching only that row's date, note, and/or its own Planned override is
+  // authorized for them too.
   const touchedFields = Object.keys(parsed.data);
   const isRequirementOnlyUpdate = touchedFields.every(
-    (k) => k === "requirementCreatedAt" || k === "requirementNote"
+    (k) => k === "requirementCreatedAt" || k === "requirementNote" || k === "requirementPlannedOverride"
   );
   const authorized =
     isAdminEditor(session) ||
@@ -77,6 +86,15 @@ export async function PATCH(
     const effectiveNote = dateFields.qcNote !== undefined ? dateFields.qcNote : item.qcNote;
     if (!effectiveNote?.trim()) {
       return NextResponse.json({ error: "A note is required when QC fails" }, { status: 400 });
+    }
+  }
+
+  // Unconditional, unlike every other stage's note — the action plan only exists to explain a
+  // failure, so being set at all with nothing to say would defeat the point of the row.
+  if (dateFields.actionPlanAt) {
+    const effectiveNote = dateFields.actionPlanNote !== undefined ? dateFields.actionPlanNote : item.actionPlanNote;
+    if (!effectiveNote?.trim()) {
+      return NextResponse.json({ error: "A note is required for the action plan" }, { status: 400 });
     }
   }
 

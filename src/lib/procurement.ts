@@ -54,6 +54,88 @@ export function computeExpectedQCDate(itemType: ItemType, phase2PlanAnchor: Date
   return addDays(computeExpectedArrivalDate(itemType, phase2PlanAnchor), 3);
 }
 
+/** The corrective action plan (only relevant once QC fails) is expected 2 days after the QC
+ *  check itself — the one date this stage plans from, since a plan can't predate the failure
+ *  that triggered it. */
+export function computeExpectedActionPlanDate(qcCheckedAt: Date): Date {
+  return addDays(qcCheckedAt, 2);
+}
+
+export interface ProcurementPlannedOverrides {
+  requirement?: Date | null;
+  quote?: Date | null;
+  payment?: Date | null;
+  order?: Date | null;
+  arrival?: Date | null;
+  qc?: Date | null;
+}
+
+export interface ProcurementPlannedDates {
+  requirement: Date | null;
+  quote: Date | null;
+  payment: Date | null;
+  order: Date | null;
+  arrival: Date | null;
+  qc: Date | null;
+}
+
+const PLANNED_STAGE_ORDER = ["requirement", "quote", "payment", "order", "arrival", "qc"] as const;
+
+/** Each stage's day offset from the anchor, read off the computeExpectedXDate functions above
+ *  themselves (evaluated against a fixed reference point) rather than re-stated as separate
+ *  magic numbers — so this can never drift out of sync with the formulas it's meant to match. */
+function stageOffsetDays(itemType: ItemType): Record<(typeof PLANNED_STAGE_ORDER)[number], number> {
+  const reference = new Date(0);
+  const daysFromReference = (d: Date) => Math.round((d.getTime() - reference.getTime()) / (1000 * 60 * 60 * 24));
+  return {
+    requirement: 0,
+    quote: daysFromReference(computeExpectedQuoteDate(itemType, reference)),
+    payment: daysFromReference(computeExpectedPaymentDate(itemType, reference)),
+    order: daysFromReference(computeExpectedOrderDate(itemType, reference)),
+    arrival: daysFromReference(computeExpectedArrivalDate(itemType, reference)),
+    qc: daysFromReference(computeExpectedQCDate(itemType, reference)),
+  };
+}
+
+/**
+ * Every stage's effective Planned date for one item, with manual per-stage overrides layered on
+ * top of the usual anchor+offset formulas above. Setting an override re-anchors every stage
+ * after it in this same list, in order — the same "shift together" principle planAnchorOverride
+ * already applies at the whole-item level, just scoped to one stage onward instead of the whole
+ * item. A stage before the override, or a later stage with its own separate override, is
+ * unaffected. With no overrides at all, this reproduces exactly what calling each
+ * computeExpectedXDate function individually would — see the unit tests — since it's purely an
+ * additive layer, not a replacement for them.
+ */
+export function computeProcurementPlannedDates(
+  itemType: ItemType,
+  anchor: Date | null,
+  overrides: ProcurementPlannedOverrides
+): ProcurementPlannedDates {
+  const offsets = stageOffsetDays(itemType);
+  const result = {} as ProcurementPlannedDates;
+
+  let effectiveDate = anchor;
+  let effectiveOffset = 0;
+
+  for (const stage of PLANNED_STAGE_ORDER) {
+    const override = overrides[stage];
+    if (override) {
+      result[stage] = override;
+      effectiveDate = override;
+      effectiveOffset = offsets[stage];
+    } else if (effectiveDate === null) {
+      result[stage] = null;
+    } else {
+      result[stage] = addDays(effectiveDate, offsets[stage] - effectiveOffset);
+      effectiveDate = result[stage];
+      effectiveOffset = offsets[stage];
+    }
+  }
+
+  return result;
+}
+
 /** 2A is derived: complete only when all 3 procurement_items rows have requirement_created_at set. */
 export async function getRequirementCreatedStatus(
   projectId: string
@@ -179,21 +261,50 @@ export const PROCUREMENT_LIFECYCLE = [
   {
     label: "requirement dates",
     // notes belong to the earliest stage: they annotate the item as a whole, so they only go
-    // when the item is being taken back to the state it was created in.
-    fields: { requirementCreatedAt: null, requirementNote: null, expectedArrivalDate: null, notes: null },
+    // when the item is being taken back to the state it was created in. Each stage's own
+    // manual Planned-date override goes with it too — a stale override from a since-cleared
+    // attempt has nothing left to anchor.
+    fields: {
+      requirementCreatedAt: null,
+      requirementNote: null,
+      expectedArrivalDate: null,
+      notes: null,
+      requirementPlannedOverride: null,
+    },
   },
-  { label: "quote dates", fields: { quoteCreatedAt: null, quoteNote: null } },
-  { label: "payment records", fields: { paymentSettledAt: null, paymentNote: null, paymentDetails: null } },
-  { label: "order confirmations", fields: { orderConfirmedAt: null, orderNote: null } },
-  { label: "arrival dates", fields: { actualArrivalDate: null, arrivalNote: null } },
+  { label: "quote dates", fields: { quoteCreatedAt: null, quoteNote: null, quotePlannedOverride: null } },
+  {
+    label: "payment records",
+    fields: { paymentSettledAt: null, paymentNote: null, paymentDetails: null, paymentPlannedOverride: null },
+  },
+  { label: "order confirmations", fields: { orderConfirmedAt: null, orderNote: null, orderPlannedOverride: null } },
+  { label: "arrival dates", fields: { actualArrivalDate: null, arrivalNote: null, arrivalPlannedOverride: null } },
   {
     label: "QC checks",
-    fields: { qcChecked: false, qcCheckedAt: null, qcCheckedBy: null, qcPassed: null, qcNote: null },
+    fields: {
+      qcChecked: false,
+      qcCheckedAt: null,
+      qcCheckedBy: null,
+      qcPassed: null,
+      qcNote: null,
+      qcPlannedOverride: null,
+    },
   },
+  // Only ever holds data once QC has failed, so wiping it alongside everything from an earlier
+  // stage (including a full QC restart, which always starts from stage 0) is always correct —
+  // a stale action plan shouldn't survive whatever cleared the failure it was written for.
+  { label: "action plan", fields: { actionPlanAt: null, actionPlanNote: null } },
 ] as const;
 
 /** Which lifecycle stage each derived step's status is computed from. */
 export const DERIVED_STEP_STAGE: Record<string, number> = { "2A": 0, "2D1": 4, "2F": 5 };
+
+// Found by label rather than assumed to be PROCUREMENT_LIFECYCLE.length - 1, so this stays
+// correct even if a stage is ever appended after "action plan". A clear/reset that reaches
+// this stage or anything earlier also takes the item's custom follow-up tasks with it (see
+// clearProcurementFromStage and resetProcurementItem below), since those only ever exist to
+// explain a failure this same operation is wiping out.
+const ACTION_PLAN_STAGE_INDEX = PROCUREMENT_LIFECYCLE.findIndex((s) => s.label === "action plan");
 
 /** The stage labels a reset from `fromStage` onward would discard. */
 export function describeProcurementReset(fromStage: number): string[] {
@@ -216,6 +327,10 @@ export async function clearProcurementFromStage(projectId: string, fromStage: nu
   if (Object.keys(data).length === 0) return;
 
   await prisma.procurementItem.updateMany({ where: { projectId }, data });
+
+  if (fromStage <= ACTION_PLAN_STAGE_INDEX) {
+    await prisma.procurementActionItem.deleteMany({ where: { procurementItem: { projectId } } });
+  }
 }
 
 /**
@@ -236,6 +351,7 @@ export async function resetProcurementItem(itemId: string, newPlanAnchor: Date) 
     where: { id: itemId },
     data: { ...data, planAnchorOverride: newPlanAnchor },
   });
+  await prisma.procurementActionItem.deleteMany({ where: { procurementItemId: itemId } });
 }
 
 /**

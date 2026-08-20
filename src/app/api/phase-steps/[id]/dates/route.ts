@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession, isAdminEditor } from "@/lib/auth";
 import { rescheduleProjectDates } from "@/lib/reschedule";
-import { cascadeActualStart } from "@/lib/step-actions";
+import { cascadeActualStart, DERIVED_STEP_CODES } from "@/lib/step-actions";
 
 const dateOrNull = z
   .string()
@@ -26,6 +26,9 @@ const updateDatesSchema = z.object({
  * PATCH /api/phase-steps/:id never touches these fields either; status transitions
  * are what normally drive actual dates. Any edit here triggers a project-wide
  * reschedule so downstream planned dates stay consistent with the new actual end date.
+ * 2A/2D1/2F (DERIVED_STEP_CODES) are rejected outright — their actual dates come only
+ * from procurement_items via syncDerivedStepStatus, so a manual date here would just be
+ * a stray value nothing else reads, sitting inconsistently alongside the real derivation.
  */
 export async function PATCH(
   request: NextRequest,
@@ -43,6 +46,12 @@ export async function PATCH(
   const step = await prisma.phaseStep.findUnique({ where: { id } });
   if (!step) {
     return NextResponse.json({ error: "Step not found" }, { status: 404 });
+  }
+  if (DERIVED_STEP_CODES.has(step.stepCode)) {
+    return NextResponse.json(
+      { error: `${step.stepCode}'s dates are derived from procurement_items and can't be edited directly` },
+      { status: 400 }
+    );
   }
 
   const body = await request.json().catch(() => null);

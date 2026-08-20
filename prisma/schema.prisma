@@ -266,16 +266,25 @@ model ProcurementItem {
 
   requirementCreatedAt DateTime? @map("requirement_created_at") @db.Timestamptz(3)
   requirementNote      String?   @map("requirement_note") @db.Text
+  // Manual override for this stage's Planned date — null means "keep computing it from the
+  // anchor/offset formula as usual". Setting one re-anchors every stage after it in the same
+  // item's chain (see computeProcurementPlannedDates), the same "shift together" principle
+  // planAnchorOverride already applies at the whole-item level.
+  requirementPlannedOverride DateTime? @map("requirement_planned_override") @db.Timestamptz(3)
   quoteCreatedAt       DateTime? @map("quote_created_at") @db.Timestamptz(3)
   quoteNote            String?   @map("quote_note") @db.Text
+  quotePlannedOverride DateTime? @map("quote_planned_override") @db.Timestamptz(3)
   orderConfirmedAt     DateTime? @map("order_confirmed_at") @db.Timestamptz(3)
   orderNote            String?   @map("order_note") @db.Text
+  orderPlannedOverride DateTime? @map("order_planned_override") @db.Timestamptz(3)
   paymentSettledAt     DateTime? @map("payment_settled_at") @db.Timestamptz(3)
   paymentNote          String?   @map("payment_note") @db.Text
   paymentDetails       String?   @map("payment_details") @db.Text
+  paymentPlannedOverride DateTime? @map("payment_planned_override") @db.Timestamptz(3)
   expectedArrivalDate  DateTime? @map("expected_arrival_date") @db.Timestamptz(3)
   actualArrivalDate    DateTime? @map("actual_arrival_date") @db.Timestamptz(3)
   arrivalNote          String?   @map("arrival_note") @db.Text
+  arrivalPlannedOverride DateTime? @map("arrival_planned_override") @db.Timestamptz(3)
 
   qcChecked   Boolean   @default(false) @map("qc_checked")
   qcCheckedAt DateTime? @map("qc_checked_at") @db.Timestamptz(3)
@@ -285,15 +294,47 @@ model ProcurementItem {
   // every item is checked AND passed — a failed item blocks phase 3 until it's corrected.
   qcPassed Boolean? @map("qc_passed")
   qcNote      String?   @map("qc_note") @db.Text
+  qcPlannedOverride DateTime? @map("qc_planned_override") @db.Timestamptz(3)
+
+  // Only meaningful once qcPassed is false — the corrective plan for redoing this item.
+  // Planned 2 days after qc_checked_at (see computeExpectedActionPlanDate); the note is
+  // mandatory here unconditionally, unlike the other stages where it's only required when late.
+  actionPlanAt   DateTime? @map("action_plan_at") @db.Timestamptz(3)
+  actionPlanNote String?   @map("action_plan_note") @db.Text
 
   notes String? @db.Text
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
+  actionItems ProcurementActionItem[]
+
   @@index([projectId])
   @@index([itemType])
   @@map("procurement_items")
+}
+
+// A user-defined follow-up task under an item's action plan (e.g. "Reorder from an alternate
+// vendor") — open-ended, unlike every other procurement stage above, which is a fixed column
+// pair. Only ever created once that item has actually failed QC and its action plan is marked
+// (see the /action-items route) — deleted alongside the rest of the item's lifecycle on a QC
+// restart or an upstream revert cascade, since a stale follow-up task from a since-cleared
+// failure has nothing left to explain.
+model ProcurementActionItem {
+  id                String          @id @default(cuid())
+  procurementItemId String          @map("procurement_item_id")
+  procurementItem   ProcurementItem @relation(fields: [procurementItemId], references: [id], onDelete: Cascade)
+
+  taskLabel   String    @map("task_label")
+  plannedDate DateTime  @map("planned_date") @db.Timestamptz(3)
+  actualDate  DateTime? @map("actual_date") @db.Timestamptz(3)
+  note        String?   @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([procurementItemId])
+  @@map("procurement_action_items")
 }
 
 model StepStatusLog {
