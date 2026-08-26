@@ -14,8 +14,10 @@ import {
   computeProcurementPlannedDates,
   computeExpectedActionPlanDate,
   computeSectionChainDates,
+  computeHardwareGasketChainDates,
+  computeItemArrivalPlanned,
+  computePhase2PlanAnchor,
 } from "@/lib/procurement";
-import { addDays } from "@/lib/step-template";
 import { findUpstreamDelay } from "@/lib/reschedule";
 import {
   PHASE_LABELS,
@@ -240,7 +242,11 @@ export default async function ProjectDetailPage({
   // fields it's meant to be compared against were already filled in, and would shift every
   // time one of them changed.
   const oneD = project.phaseSteps.find((s) => s.stepCode === "1D");
-  const phase2PlanAnchor = oneD?.actualEndDate ? addDays(oneD.actualEndDate, 1) : null;
+  const phase2PlanAnchor = computePhase2PlanAnchor(
+    oneD?.plannedEndDate ?? null,
+    oneD?.actualEndDate ?? null,
+    oneD?.delayCategory ?? null
+  );
 
   // Procurement items sit "under" 2A rather than being phase_steps themselves, so they don't
   // get their own upstreamDelay from getMyTasks — resolved here the same way, off the project's
@@ -273,8 +279,11 @@ export default async function ProjectDetailPage({
 
           // Section alone runs Material despatch/Arrived-for-powder-coating and, downstream of
           // them, its own chained Arrival/QC dates — see computeSectionChainDates. Hardware and
-          // gasket keep using `planned` above untouched, exactly as before this existed.
+          // gasket chain Quote through QC off each other's own planned dates instead — see
+          // computeHardwareGasketChainDates. Neither reads `planned.quote/payment/order/arrival/
+          // qc` any more; only `planned.requirement` is shared by every item type.
           const isSection = item.itemType === "section";
+          const isHardwareOrGasket = item.itemType === "hardware" || item.itemType === "gasket";
           const sectionChain = isSection
             ? computeSectionChainDates(
                 planned.order,
@@ -289,6 +298,23 @@ export default async function ProjectDetailPage({
                 }
               )
             : null;
+          const hwGasketChain = isHardwareOrGasket
+            ? computeHardwareGasketChainDates(planned.requirement, {
+                quote: item.quotePlannedOverride,
+                payment: item.paymentPlannedOverride,
+                order: item.orderPlannedOverride,
+                arrival: item.arrivalPlannedOverride,
+                qc: item.qcPlannedOverride,
+              })
+            : null;
+
+          const resolvedQuote = isHardwareOrGasket ? hwGasketChain!.quote : planned.quote;
+          const resolvedPayment = isHardwareOrGasket ? hwGasketChain!.payment : planned.payment;
+          const resolvedOrder = isHardwareOrGasket ? hwGasketChain!.order : planned.order;
+          // Same function 2D1's own planned date uses (see computeItemArrivalPlanned) — kept in
+          // sync by construction rather than re-deriving this item's arrival date a second way.
+          const resolvedArrival = computeItemArrivalPlanned(item, phase2PlanAnchor);
+          const resolvedQC = isSection ? sectionChain!.qc : isHardwareOrGasket ? hwGasketChain!.qc : planned.qc;
 
           const stages = [
             {
@@ -310,7 +336,7 @@ export default async function ProjectDetailPage({
               noteField: "quoteNote" as const,
               actualDate: item.quoteCreatedAt,
               note: item.quoteNote,
-              plannedDate: planned.quote,
+              plannedDate: resolvedQuote,
               plannedDateField: "quotePlannedOverride" as const,
               requirementGated: false,
               qcPassed: null,
@@ -322,7 +348,7 @@ export default async function ProjectDetailPage({
               noteField: "paymentNote" as const,
               actualDate: item.paymentSettledAt,
               note: item.paymentNote,
-              plannedDate: planned.payment,
+              plannedDate: resolvedPayment,
               plannedDateField: "paymentPlannedOverride" as const,
               requirementGated: false,
               qcPassed: null,
@@ -334,7 +360,7 @@ export default async function ProjectDetailPage({
               noteField: "orderNote" as const,
               actualDate: item.orderConfirmedAt,
               note: item.orderNote,
-              plannedDate: planned.order,
+              plannedDate: resolvedOrder,
               plannedDateField: "orderPlannedOverride" as const,
               requirementGated: false,
               qcPassed: null,
@@ -377,7 +403,7 @@ export default async function ProjectDetailPage({
               noteField: "arrivalNote" as const,
               actualDate: item.actualArrivalDate,
               note: item.arrivalNote,
-              plannedDate: isSection ? sectionChain!.arrival : planned.arrival,
+              plannedDate: resolvedArrival,
               plannedDateField: "arrivalPlannedOverride" as const,
               requirementGated: false,
               qcPassed: null,
@@ -389,7 +415,7 @@ export default async function ProjectDetailPage({
               noteField: "qcNote" as const,
               actualDate: item.qcCheckedAt,
               note: item.qcNote,
-              plannedDate: isSection ? sectionChain!.qc : planned.qc,
+              plannedDate: resolvedQC,
               plannedDateField: "qcPlannedOverride" as const,
               requirementGated: false,
               qcPassed: item.qcPassed,

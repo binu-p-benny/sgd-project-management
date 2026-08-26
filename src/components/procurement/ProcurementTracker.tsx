@@ -289,7 +289,7 @@ function StageRow({
   }
 
   return (
-    <tr className={`border-t border-edge ${isSavedLate ? "bg-rose-500/5 dark:bg-rose-500/[0.04]" : ""}`}>
+    <tr className={`border-t border-edge ${isSavedLate ? "bg-rose-500/10 dark:bg-rose-500/[0.08]" : ""}`}>
       <td className="whitespace-nowrap px-3 py-2.5">
         <div className="flex items-center gap-2">
           <span

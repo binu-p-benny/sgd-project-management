@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession, isAdminEditor } from "@/lib/auth";
 import { syncDerivedStepStatus } from "@/lib/step-actions";
 import { resetProcurementItem } from "@/lib/procurement";
+import { rescheduleProjectDates } from "@/lib/reschedule";
 
 const restartSchema = z.object({
   planAnchor: z.string().datetime(),
@@ -52,6 +53,10 @@ export async function POST(
   await syncDerivedStepStatus(item.projectId, "2A", session.userId);
   await syncDerivedStepStatus(item.projectId, "2D1", session.userId);
   await syncDerivedStepStatus(item.projectId, "2F", session.userId);
+  // The new plan anchor moves this item's own Actual arrival forecast independently of the
+  // project's shared schedule — 2D1's planned date needs to pick that up even when it doesn't
+  // change 2A/2D1/2F's status (see the same call in procurement-items/[id]/route.ts).
+  await rescheduleProjectDates(item.projectId);
 
   const updated = await prisma.procurementItem.findUnique({ where: { id } });
   return NextResponse.json(updated);

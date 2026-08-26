@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession, isAdminEditor } from "@/lib/auth";
 import { syncDerivedStepStatus } from "@/lib/step-actions";
 import { computeExpectedArrivalDate } from "@/lib/procurement";
+import { rescheduleProjectDates } from "@/lib/reschedule";
 
 const dateOrNull = z
   .string()
@@ -135,6 +136,12 @@ export async function PATCH(
   await syncDerivedStepStatus(item.projectId, "2A", session.userId);
   await syncDerivedStepStatus(item.projectId, "2D1", session.userId);
   await syncDerivedStepStatus(item.projectId, "2F", session.userId);
+  // Unconditional, unlike the sync calls above (which only reschedule as a side effect of a
+  // derived step's *status* actually changing) — 2D1's own planned date now tracks the latest
+  // of every item's Actual arrival planned date (see rescheduleProjectDates), which this patch
+  // can move without ever touching 2A/2D1/2F's status (e.g. editing an Order confirmed date or
+  // a planned-date override on an already-in-progress item).
+  await rescheduleProjectDates(item.projectId);
 
   return NextResponse.json(updated);
 }

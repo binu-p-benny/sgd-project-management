@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { computeItemArrivalPlanned, computePhase2PlanAnchor } from "@/lib/procurement";
 
 function addDays(date: Date, days: number): Date {
   const result = new Date(date);
@@ -68,6 +69,14 @@ export function findUpstreamDelay(
  * its duration) correctly leaves everything downstream of it unresolved too, same as
  * the baseline scheduler in step-template.ts. Phase 3 is skipped entirely — it never
  * carries planned dates; its actual dates come only from step status transitions.
+ *
+ * 2D1 ("Materials arrived") is the one step whose *planned end* doesn't come from
+ * start+duration like everything else — it's the latest of Section/hardware/gasket's own
+ * "Actual arrival" planned dates (see computeItemArrivalPlanned), since 2D1 can't be done
+ * until every item has arrived. Its planned *start* still follows the generic dependsOn rule
+ * (2A's end). Before procurement items exist yet (pre-1D, day one), or while none of them
+ * resolve to a date, 2D1 falls back to the same start+duration estimate every other step uses,
+ * so it still gets an immediate day-one forecast rather than sitting blank.
  */
 export async function rescheduleProjectDates(projectId: string): Promise<void> {
   const steps = await prisma.phaseStep.findMany({
@@ -85,6 +94,34 @@ export async function rescheduleProjectDates(projectId: string): Promise<void> {
       delayCategory: true,
     },
   });
+
+  const procurementItems = await prisma.procurementItem.findMany({
+    where: { projectId },
+    select: {
+      itemType: true,
+      planAnchorOverride: true,
+      requirementPlannedOverride: true,
+      quotePlannedOverride: true,
+      paymentPlannedOverride: true,
+      orderPlannedOverride: true,
+      arrivalPlannedOverride: true,
+      orderConfirmedAt: true,
+      materialDespatchAt: true,
+      materialDespatchPlannedOverride: true,
+      arrivedForPowderCoatingAt: true,
+      arrivedForPowderCoatingPlannedOverride: true,
+    },
+  });
+
+  const oneD = steps.find((s) => s.stepCode === "1D");
+  const phase2PlanAnchor = oneD
+    ? computePhase2PlanAnchor(oneD.plannedEndDate, oneD.actualEndDate, oneD.delayCategory)
+    : null;
+  const itemArrivalDates = procurementItems
+    .map((item) => computeItemArrivalPlanned(item, phase2PlanAnchor))
+    .filter((d): d is Date => d instanceof Date);
+  const materialsArrivedPlanned =
+    itemArrivalDates.length > 0 ? new Date(Math.max(...itemArrivalDates.map((d) => d.getTime()))) : null;
 
   // Ground truth for a step's "end", for the purposes of scheduling what comes after it:
   // a completed step's actual end date if known, else its current planned end date. A step
@@ -127,7 +164,13 @@ export async function rescheduleProjectDates(projectId: string): Promise<void> {
       }
 
       const newEnd =
-        newStart !== null && step.plannedDurationDays !== null ? addDays(newStart, step.plannedDurationDays) : null;
+        newStart === null
+          ? null
+          : step.stepCode === "2D1" && materialsArrivedPlanned !== null
+            ? materialsArrivedPlanned
+            : step.plannedDurationDays !== null
+              ? addDays(newStart, step.plannedDurationDays)
+              : null;
 
       const prevStart = updates.get(step.stepCode)?.plannedStartDate ?? step.plannedStartDate;
       const prevEnd = updates.get(step.stepCode)?.plannedEndDate ?? step.plannedEndDate;

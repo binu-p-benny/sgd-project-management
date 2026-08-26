@@ -62,6 +62,12 @@ const SINGLE_DATE_FIELD_STEP_CODES = new Set(["1A", "1B", "1C", "1D", "2A", "2D2
 // stuck at not_started: even there it should offer one click, not two.
 const SINGLE_COMPLETION_STEP_CODES = new Set(["1A", "1B", "1D"]);
 
+// Steps whose late completion asks for a client-side/in-house delay reason. Kept local rather
+// than imported — step-actions.ts (which owns the server-side copy of this same set, as
+// DELAY_CATEGORY_STEP_CODES) pulls in the Prisma client, which a "use client" file can't import
+// — so this must be kept in sync with that set by hand.
+const DELAY_CATEGORY_STEP_CODES = new Set(["1A", "1B", "1C", "1D", "2D2"]);
+
 const btnPrimary =
   "flex-1 flex h-11 items-center justify-center rounded-lg bg-accent px-3 text-sm font-medium text-white transition-colors hover:bg-accent-2 disabled:opacity-40";
 const btnSecondary =
@@ -309,7 +315,16 @@ export function TaskCard({
       setError("Actual end is after the planned finish — add a note explaining why before marking complete");
       return;
     }
-    submitWithDates({ status: "completed", visitUrgency, notes: note || undefined });
+    if (needsDelayCategory) {
+      setError("Choose whether the delay was client side or in house before marking complete");
+      return;
+    }
+    submitWithDates({
+      status: "completed",
+      visitUrgency,
+      notes: note || undefined,
+      delayCategory: delayCategory || undefined,
+    });
   }
 
   // The preview is fetched rather than precomputed for every card, since a revert's blast
@@ -415,9 +430,10 @@ export function TaskCard({
   const isLateCompletion =
     canEditDates && !!item.plannedEndDate && effectiveActualEndDate > toDateInputValue(item.plannedEndDate);
   const needsLateReason = isLateCompletion && !note.trim();
-  // 1B only: a late completion also needs to say whether the delay was the client's or the
-  // team's — reschedule.ts uses that to decide whether 1C's planned finish moves with it.
-  const needsDelayCategoryChoice = item.stepCode === "1B" && isLateCompletion;
+  // A late completion of one of DELAY_CATEGORY_STEP_CODES also needs to say whether the delay
+  // was the client's or the team's — reschedule.ts uses that, generically, to decide whether
+  // the next step's planned finish moves with it.
+  const needsDelayCategoryChoice = DELAY_CATEGORY_STEP_CODES.has(item.stepCode) && isLateCompletion;
   const needsDelayCategory = needsDelayCategoryChoice && !delayCategory;
   const visibleDateFields = SINGLE_DATE_FIELD_STEP_CODES.has(item.stepCode)
     ? DATE_FIELDS.filter((f) => f.key !== "actualStartDate")
@@ -433,8 +449,9 @@ export function TaskCard({
   // This step itself finished after its own planned finish — a stronger, more specific signal
   // than "was flagged overdue at some point" once it's actually done, so it takes over from the
   // history color rather than stacking. delay_category (the "In house delay"/"Client side
-  // delay" box below) is 1B-only and always implies this, but plenty of other steps can also
-  // complete late without ever having a category recorded against them — this covers both.
+  // delay" box below) is only ever asked for on DELAY_CATEGORY_STEP_CODES and always implies
+  // this, but plenty of other steps can also complete late without ever having a category
+  // recorded against them — this covers both.
   const isDelayedCompletion =
     item.status === "completed" &&
     !!item.actualEndDate &&
@@ -458,9 +475,9 @@ export function TaskCard({
         isOverdueCard
           ? "border-amber-500/50 bg-amber-500/5 dark:border-amber-500/40 dark:bg-amber-500/[0.04]"
           : isDelayedCompletion
-            ? "border-rose-500/50 bg-rose-500/5 dark:border-rose-500/40 dark:bg-rose-500/[0.04]"
+            ? "border-rose-500/50 bg-rose-500/10 dark:border-rose-500/40 dark:bg-rose-500/[0.08]"
             : hasDelayHistory
-              ? "border-violet-500/50 bg-violet-500/5 dark:border-violet-500/40 dark:bg-violet-500/[0.04]"
+              ? "border-violet-500/50 bg-violet-500/20 dark:border-violet-500/40 dark:bg-violet-500/[0.16]"
               : isUpstreamAffected
                 ? "border-cyan-500/50 bg-cyan-500/5 dark:border-cyan-500/40 dark:bg-cyan-500/[0.04]"
                 : "border-edge bg-surface"
@@ -626,6 +643,20 @@ export function TaskCard({
             <option value="cold">Cold (15 days)</option>
             <option value="site_not_ready">Site not ready (blocks 1B)</option>
           </select>
+          {needsDelayCategoryChoice && (
+            <select
+              className={selectClass}
+              value={delayCategory}
+              onChange={(e) => setDelayCategory(e.target.value)}
+            >
+              <option value="">Reason for delay…</option>
+              {DELAY_CATEGORY_OPTIONS.map((category) => (
+                <option key={category} value={category}>
+                  {DELAY_CATEGORY_LABELS[category]}
+                </option>
+              ))}
+            </select>
+          )}
           <textarea
             className={textareaClass}
             rows={2}
@@ -636,11 +667,20 @@ export function TaskCard({
           {needsLateReason && (
             <p className="text-xs text-amber-600 dark:text-amber-400">Add a note before marking a late step complete</p>
           )}
+          {needsDelayCategory && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              Choose whether the delay was client side or in house
+            </p>
+          )}
           <div className="flex gap-2">
             <button className={btnSecondary} onClick={() => setPanel("none")} disabled={submitting}>
               Cancel
             </button>
-            <button className={btnPrimary} onClick={confirmComplete1A} disabled={submitting || needsLateReason}>
+            <button
+              className={btnPrimary}
+              onClick={confirmComplete1A}
+              disabled={submitting || needsLateReason || needsDelayCategory}
+            >
               {submitting ? "Saving…" : "Confirm complete"}
             </button>
           </div>

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { updateStepStatus } from "@/lib/step-actions";
+import { updateStepStatus, DELAY_CATEGORY_STEP_CODES } from "@/lib/step-actions";
 import { rescheduleProjectDates } from "@/lib/reschedule";
+import { computeItemArrivalPlanned, computePhase2PlanAnchor, resetProcurementItem } from "@/lib/procurement";
 import { addDays } from "@/lib/step-template";
 import { getMyTasks } from "@/lib/my-tasks";
 import { prisma } from "@/lib/prisma";
@@ -212,5 +213,131 @@ describe("1B's delay_category controls whether a late completion moves 1C's plan
 
     const items = await getMyTasks(null, { projectId: project.id, includeCompleted: true });
     expect(items.find((i) => i.stepCode === "1C")!.upstreamDelay).toBeNull();
+  });
+});
+
+describe("The delay-category requirement now also covers 1A, 1C, 1D, 2D2 — not just 1B", () => {
+  it("locks in the exact set of steps that ask for a delay reason", () => {
+    expect([...DELAY_CATEGORY_STEP_CODES].sort()).toEqual(["1A", "1B", "1C", "1D", "2D2"]);
+  });
+
+  it("rejects completing 1A late with no delayCategory, accepts and persists it when supplied", async () => {
+    const project = await createTestProjectDayOne({ visitUrgency: "hot" });
+    const oneA = await getStep(project.id, "1A");
+    const lateEnd = addDays(oneA.plannedEndDate!, 5);
+    await prisma.phaseStep.update({ where: { id: oneA.id }, data: { actualEndDate: lateEnd } });
+
+    await expect(
+      updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot" })
+    ).rejects.toMatchObject({ status: 400 });
+
+    const updated = await updateStepStatus(oneA.id, "completed", users.hr_admin, {
+      visitUrgency: "hot",
+      delayCategory: "client_side",
+    });
+    expect(updated.delayCategory).toBe("client_side");
+
+    // Same cascade as 1B already has: a client_side 1A still pushes 1B's planned finish out.
+    const oneB = await getStep(project.id, "1B");
+    expect(oneB.plannedStartDate).toEqual(lateEnd);
+  });
+
+  it("rejects completing 1D late with no delayCategory; an in_house 1D freezes 2A's planned finish exactly where it was first set", async () => {
+    const project = await createTestProjectDayOne({ visitUrgency: "hot" });
+    const oneA = await getStep(project.id, "1A");
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot" });
+    const oneB = await getStep(project.id, "1B");
+    await updateStepStatus(oneB.id, "completed", users.project_engineer);
+    const oneC = await getStep(project.id, "1C");
+    await updateStepStatus(oneC.id, "completed", users.design_engineer);
+
+    const twoAFirst = await getStep(project.id, "2A");
+    const oneD = await getStep(project.id, "1D");
+    const lateEnd = addDays(oneD.plannedEndDate!, 6);
+    await prisma.phaseStep.update({ where: { id: oneD.id }, data: { actualEndDate: lateEnd } });
+
+    await expect(updateStepStatus(oneD.id, "completed", users.accounts)).rejects.toMatchObject({
+      status: 400,
+    });
+
+    await updateStepStatus(oneD.id, "completed", users.accounts, { delayCategory: "in_house" });
+
+    const twoAAfter = await getStep(project.id, "2A");
+    expect(twoAAfter.plannedStartDate).toEqual(twoAFirst.plannedStartDate);
+    expect(twoAAfter.plannedEndDate).toEqual(twoAFirst.plannedEndDate);
+  });
+});
+
+describe("2D1's planned end date tracks the latest of Section/hardware/gasket's own Actual arrival planned dates", () => {
+  async function projectAtPhase2() {
+    const project = await createTestProjectDayOne({ visitUrgency: "hot" });
+    const oneA = await getStep(project.id, "1A");
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot" });
+    const oneB = await getStep(project.id, "1B");
+    await updateStepStatus(oneB.id, "completed", users.project_engineer);
+    const oneC = await getStep(project.id, "1C");
+    await updateStepStatus(oneC.id, "completed", users.design_engineer);
+    const oneD = await getStep(project.id, "1D");
+    await updateStepStatus(oneD.id, "completed", users.accounts);
+    return project;
+  }
+
+  async function phase2PlanAnchorFor(projectId: string) {
+    const oneD = await getStep(projectId, "1D");
+    return computePhase2PlanAnchor(oneD.plannedEndDate, oneD.actualEndDate, oneD.delayCategory);
+  }
+
+  it("2D1 gets a real forecast the moment 1D completes and procurement items are seeded — the latest item, not just any of them", async () => {
+    const project = await projectAtPhase2();
+    const items = await getProcurementItems(project.id);
+    const phase2PlanAnchor = await phase2PlanAnchorFor(project.id);
+
+    const expectedMax = new Date(
+      Math.max(...items.map((i) => computeItemArrivalPlanned(i, phase2PlanAnchor)!.getTime()))
+    );
+    // Hardware/gasket's chain (14+2+10 working days) lands later than Section's (mostly
+    // calendar-day-based until its own working-day stretch) with no overrides on any of them —
+    // this asserts 2D1 actually picked the later one, not e.g. always Section by coincidence.
+    const hardware = items.find((i) => i.itemType === "hardware")!;
+    expect(expectedMax).toEqual(computeItemArrivalPlanned(hardware, phase2PlanAnchor));
+
+    const twoD1 = await getStep(project.id, "2D1");
+    expect(twoD1.plannedEndDate).toEqual(expectedMax);
+  });
+
+  it("editing one item's Order confirmed date updates 2D1's planned end, even though it doesn't change 2A/2D1/2F's status", async () => {
+    const project = await projectAtPhase2();
+    const items = await getProcurementItems(project.id);
+    const section = items.find((i) => i.itemType === "section")!;
+
+    const lateOrder = new Date("2026-12-01T00:00:00.000Z");
+    await prisma.procurementItem.update({ where: { id: section.id }, data: { orderConfirmedAt: lateOrder } });
+    await rescheduleProjectDates(project.id);
+
+    const phase2PlanAnchor = await phase2PlanAnchorFor(project.id);
+    const expectedSectionArrival = computeItemArrivalPlanned({ ...section, orderConfirmedAt: lateOrder }, phase2PlanAnchor);
+
+    const twoD1 = await getStep(project.id, "2D1");
+    expect(twoD1.plannedEndDate).toEqual(expectedSectionArrival);
+    expect(twoD1.plannedEndDate!.getTime()).toBeGreaterThan(lateOrder.getTime());
+  });
+
+  it("a restarted item's new plan anchor feeds 2D1 too, once it becomes the latest item", async () => {
+    const project = await projectAtPhase2();
+    const items = await getProcurementItems(project.id);
+    const gasket = items.find((i) => i.itemType === "gasket")!;
+
+    const farFutureAnchor = new Date("2027-06-01T00:00:00.000Z");
+    await resetProcurementItem(gasket.id, farFutureAnchor);
+    await rescheduleProjectDates(project.id);
+
+    const twoD1 = await getStep(project.id, "2D1");
+    expect(twoD1.plannedEndDate!.getTime()).toBeGreaterThan(farFutureAnchor.getTime());
+  });
+
+  it("2D1 still gets an immediate day-one forecast before 1D completes and procurement items exist", async () => {
+    const project = await createTestProjectDayOne({ visitUrgency: "hot" });
+    const twoD1 = await getStep(project.id, "2D1");
+    expect(twoD1.plannedEndDate).not.toBeNull();
   });
 });

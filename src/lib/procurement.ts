@@ -8,15 +8,44 @@ function addDays(date: Date, days: number): Date {
 }
 
 /**
- * Expected arrival date, computed from requirement_created_at — day 21, the same for every
- * item type (hardware/gasket arrive alongside section rather than a day ahead of it).
- * `itemType` stays in the signature for consistency with the other computeExpectedXDate
- * functions and their call sites, even though arrival no longer varies by it.
+ * Phase 2's shared planned-date anchor — 1D's ground-truth end date + 1 day, the day Phase 2
+ * begins. Null until 1D actually completes (`actualEndDate` unset): the plan can't show until
+ * the field it heads off has actually happened. Once it has, an in_house delay anchors off
+ * 1D's *planned* end date instead of its late actual one — the same ground-truth rule
+ * rescheduleProjectDates' endDates map already applies to every phase step (see reschedule.ts)
+ * — so procurement's own planned dates freeze in step with 2A/2D1/2D2/2F's phase-step planned
+ * dates rather than drifting out on their own. A client_side delay, or no delay at all, still
+ * anchors off the real actual end.
  */
-export function computeExpectedArrivalDate(_itemType: ItemType, requirementCreatedAt: Date): Date {
-  return addDays(requirementCreatedAt, 21);
+export function computePhase2PlanAnchor(
+  oneDPlannedEndDate: Date | null,
+  oneDActualEndDate: Date | null,
+  oneDDelayCategory: string | null
+): Date | null {
+  if (!oneDActualEndDate) return null;
+  const groundTruth = oneDDelayCategory === "in_house" ? oneDPlannedEndDate : oneDActualEndDate;
+  return groundTruth ? addDays(groundTruth, 1) : null;
 }
 
+/**
+ * Expected arrival date, computed from requirement_created_at. Neither branch drives what the
+ * procurement tracker *displays* any more — Section uses computeSectionChainDates and
+ * hardware/gasket use computeHardwareGasketChainDates instead. This function survives purely to
+ * compute the legacy stored expected_arrival_date column (see applyRequirementCreated below and
+ * the PATCH route), which dashboard.ts/overrun.ts still read for overdue detection — neither
+ * item-type family's offset here has been revisited since that stored field stopped being what's
+ * shown on screen, so don't assume it matches the current display formula for either.
+ */
+export function computeExpectedArrivalDate(itemType: ItemType, requirementCreatedAt: Date): Date {
+  if (itemType === "section") {
+    return addDays(requirementCreatedAt, 21);
+  }
+  return addDays(requirementCreatedAt, 25);
+}
+
+/** Feeds computeProcurementPlannedDates only — still load-bearing for Section's displayed Quote,
+ *  but dead for hardware/gasket, whose displayed Quote comes from
+ *  computeExpectedHardwareGasketQuoteDate/computeHardwareGasketChainDates instead. */
 export function computeExpectedQuoteDate(itemType: ItemType, requirementCreatedAt: Date): Date {
   if (itemType === "section") {
     return addDays(requirementCreatedAt, 2);
@@ -24,12 +53,14 @@ export function computeExpectedQuoteDate(itemType: ItemType, requirementCreatedA
   return addDays(requirementCreatedAt, 13);
 }
 
-/** Payment is expected 2 days after the quote, same for every item type. */
+/** Payment is expected 2 days after the quote. Same "Section only, dead for hardware/gasket
+ *  display" caveat as computeExpectedQuoteDate. */
 export function computeExpectedPaymentDate(itemType: ItemType, requirementCreatedAt: Date): Date {
   return addDays(computeExpectedQuoteDate(itemType, requirementCreatedAt), 2);
 }
 
-/** Order confirmation is expected the same day as payment — the two happen together. */
+/** Order confirmation is expected the same day as payment. Same "Section only, dead for
+ *  hardware/gasket display" caveat as computeExpectedQuoteDate. */
 export function computeExpectedOrderDate(itemType: ItemType, requirementCreatedAt: Date): Date {
   return computeExpectedPaymentDate(itemType, requirementCreatedAt);
 }
@@ -49,9 +80,13 @@ export function computeExpectedRequirementDate(phase2PlanAnchor: Date): Date {
   return phase2PlanAnchor;
 }
 
-/** QC is expected 3 days after arrival — there's no separate QC-day rule of its own. */
+/** Feeds computeProcurementPlannedDates only, purely so it has a complete 6-stage offset table to
+ *  work with — the result is discarded by both item-type families now: Section's displayed QC
+ *  comes from computeSectionChainDates, hardware/gasket's from computeHardwareGasketChainDates.
+ *  There's no stored column riding on this one the way computeExpectedArrivalDate's is. */
 export function computeExpectedQCDate(itemType: ItemType, phase2PlanAnchor: Date): Date {
-  return addDays(computeExpectedArrivalDate(itemType, phase2PlanAnchor), 3);
+  const arrival = computeExpectedArrivalDate(itemType, phase2PlanAnchor);
+  return addDays(arrival, itemType === "section" ? 3 : 2);
 }
 
 /** The corrective action plan (only relevant once QC fails) is expected 2 days after the QC
@@ -91,7 +126,8 @@ export function computeExpectedPowderCoatingArrivalDate(materialDespatchAt: Date
 
 /** Section only: Actual arrival is expected 7 working days after Arrived-for-powder-coating's
  *  own ground-truth date. This replaces computeExpectedArrivalDate's anchor-based formula for
- *  this item type only — hardware/gasket keep using that function completely unchanged. */
+ *  this item type only, for *displayed* dates — that function still computes the legacy stored
+ *  expected_arrival_date column for every item type unchanged (see dashboard.ts/overrun.ts). */
 export function computeExpectedSectionArrivalDate(arrivedForPowderCoatingAt: Date): Date {
   return addWorkingDays(arrivedForPowderCoatingAt, 7);
 }
@@ -146,10 +182,147 @@ export function computeSectionChainDates(
   const computedArrival = powderCoatingGroundTruth ? computeExpectedSectionArrivalDate(powderCoatingGroundTruth) : null;
   const arrival = overrides.arrival ?? computedArrival;
 
-  const computedQC = arrival ? addDays(arrival, 3) : null;
+  // QC is expected 2 days after Actual arrival's own planned date — plain calendar days, not
+  // working days like the 3 stages above (only those were specified as working-day spans).
+  const computedQC = arrival ? addDays(arrival, 2) : null;
   const qc = overrides.qc ?? computedQC;
 
   return { materialDespatch, powderCoatingArrival, arrival, qc };
+}
+
+/** Hardware/gasket only: Quote is expected 14 working days (Sundays skipped) after Requirement's
+ *  own planned date. */
+export function computeExpectedHardwareGasketQuoteDate(requirementPlanned: Date): Date {
+  return addWorkingDays(requirementPlanned, 14);
+}
+
+/** Hardware/gasket only: Payment is expected 2 working days after Quote's own planned date. */
+export function computeExpectedHardwareGasketPaymentDate(quotePlanned: Date): Date {
+  return addWorkingDays(quotePlanned, 2);
+}
+
+/** Hardware/gasket only: Actual arrival is expected 10 working days after Payment's own planned
+ *  date. This is a *different* formula from computeExpectedArrivalDate, which still anchors
+ *  hardware/gasket's legacy stored expected_arrival_date column (dashboard overdue detection)
+ *  off Requirement directly — this one only drives what the procurement tracker displays. */
+export function computeExpectedHardwareGasketArrivalDate(paymentPlanned: Date): Date {
+  return addWorkingDays(paymentPlanned, 10);
+}
+
+/** Hardware/gasket only: QC is expected 2 working days after Actual arrival's own planned date.
+ *  Same "displayed value only, doesn't touch the legacy stored field" caveat as arrival above. */
+export function computeExpectedHardwareGasketQCDate(arrivalPlanned: Date): Date {
+  return addWorkingDays(arrivalPlanned, 2);
+}
+
+export interface HardwareGasketChainDates {
+  quote: Date | null;
+  payment: Date | null;
+  order: Date | null;
+  arrival: Date | null;
+  qc: Date | null;
+}
+
+/**
+ * Hardware/gasket-only planned-date chain for Quote through QC — each stage plans a working-day
+ * span (Sundays skipped) after the *previous stage's own planned date*, unlike Section's chain
+ * (which plans off ground-truth actual-or-planned dates) or the flat "everything offset from
+ * Requirement" model computeProcurementPlannedDates still uses for Section's own quote/payment/
+ * order. There's no actual-date awareness here at all — purely a forecast chain, matching how
+ * hardware/gasket has always behaved (a plan independent of what's actually happened), just
+ * chained stage-to-stage now instead of everything anchored to one shared reference.
+ *
+ * Every stage has a manual override, same "shift every later stage in the chain" principle as
+ * everywhere else — an override always wins for that stage's own displayed date and for what the
+ * next stage forecasts from. Order confirmed tracks Payment's *effective* (post-override) date
+ * by default, same relationship it's always had, but keeps its own independent override on top.
+ */
+export function computeHardwareGasketChainDates(
+  requirementPlanned: Date | null,
+  overrides: {
+    quote?: Date | null;
+    payment?: Date | null;
+    order?: Date | null;
+    arrival?: Date | null;
+    qc?: Date | null;
+  }
+): HardwareGasketChainDates {
+  const quoteForecast = requirementPlanned ? computeExpectedHardwareGasketQuoteDate(requirementPlanned) : null;
+  const quote = overrides.quote ?? quoteForecast;
+
+  const paymentForecast = quote ? computeExpectedHardwareGasketPaymentDate(quote) : null;
+  const payment = overrides.payment ?? paymentForecast;
+
+  const order = overrides.order ?? payment;
+
+  const arrivalForecast = payment ? computeExpectedHardwareGasketArrivalDate(payment) : null;
+  const arrival = overrides.arrival ?? arrivalForecast;
+
+  const qcForecast = arrival ? computeExpectedHardwareGasketQCDate(arrival) : null;
+  const qc = overrides.qc ?? qcForecast;
+
+  return { quote, payment, order, arrival, qc };
+}
+
+export interface ProcurementItemArrivalInputs {
+  itemType: ItemType;
+  planAnchorOverride: Date | null;
+  requirementPlannedOverride: Date | null;
+  quotePlannedOverride: Date | null;
+  paymentPlannedOverride: Date | null;
+  orderPlannedOverride: Date | null;
+  arrivalPlannedOverride: Date | null;
+  orderConfirmedAt: Date | null;
+  materialDespatchAt: Date | null;
+  materialDespatchPlannedOverride: Date | null;
+  arrivedForPowderCoatingAt: Date | null;
+  arrivedForPowderCoatingPlannedOverride: Date | null;
+}
+
+/**
+ * One procurement item's "Actual arrival" planned date, computed exactly the way the
+ * procurement tracker itself displays it — Section via computeSectionChainDates, hardware/
+ * gasket via computeHardwareGasketChainDates. Pulled out as its own function, rather than left
+ * inline in the page component, so 2D1's own planned date (see rescheduleProjectDates) computes
+ * the *same* value for the same item instead of re-deriving it and risking drift from what's
+ * actually displayed.
+ */
+export function computeItemArrivalPlanned(
+  item: ProcurementItemArrivalInputs,
+  phase2PlanAnchor: Date | null
+): Date | null {
+  const itemPlanAnchor = item.planAnchorOverride ?? phase2PlanAnchor;
+  const planned = computeProcurementPlannedDates(item.itemType, itemPlanAnchor, {
+    requirement: item.requirementPlannedOverride,
+    quote: item.quotePlannedOverride,
+    payment: item.paymentPlannedOverride,
+    order: item.orderPlannedOverride,
+    arrival: item.arrivalPlannedOverride,
+    qc: null,
+  });
+
+  if (item.itemType === "section") {
+    return computeSectionChainDates(
+      planned.order,
+      item.orderConfirmedAt,
+      item.materialDespatchAt,
+      item.arrivedForPowderCoatingAt,
+      {
+        materialDespatch: item.materialDespatchPlannedOverride,
+        powderCoatingArrival: item.arrivedForPowderCoatingPlannedOverride,
+        arrival: item.arrivalPlannedOverride,
+        qc: null,
+      }
+    ).arrival;
+  }
+
+  return computeHardwareGasketChainDates(planned.requirement, {
+    quote: item.quotePlannedOverride,
+    payment: item.paymentPlannedOverride,
+    order: item.orderPlannedOverride,
+    arrival: item.arrivalPlannedOverride,
+    qc: null,
+  }).arrival;
 }
 
 export interface ProcurementPlannedOverrides {
