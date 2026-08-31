@@ -223,6 +223,7 @@ export default async function ProjectDetailPage({
       phaseSteps: { orderBy: [{ createdAt: "asc" }, { stepCode: "asc" }] },
       procurementItems: { include: { actionItems: { orderBy: { createdAt: "asc" } } } },
       glassPurchaseOrder: { include: { actionItems: { orderBy: { createdAt: "asc" } } } },
+      paymentSchedule: true,
     },
   });
 
@@ -310,6 +311,17 @@ export default async function ProjectDetailPage({
       />
     </div>
   );
+
+  // No row exists until the first milestone is ever marked received (see the payment-schedule
+  // PATCH route's upsert) — every field just reads as not-yet-received until then.
+  const paymentSchedule = {
+    tokenReceivedAt: project.paymentSchedule?.tokenReceivedAt?.toISOString() ?? null,
+    milestone1ReceivedAt: project.paymentSchedule?.milestone1ReceivedAt?.toISOString() ?? null,
+    milestone2ReceivedAt: project.paymentSchedule?.milestone2ReceivedAt?.toISOString() ?? null,
+    milestone3ReceivedAt: project.paymentSchedule?.milestone3ReceivedAt?.toISOString() ?? null,
+    milestone4ReceivedAt: project.paymentSchedule?.milestone4ReceivedAt?.toISOString() ?? null,
+    milestone5ReceivedAt: project.paymentSchedule?.milestone5ReceivedAt?.toISOString() ?? null,
+  };
 
   // Procurement items sit "under" 2A rather than being phase_steps themselves, so they don't
   // get their own upstreamDelay from getMyTasks — resolved here the same way, off the project's
@@ -777,6 +789,7 @@ export default async function ProjectDetailPage({
             finalCost={Number(project.finalCost)}
             notes={project.notes}
             canEdit={!!session && (isAdminEditor(session) || session.department === "accounts")}
+            paymentSchedule={paymentSchedule}
           />
         </div>
       </div>

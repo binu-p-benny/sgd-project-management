@@ -181,6 +181,7 @@ model Project {
   phaseSteps         PhaseStep[]
   procurementItems   ProcurementItem[]
   glassPurchaseOrder GlassPurchaseOrder?
+  paymentSchedule    PaymentSchedule?
   notifications      Notification[]
 
   @@index([currentPhase])
@@ -460,6 +461,30 @@ model GlassActionItem {
 
   @@index([glassPurchaseOrderId])
   @@map("glass_action_items")
+}
+
+// The "Payment schedule" modal on the project page — Token + 5 percentage-of-final-cost
+// milestones (25/50/25/20/5), each just a received-or-not date. The row template itself
+// (labels, percentages, order) is a fixed constant — see PAYMENT_MILESTONES in
+// lib/payment-schedule.ts — not stored here, same "fixed stage list is code, per-project state
+// is the row" split as GlassPurchaseOrder. One row per project, created lazily (upserted) the
+// first milestone is ever marked received rather than seeded for every project up front.
+model PaymentSchedule {
+  id        String  @id @default(cuid())
+  projectId String  @unique @map("project_id")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  tokenReceivedAt      DateTime? @map("token_received_at") @db.Timestamptz(3)
+  milestone1ReceivedAt DateTime? @map("milestone_1_received_at") @db.Timestamptz(3) // 25%
+  milestone2ReceivedAt DateTime? @map("milestone_2_received_at") @db.Timestamptz(3) // 50%
+  milestone3ReceivedAt DateTime? @map("milestone_3_received_at") @db.Timestamptz(3) // 25%
+  milestone4ReceivedAt DateTime? @map("milestone_4_received_at") @db.Timestamptz(3) // 20%
+  milestone5ReceivedAt DateTime? @map("milestone_5_received_at") @db.Timestamptz(3) // 5%
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("payment_schedules")
 }
 
 model StepStatusLog {
