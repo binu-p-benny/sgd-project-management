@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { updateStepStatus, DELAY_CATEGORY_STEP_CODES } from "@/lib/step-actions";
+import { updateStepStatus, DELAY_CATEGORY_STEP_CODES, MANUAL_PLANNED_DATE_STEP_CODES } from "@/lib/step-actions";
 import { rescheduleProjectDates } from "@/lib/reschedule";
-import { computeItemArrivalPlanned, computePhase2PlanAnchor, resetProcurementItem } from "@/lib/procurement";
+import {
+  computeItemArrivalPlanned,
+  computePhase2PlanAnchor,
+  computeSectionOrderConfirmedPlanned,
+  computeExpectedFinalMeasurementDate,
+  resetProcurementItem,
+} from "@/lib/procurement";
 import { addDays } from "@/lib/step-template";
 import { getMyTasks } from "@/lib/my-tasks";
 import { prisma } from "@/lib/prisma";
@@ -54,9 +60,10 @@ describe("Day-one Phase 1+2 scheduling", () => {
     }
   });
 
-  it("planned dates are not exposed for manual editing via the dates route schema (actual-only)", async () => {
-    // Regression guard at the type level: the dates PATCH route only accepts actual dates now.
-    // (Exercised functionally by the route's own schema — see api/phase-steps/[id]/dates/route.ts.)
+  it("planned dates stay system-computed and aren't manually editable, except 3C1/3C2/3E's own (see MANUAL_PLANNED_DATE_STEP_CODES)", async () => {
+    // Regression guard at the type level: the dates PATCH route only accepts actual dates for
+    // every step but 3C1/3C2/3E now. (Exercised functionally by the route's own schema — see
+    // api/phase-steps/[id]/dates/route.ts.)
     const project = await createTestProjectDayOne();
     const oneA = await getStep(project.id, "1A");
     const before = await prisma.phaseStep.findUniqueOrThrow({ where: { id: oneA.id } });
@@ -216,6 +223,12 @@ describe("1B's delay_category controls whether a late completion moves 1C's plan
   });
 });
 
+describe("MANUAL_PLANNED_DATE_STEP_CODES: 3C1, 3C2 and 3E are the Phase 3 steps with a hand-filled Planned date", () => {
+  it("locks in the exact set", () => {
+    expect([...MANUAL_PLANNED_DATE_STEP_CODES].sort()).toEqual(["3C1", "3C2", "3E"]);
+  });
+});
+
 describe("The delay-category requirement now also covers 1A, 1C, 1D, 2D2 — not just 1B", () => {
   it("locks in the exact set of steps that ask for a delay reason", () => {
     expect([...DELAY_CATEGORY_STEP_CODES].sort()).toEqual(["1A", "1B", "1C", "1D", "2D2"]);
@@ -339,5 +352,74 @@ describe("2D1's planned end date tracks the latest of Section/hardware/gasket's 
     const project = await createTestProjectDayOne({ visitUrgency: "hot" });
     const twoD1 = await getStep(project.id, "2D1");
     expect(twoD1.plannedEndDate).not.toBeNull();
+  });
+});
+
+describe("2D2's planned end date tracks Section's own Order confirmed planned date, +18 working days", () => {
+  async function projectAtPhase2() {
+    const project = await createTestProjectDayOne({ visitUrgency: "hot" });
+    const oneA = await getStep(project.id, "1A");
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot" });
+    const oneB = await getStep(project.id, "1B");
+    await updateStepStatus(oneB.id, "completed", users.project_engineer);
+    const oneC = await getStep(project.id, "1C");
+    await updateStepStatus(oneC.id, "completed", users.design_engineer);
+    const oneD = await getStep(project.id, "1D");
+    await updateStepStatus(oneD.id, "completed", users.accounts);
+    return project;
+  }
+
+  async function phase2PlanAnchorFor(projectId: string) {
+    const oneD = await getStep(projectId, "1D");
+    return computePhase2PlanAnchor(oneD.plannedEndDate, oneD.actualEndDate, oneD.delayCategory);
+  }
+
+  it("2D2 gets a real forecast the moment 1D completes and procurement items are seeded", async () => {
+    const project = await projectAtPhase2();
+    const items = await getProcurementItems(project.id);
+    const section = items.find((i) => i.itemType === "section")!;
+    const phase2PlanAnchor = await phase2PlanAnchorFor(project.id);
+
+    const expected = computeExpectedFinalMeasurementDate(
+      computeSectionOrderConfirmedPlanned(section, phase2PlanAnchor)!
+    );
+
+    const twoD2 = await getStep(project.id, "2D2");
+    expect(twoD2.plannedEndDate).toEqual(expected);
+  });
+
+  it("editing Section's Order confirmed date updates 2D2's planned end, even though it doesn't change 2A/2D1/2F's status", async () => {
+    const project = await projectAtPhase2();
+    const items = await getProcurementItems(project.id);
+    const section = items.find((i) => i.itemType === "section")!;
+
+    const lateOrder = new Date("2026-12-01T00:00:00.000Z");
+    await prisma.procurementItem.update({ where: { id: section.id }, data: { orderPlannedOverride: lateOrder } });
+    await rescheduleProjectDates(project.id);
+
+    const twoD2 = await getStep(project.id, "2D2");
+    expect(twoD2.plannedEndDate).toEqual(computeExpectedFinalMeasurementDate(lateOrder));
+    expect(twoD2.plannedEndDate!.getTime()).toBeGreaterThan(lateOrder.getTime());
+  });
+
+  it("only Section's own dates matter — restarting hardware or gasket doesn't move 2D2 at all", async () => {
+    const project = await projectAtPhase2();
+    const items = await getProcurementItems(project.id);
+    const hardware = items.find((i) => i.itemType === "hardware")!;
+
+    const before = await getStep(project.id, "2D2");
+
+    const farFutureAnchor = new Date("2027-06-01T00:00:00.000Z");
+    await resetProcurementItem(hardware.id, farFutureAnchor);
+    await rescheduleProjectDates(project.id);
+
+    const after = await getStep(project.id, "2D2");
+    expect(after.plannedEndDate).toEqual(before.plannedEndDate);
+  });
+
+  it("2D2 still gets an immediate day-one forecast before 1D completes and procurement items exist", async () => {
+    const project = await createTestProjectDayOne({ visitUrgency: "hot" });
+    const twoD2 = await getStep(project.id, "2D2");
+    expect(twoD2.plannedEndDate).not.toBeNull();
   });
 });

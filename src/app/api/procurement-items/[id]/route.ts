@@ -69,18 +69,23 @@ export async function PATCH(
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  // Procurement (quote/order/payment/arrival/QC) is Purchase's domain, but the
-  // "Requirement created" row is 2A's own gate and 2A belongs to Design Engineer —
-  // so a request touching only that row's date, note, and/or its own Planned override is
-  // authorized for them too.
+  // Procurement (quote/order/despatch/arrival/QC) is Purchase's domain, but two rows belong to
+  // other departments: "Requirement created" is 2A's own gate and belongs to Design Engineer,
+  // and "Payment done" belongs to Accounts — so a request touching only one of those rows' own
+  // date/note/Planned-override fields is authorized for that department too.
   const touchedFields = Object.keys(parsed.data);
   const isRequirementOnlyUpdate = touchedFields.every(
     (k) => k === "requirementCreatedAt" || k === "requirementNote" || k === "requirementPlannedOverride"
   );
+  const isPaymentOnlyUpdate = touchedFields.every(
+    (k) =>
+      k === "paymentSettledAt" || k === "paymentNote" || k === "paymentDetails" || k === "paymentPlannedOverride"
+  );
   const authorized =
     isAdminEditor(session) ||
     session.department === "purchase" ||
-    (isRequirementOnlyUpdate && session.department === "design_engineer");
+    (isRequirementOnlyUpdate && session.department === "design_engineer") ||
+    (isPaymentOnlyUpdate && session.department === "accounts");
   if (!authorized) {
     return NextResponse.json({ error: "Forbidden — not your department's field" }, { status: 403 });
   }

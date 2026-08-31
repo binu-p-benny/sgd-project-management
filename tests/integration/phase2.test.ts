@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { updateStepStatus } from "@/lib/step-actions";
+import { updateStepStatus, syncDerivedStepStatus } from "@/lib/step-actions";
 import { checkDependencyGate } from "@/lib/dependency-gate";
-import { computeExpectedArrivalDate, resetProcurementItem, clearProcurementFromStage } from "@/lib/procurement";
+import {
+  computeExpectedArrivalDate,
+  resetProcurementItem,
+  clearProcurementFromStage,
+  resolveProcurementItemFromActionItem,
+} from "@/lib/procurement";
 import {
   createTestProject,
   ensureTestUsers,
@@ -282,6 +287,86 @@ describe("resetProcurementItem (QC-failure restart) clears the action plan too",
 
     expect(await prisma.procurementActionItem.count({ where: { procurementItemId: section.id } })).toBe(0);
     expect(await prisma.procurementActionItem.count({ where: { procurementItemId: hardware.id } })).toBe(1);
+  });
+});
+
+describe("resolveProcurementItemFromActionItem: a pass/fail row's Pass is the item's real recheck", () => {
+  async function failedSectionWithActionPlan(project: Awaited<ReturnType<typeof projectAtPhase2>>) {
+    const items = await getProcurementItems(project.id);
+    const section = items.find((i) => i.itemType === "section")!;
+    await prisma.procurementItem.update({
+      where: { id: section.id },
+      data: { qcCheckedAt: new Date("2026-08-20T00:00:00.000Z"), qcChecked: true, qcPassed: false, qcNote: "cracked", actionPlanAt: new Date() },
+    });
+    return section;
+  }
+
+  it("flips the item to qcPassed: true and updates qcCheckedAt to the resolution date", async () => {
+    const project = await projectAtPhase2();
+    const section = await failedSectionWithActionPlan(project);
+    const resolvedAt = new Date("2026-09-05T00:00:00.000Z");
+
+    const resolved = await resolveProcurementItemFromActionItem(section.id, true, true, resolvedAt);
+
+    expect(resolved).toBe(true);
+    const after = await prisma.procurementItem.findUniqueOrThrow({ where: { id: section.id } });
+    expect(after.qcPassed).toBe(true);
+    expect(after.qcCheckedAt).toEqual(resolvedAt);
+  });
+
+  it("does nothing on a Fail — the item was already qcPassed: false", async () => {
+    const project = await projectAtPhase2();
+    const section = await failedSectionWithActionPlan(project);
+
+    const resolved = await resolveProcurementItemFromActionItem(section.id, true, false, new Date());
+
+    expect(resolved).toBe(false);
+    const after = await prisma.procurementItem.findUniqueOrThrow({ where: { id: section.id } });
+    expect(after.qcPassed).toBe(false);
+  });
+
+  it("does nothing for a plain (non-pass/fail) row, even if its qcPassed somehow reads true", async () => {
+    const project = await projectAtPhase2();
+    const section = await failedSectionWithActionPlan(project);
+
+    const resolved = await resolveProcurementItemFromActionItem(section.id, false, true, new Date());
+
+    expect(resolved).toBe(false);
+    const after = await prisma.procurementItem.findUniqueOrThrow({ where: { id: section.id } });
+    expect(after.qcPassed).toBe(false);
+  });
+
+  it("does nothing on an item that isn't currently failed — never overwrites an unrelated result", async () => {
+    const project = await projectAtPhase2();
+    const items = await getProcurementItems(project.id);
+    const hardware = items.find((i) => i.itemType === "hardware")!;
+    await prisma.procurementItem.update({
+      where: { id: hardware.id },
+      data: { qcCheckedAt: new Date(), qcChecked: true, qcPassed: true },
+    });
+
+    const resolved = await resolveProcurementItemFromActionItem(hardware.id, true, true, new Date());
+
+    expect(resolved).toBe(false);
+  });
+
+  it("end to end: resolving section unblocks 2F once combined with syncDerivedStepStatus (the exact bug this fixes)", async () => {
+    const project = await projectAtPhase2();
+    const section = await failedSectionWithActionPlan(project);
+    await patchProcurementItem(project.id, "hardware", users.purchase, { actualArrivalDate: new Date(), qcCheckedAt: new Date() });
+    await patchProcurementItem(project.id, "gasket", users.purchase, { actualArrivalDate: new Date(), qcCheckedAt: new Date() });
+
+    // Before the fix, section stays qcPassed: false forever once a custom action-item row
+    // records a Pass on it — 2F requires every item to be qcPassed: true, so it never completes.
+    const twoFBefore = await getStep(project.id, "2F");
+    expect(twoFBefore.status).not.toBe("completed");
+
+    const resolved = await resolveProcurementItemFromActionItem(section.id, true, true, new Date());
+    expect(resolved).toBe(true);
+    await syncDerivedStepStatus(project.id, "2F", users.purchase);
+
+    const twoFAfter = await getStep(project.id, "2F");
+    expect(twoFAfter.status).toBe("completed");
   });
 });
 

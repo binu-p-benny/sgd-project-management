@@ -209,12 +209,6 @@ export function computeExpectedHardwareGasketArrivalDate(paymentPlanned: Date): 
   return addWorkingDays(paymentPlanned, 10);
 }
 
-/** Hardware/gasket only: QC is expected 2 working days after Actual arrival's own planned date.
- *  Same "displayed value only, doesn't touch the legacy stored field" caveat as arrival above. */
-export function computeExpectedHardwareGasketQCDate(arrivalPlanned: Date): Date {
-  return addWorkingDays(arrivalPlanned, 2);
-}
-
 export interface HardwareGasketChainDates {
   quote: Date | null;
   payment: Date | null;
@@ -224,21 +218,29 @@ export interface HardwareGasketChainDates {
 }
 
 /**
- * Hardware/gasket-only planned-date chain for Quote through QC — each stage plans a working-day
- * span (Sundays skipped) after the *previous stage's own planned date*, unlike Section's chain
- * (which plans off ground-truth actual-or-planned dates) or the flat "everything offset from
- * Requirement" model computeProcurementPlannedDates still uses for Section's own quote/payment/
- * order. There's no actual-date awareness here at all — purely a forecast chain, matching how
- * hardware/gasket has always behaved (a plan independent of what's actually happened), just
- * chained stage-to-stage now instead of everything anchored to one shared reference.
+ * Hardware/gasket-only planned-date chain for Quote through Arrival — each stage plans a
+ * working-day span (Sundays skipped) after the *previous stage's own planned date*, unlike
+ * Section's chain (which plans off ground-truth actual-or-planned dates) or the flat "everything
+ * offset from Requirement" model computeProcurementPlannedDates still uses for Section's own
+ * quote/payment/order. There's no actual-date awareness here at all — purely a forecast chain,
+ * matching how hardware/gasket has always behaved (a plan independent of what's actually
+ * happened), just chained stage-to-stage now instead of everything anchored to one shared
+ * reference.
  *
- * Every stage has a manual override, same "shift every later stage in the chain" principle as
- * everywhere else — an override always wins for that stage's own displayed date and for what the
- * next stage forecasts from. Order confirmed tracks Payment's *effective* (post-override) date
- * by default, same relationship it's always had, but keeps its own independent override on top.
+ * QC is the one stage that *isn't* its own forecast: hardware and gasket get QC-checked
+ * alongside Section, in the same pass, so their planned QC date is simply Section's own QC
+ * planned date (see sectionQCPlanned) — not an offset from their own Arrival at all. A manual
+ * override on this item's own QC still wins outright, same as every other stage.
+ *
+ * Every other stage has a manual override too, same "shift every later stage in the chain"
+ * principle as everywhere else — an override always wins for that stage's own displayed date and
+ * for what the next stage forecasts from. Order confirmed tracks Payment's *effective*
+ * (post-override) date by default, same relationship it's always had, but keeps its own
+ * independent override on top.
  */
 export function computeHardwareGasketChainDates(
   requirementPlanned: Date | null,
+  sectionQCPlanned: Date | null,
   overrides: {
     quote?: Date | null;
     payment?: Date | null;
@@ -258,8 +260,7 @@ export function computeHardwareGasketChainDates(
   const arrivalForecast = payment ? computeExpectedHardwareGasketArrivalDate(payment) : null;
   const arrival = overrides.arrival ?? arrivalForecast;
 
-  const qcForecast = arrival ? computeExpectedHardwareGasketQCDate(arrival) : null;
-  const qc = overrides.qc ?? qcForecast;
+  const qc = overrides.qc ?? sectionQCPlanned;
 
   return { quote, payment, order, arrival, qc };
 }
@@ -272,11 +273,40 @@ export interface ProcurementItemArrivalInputs {
   paymentPlannedOverride: Date | null;
   orderPlannedOverride: Date | null;
   arrivalPlannedOverride: Date | null;
+  qcPlannedOverride: Date | null;
   orderConfirmedAt: Date | null;
   materialDespatchAt: Date | null;
   materialDespatchPlannedOverride: Date | null;
   arrivedForPowderCoatingAt: Date | null;
   arrivedForPowderCoatingPlannedOverride: Date | null;
+}
+
+/** Section's full planned-date chain, resolved from one item's raw stored fields — shared by
+ *  computeItemArrivalPlanned (needs .arrival) and computeSectionQCPlanned (needs .qc) so both
+ *  read off exactly the same computation rather than two copies that could drift apart. Only
+ *  meaningful for a section item; callers are expected to have already checked itemType. */
+function resolveSectionChain(item: ProcurementItemArrivalInputs, phase2PlanAnchor: Date | null): SectionChainDates {
+  const itemPlanAnchor = item.planAnchorOverride ?? phase2PlanAnchor;
+  const planned = computeProcurementPlannedDates("section", itemPlanAnchor, {
+    requirement: item.requirementPlannedOverride,
+    quote: item.quotePlannedOverride,
+    payment: item.paymentPlannedOverride,
+    order: item.orderPlannedOverride,
+    arrival: item.arrivalPlannedOverride,
+    qc: item.qcPlannedOverride,
+  });
+  return computeSectionChainDates(
+    planned.order,
+    item.orderConfirmedAt,
+    item.materialDespatchAt,
+    item.arrivedForPowderCoatingAt,
+    {
+      materialDespatch: item.materialDespatchPlannedOverride,
+      powderCoatingArrival: item.arrivedForPowderCoatingPlannedOverride,
+      arrival: item.arrivalPlannedOverride,
+      qc: item.qcPlannedOverride,
+    }
+  );
 }
 
 /**
@@ -291,6 +321,10 @@ export function computeItemArrivalPlanned(
   item: ProcurementItemArrivalInputs,
   phase2PlanAnchor: Date | null
 ): Date | null {
+  if (item.itemType === "section") {
+    return resolveSectionChain(item, phase2PlanAnchor).arrival;
+  }
+
   const itemPlanAnchor = item.planAnchorOverride ?? phase2PlanAnchor;
   const planned = computeProcurementPlannedDates(item.itemType, itemPlanAnchor, {
     requirement: item.requirementPlannedOverride,
@@ -301,28 +335,58 @@ export function computeItemArrivalPlanned(
     qc: null,
   });
 
-  if (item.itemType === "section") {
-    return computeSectionChainDates(
-      planned.order,
-      item.orderConfirmedAt,
-      item.materialDespatchAt,
-      item.arrivedForPowderCoatingAt,
-      {
-        materialDespatch: item.materialDespatchPlannedOverride,
-        powderCoatingArrival: item.arrivedForPowderCoatingPlannedOverride,
-        arrival: item.arrivalPlannedOverride,
-        qc: null,
-      }
-    ).arrival;
-  }
-
-  return computeHardwareGasketChainDates(planned.requirement, {
+  // Only .arrival is read below — hardware/gasket's own .qc needs Section's QC planned date
+  // (see computeSectionQCPlanned), which is irrelevant to .arrival, so null is fine here.
+  return computeHardwareGasketChainDates(planned.requirement, null, {
     quote: item.quotePlannedOverride,
     payment: item.paymentPlannedOverride,
     order: item.orderPlannedOverride,
     arrival: item.arrivalPlannedOverride,
     qc: null,
   }).arrival;
+}
+
+/**
+ * Section's own QC checked planned date — pulled out on its own because hardware and gasket's
+ * own QC planned date is *this exact value*, not an offset from their own Arrival (see
+ * computeHardwareGasketChainDates): all three item types get QC-checked together, in the same
+ * pass. Null for anything other than a section item, or before the shared anchor resolves.
+ */
+export function computeSectionQCPlanned(item: ProcurementItemArrivalInputs, phase2PlanAnchor: Date | null): Date | null {
+  if (item.itemType !== "section") return null;
+  return resolveSectionChain(item, phase2PlanAnchor).qc;
+}
+
+/**
+ * Section's own "Order confirmed" planned date, resolved the same ground-truth way every other
+ * procurement planned date is — the item's own restart anchor if set, else the shared phase-2
+ * anchor, with each stage's own manual override layered on top (see computeProcurementPlannedDates).
+ * Feeds 2D2's planned date (see rescheduleProjectDates) — 2D2 plans off Section's Order confirmed
+ * specifically, not the generic dependsOn+duration formula every other Phase 1/2 step uses.
+ * Null for hardware/gasket (2D2 only ever reads this for the section item) and whenever the
+ * anchor itself isn't resolvable yet.
+ */
+export function computeSectionOrderConfirmedPlanned(
+  item: Pick<
+    ProcurementItemArrivalInputs,
+    "itemType" | "planAnchorOverride" | "requirementPlannedOverride" | "quotePlannedOverride" | "paymentPlannedOverride" | "orderPlannedOverride"
+  >,
+  phase2PlanAnchor: Date | null
+): Date | null {
+  if (item.itemType !== "section") return null;
+  const itemPlanAnchor = item.planAnchorOverride ?? phase2PlanAnchor;
+  return computeProcurementPlannedDates("section", itemPlanAnchor, {
+    requirement: item.requirementPlannedOverride,
+    quote: item.quotePlannedOverride,
+    payment: item.paymentPlannedOverride,
+    order: item.orderPlannedOverride,
+  }).order;
+}
+
+/** 2D2 ("Final tight measurement at site") is expected 18 working days after Section's own Order
+ *  confirmed planned date — see computeSectionOrderConfirmedPlanned. */
+export function computeExpectedFinalMeasurementDate(sectionOrderConfirmedPlanned: Date): Date {
+  return addWorkingDays(sectionOrderConfirmedPlanned, 18);
 }
 
 export interface ProcurementPlannedOverrides {
@@ -633,6 +697,33 @@ export async function resetProcurementItem(itemId: string, newPlanAnchor: Date) 
     data: { ...data, planAnchorOverride: newPlanAnchor },
   });
   await prisma.procurementActionItem.deleteMany({ where: { procurementItemId: itemId } });
+}
+
+/**
+ * A pass/fail custom action-item row is how a failed item gets re-tested without wiping it and
+ * starting over (see the removed "Restart from Requirement created" — this replaces it) — so a
+ * genuine Pass on one of those rows *is* the item's real recheck outcome, not just a note about
+ * one. Called from the action-item PATCH route right after that row is saved. Returns true if it
+ * actually resolved the item (so the caller knows to also re-sync 2A/2D1/2F and reschedule);
+ * false when there was nothing to resolve — not a pass/fail row, not a Pass, or the item wasn't
+ * sitting failed in the first place. Only ever fires once: the moment this flips qc_passed to
+ * true, canAddActionItem (which requires qc_passed === false) goes false, so there's no second
+ * pass/fail row left to race with.
+ */
+export async function resolveProcurementItemFromActionItem(
+  procurementItemId: string,
+  isPassFail: boolean,
+  newQcPassed: boolean | null,
+  resolvedAt: Date | null
+): Promise<boolean> {
+  if (!isPassFail || newQcPassed !== true) return false;
+  const item = await prisma.procurementItem.findUniqueOrThrow({ where: { id: procurementItemId } });
+  if (item.qcPassed !== false) return false;
+  await prisma.procurementItem.update({
+    where: { id: procurementItemId },
+    data: { qcPassed: true, qcCheckedAt: resolvedAt ?? item.qcCheckedAt ?? new Date() },
+  });
+  return true;
 }
 
 /**

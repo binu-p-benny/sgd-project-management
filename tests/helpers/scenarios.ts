@@ -1,5 +1,5 @@
 import type { Department, ItemType, VisitUrgency } from "@prisma/client";
-import { updateStepStatus, syncDerivedStepStatus } from "@/lib/step-actions";
+import { updateStepStatus, syncDerivedStepStatus, syncGlassPOStepStatus } from "@/lib/step-actions";
 import { computeExpectedArrivalDate } from "@/lib/procurement";
 import { prisma, getStep } from "./db";
 
@@ -12,7 +12,7 @@ export async function advanceThroughPhase1(
   const oneA = await getStep(projectId, "1A");
   await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: urgency });
   const oneB = await getStep(projectId, "1B");
-  await updateStepStatus(oneB.id, "completed", users.project_engineer);
+  await updateStepStatus(oneB.id, "completed", users.design_engineer);
   const oneC = await getStep(projectId, "1C");
   await updateStepStatus(oneC.id, "completed", users.design_engineer);
   const oneD = await getStep(projectId, "1D");
@@ -64,6 +64,33 @@ export async function markAllRequirementsCreated(projectId: string, userId: stri
   for (const itemType of ITEM_TYPES) {
     await patchProcurementItem(projectId, itemType, userId, { requirementCreatedAt: new Date() });
   }
+}
+
+/** Mimics PATCH /api/glass-purchase-orders/:id filling in all 4 stages — completes 3A. */
+export async function completeGlassPO(projectId: string, userId: string) {
+  const glassPO = await prisma.glassPurchaseOrder.findUniqueOrThrow({ where: { projectId } });
+  await prisma.glassPurchaseOrder.update({
+    where: { id: glassPO.id },
+    data: {
+      requirementCreatedAt: new Date(),
+      quoteCreatedAt: new Date(),
+      paymentSettledAt: new Date(),
+      orderConfirmedAt: new Date(),
+    },
+  });
+  await syncGlassPOStepStatus(projectId, userId);
+}
+
+/** Mimics filling in the Glass PO tracker's "Actual arrival" row — completes 3B (Glass
+ *  delivery), which is derived from it the same way 3A is derived from completeGlassPO's fields.
+ *  3B can no longer be completed via updateStepStatus directly (see step-actions.ts). */
+export async function completeGlassDelivery(projectId: string, userId: string) {
+  const glassPO = await prisma.glassPurchaseOrder.findUniqueOrThrow({ where: { projectId } });
+  await prisma.glassPurchaseOrder.update({
+    where: { id: glassPO.id },
+    data: { actualArrivalDate: new Date() },
+  });
+  await syncGlassPOStepStatus(projectId, userId);
 }
 
 /** Sets all 3 requirement dates (completing 2A), then marks all 3 items arrived + QC checked. */

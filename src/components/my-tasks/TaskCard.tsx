@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { MyTaskItem } from "@/lib/my-tasks";
 import { useSyncedDraft } from "@/hooks/useSyncedDraft";
+import { Spinner } from "@/components/ui/Spinner";
 import {
   STEP_STATUS_LABELS,
   STEP_STATUS_COLORS,
@@ -50,9 +51,37 @@ const DATE_FIELDS: { key: "actualStartDate" | "actualEndDate"; label: string }[]
 // meant to be hand-edited (2A: always set to its own planned finish the moment real progress
 // begins — see syncDerivedStepStatus in step-actions.ts), because it's auto-stamped the
 // moment the dependency before it completes (1C, 1D — see autoStartStep in step-actions.ts),
-// or because only its completion date is worth tracking (2D2). Either way, only the completion
-// date is meaningful to show here.
-const SINGLE_DATE_FIELD_STEP_CODES = new Set(["1A", "1B", "1C", "1D", "2A", "2D2"]);
+// or because only its completion date is worth tracking (2D2, 3E — a single on-site QC check;
+// 3B — a single "Actual arrival" date on the glass PO tracker, no separate start). Either way,
+// only the completion date is meaningful to show here.
+const SINGLE_DATE_FIELD_STEP_CODES = new Set(["1A", "1B", "1C", "1D", "2A", "2D2", "3B", "3E"]);
+
+// 3A's status/actual start/actual end, and 3B's status/actual end (and planned end — see
+// syncGlassPOStepStatus's newPlannedEnd), are all driven by the glass PO tracker beneath them
+// — but unlike the isDerived steps (2A/2D1/2F), they still show their own Actual date field(s),
+// just disabled, rather than hiding them outright. Kept local for the same reason
+// DELAY_CATEGORY_STEP_CODES below is: step-actions.ts's own copy of this concept pulls in the
+// Prisma client, which this "use client" file can't import.
+const GLASS_PO_STEP_CODES = new Set(["3A", "3B"]);
+// 3A shows both Actual start (Requirement created) and Actual end (Order confirmed); 3B only
+// ever had one meaningful date (Actual arrival) — see SINGLE_DATE_FIELD_STEP_CODES above.
+const GLASS_PO_HINT: Record<string, string> = {
+  "3A": "Auto-filled from the Glass PO tracker below — Requirement created / Order confirmed.",
+  "3B": "Auto-filled from the Glass PO tracker below — Actual arrival.",
+};
+
+// Phase 3 never gets a computed planned date (see rescheduleProjectDates's phase_3 exclusion) —
+// 3C1, 3C2 and 3E are the steps that still get a manual Planned date each, filled in by hand via
+// their own small Save CTA, same "plain freeform field, not a forecast" idea as the Glass PO
+// tracker's Planned column. Once set, the inputs lock — see plannedDatesLocked below. Kept local
+// rather than imported from step-actions.ts's own copy of this same set, for the same reason
+// DELAY_CATEGORY_STEP_CODES above is — that file pulls in the Prisma client.
+const MANUAL_PLANNED_DATE_STEP_CODES = new Set(["3C1", "3C2", "3E"]);
+
+// Of those, 3E only gets a Planned *end* — a single on-site QC check has no meaningful planned
+// start to fill in separately (same reasoning as its Actual date being end-only, just above).
+// 3C1/3C2 keep the full start+end pair since those are genuinely multi-day spans of work.
+const MANUAL_PLANNED_END_ONLY_STEP_CODES = new Set(["3E"]);
 
 // Steps that skip the Start->Mark complete two-click flow at not_started and jump straight to
 // a single completion button. Includes 1A/1B plus 1D, which — like 1B and 1C —
@@ -183,6 +212,18 @@ export function TaskCard({
   );
   const [dateSubmitting, setDateSubmitting] = useState(false);
   const [dateMessage, setDateMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  // 3C1's manual Planned start/end — a separate draft and save action from the Actual dates
+  // above, since these are meant to be filled in and locked in *before* work (and its Actual
+  // dates) begins, not bundled into the same click.
+  const [plannedDateFields, setPlannedDateFields] = useSyncedDraft(
+    `${item.plannedStartDate ?? ""}|${item.plannedEndDate ?? ""}`,
+    () => ({
+      plannedStartDate: toDateInputValue(item.plannedStartDate),
+      plannedEndDate: toDateInputValue(item.plannedEndDate),
+    })
+  );
+  const [plannedDateSubmitting, setPlannedDateSubmitting] = useState(false);
+  const [plannedDateError, setPlannedDateError] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -420,6 +461,43 @@ export function TaskCard({
     }
   }
 
+  async function savePlannedDates() {
+    setPlannedDateSubmitting(true);
+    setPlannedDateError(null);
+    const plannedDatesEndOnly = MANUAL_PLANNED_END_ONLY_STEP_CODES.has(item.stepCode);
+    try {
+      const res = await fetch(`/api/phase-steps/${item.id}/dates`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          // 3E never had a Planned start field to begin with — leaving the key out entirely
+          // keeps this a no-op on that column instead of writing null over nothing.
+          ...(plannedDatesEndOnly
+            ? {}
+            : {
+                plannedStartDate: plannedDateFields.plannedStartDate
+                  ? new Date(plannedDateFields.plannedStartDate).toISOString()
+                  : null,
+              }),
+          plannedEndDate: plannedDateFields.plannedEndDate
+            ? new Date(plannedDateFields.plannedEndDate).toISOString()
+            : null,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setPlannedDateError(typeof data.error === "string" ? data.error : "Could not save planned dates");
+        setPlannedDateSubmitting(false);
+        return;
+      }
+      router.refresh();
+      setPlannedDateSubmitting(false);
+    } catch {
+      setPlannedDateError("Could not reach the server");
+      setPlannedDateSubmitting(false);
+    }
+  }
+
   const canStartOrComplete = item.gateBlockedBy === null || item.gateBlockedBy.length === 0;
   // What actually gets saved as the actual-end value if a completion action is submitted
   // right now — the date field's current value, or today if it's empty (mirrors the server's
@@ -435,14 +513,26 @@ export function TaskCard({
   // the next step's planned finish moves with it.
   const needsDelayCategoryChoice = DELAY_CATEGORY_STEP_CODES.has(item.stepCode) && isLateCompletion;
   const needsDelayCategory = needsDelayCategoryChoice && !delayCategory;
+  const isGlassPO = GLASS_PO_STEP_CODES.has(item.stepCode);
+  const hasManualPlannedDates = MANUAL_PLANNED_DATE_STEP_CODES.has(item.stepCode);
+  const plannedDatesEndOnly = MANUAL_PLANNED_END_ONLY_STEP_CODES.has(item.stepCode);
+  // Once the relevant field(s) are saved they're locked in — no more casual re-editing through
+  // this form. End-only steps (3E) only ever need their Planned end filled before locking.
+  const plannedDatesLocked = plannedDatesEndOnly
+    ? !!item.plannedEndDate
+    : !!item.plannedStartDate && !!item.plannedEndDate;
+  // Start/Mark complete are disabled until then — the whole point of a dedicated Save CTA for
+  // these steps' Planned dates is to make filling them in a deliberate first step, not something
+  // that can be skipped and back-filled after the fact.
+  const blockedByUnsavedPlannedDates = hasManualPlannedDates && !plannedDatesLocked;
   const visibleDateFields = SINGLE_DATE_FIELD_STEP_CODES.has(item.stepCode)
     ? DATE_FIELDS.filter((f) => f.key !== "actualStartDate")
     : DATE_FIELDS;
   // When there's a status button coming up below (Start/Mark complete/Resume), date edits
   // ride along with that single click instead of needing their own separate save — see
-  // submitWithDates. Only steps with no such button (completed, derived) keep the standalone
-  // save-dates control, since nothing else would ever submit their date edits.
-  const hasStatusAction = !item.isDerived && item.status !== "completed";
+  // submitWithDates. Only steps with no such button (completed, derived, glass PO) keep the
+  // standalone save-dates control, since nothing else would ever submit their date edits.
+  const hasStatusAction = !item.isDerived && !isGlassPO && item.status !== "completed";
   // Same condition as the "Overdue" pill below — blocked steps already get their own red
   // treatment via the blocked-reason banner, so this doesn't pile an amber highlight on top.
   const isOverdueCard = item.overrun && item.status !== "blocked";
@@ -790,7 +880,83 @@ export function TaskCard({
         </div>
       )}
 
-      {canEditDates && !item.isDerived && (
+      {canEditDates && hasManualPlannedDates && (
+        <div className="flex flex-col gap-2 border-t border-edge pt-3">
+          <div className={`grid gap-2 ${plannedDatesEndOnly ? "grid-cols-1" : "grid-cols-2"}`}>
+            {!plannedDatesEndOnly && (
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-fg-muted">Planned start</label>
+                <input
+                  type="date"
+                  value={plannedDateFields.plannedStartDate}
+                  disabled={plannedDatesLocked}
+                  onChange={(e) => setPlannedDateFields((prev) => ({ ...prev, plannedStartDate: e.target.value }))}
+                  onClick={openPicker}
+                  className={`h-10 w-full rounded-lg border px-2 text-sm outline-none disabled:opacity-80 ${
+                    plannedDatesLocked
+                      ? "border-edge bg-overlay text-fg-muted"
+                      : "border-edge bg-bg text-fg focus:border-accent focus:ring-2 focus:ring-accent/30"
+                  }`}
+                />
+              </div>
+            )}
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-fg-muted">Planned end</label>
+              <input
+                type="date"
+                value={plannedDateFields.plannedEndDate}
+                disabled={plannedDatesLocked}
+                onChange={(e) => setPlannedDateFields((prev) => ({ ...prev, plannedEndDate: e.target.value }))}
+                onClick={openPicker}
+                className={`h-10 w-full rounded-lg border px-2 text-sm outline-none disabled:opacity-80 ${
+                  plannedDatesLocked
+                    ? "border-edge bg-overlay text-fg-muted"
+                    : "border-edge bg-bg text-fg focus:border-accent focus:ring-2 focus:ring-accent/30"
+                }`}
+              />
+            </div>
+          </div>
+          {plannedDatesLocked ? (
+            <p className="text-xs text-fg-subtle">Planned dates are locked in — filled in by hand, not computed.</p>
+          ) : (
+            <>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={savePlannedDates}
+                  disabled={plannedDateSubmitting}
+                  className={`${btnAdminSmall} disabled:opacity-40`}
+                >
+                  {plannedDateSubmitting ? "Saving…" : "Save planned dates"}
+                </button>
+              </div>
+              {plannedDateError && <p className="text-xs text-red-600 dark:text-red-400">{plannedDateError}</p>}
+            </>
+          )}
+        </div>
+      )}
+
+      {canEditDates && isGlassPO && (
+        <div className="flex flex-col gap-2 border-t border-edge pt-3">
+          <div className={`grid gap-2 ${visibleDateFields.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+            {visibleDateFields.map(({ key, label }) => (
+              <div key={key} className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-fg-muted">{label}</label>
+                <input
+                  type="date"
+                  value={dateFields[key]}
+                  disabled
+                  readOnly
+                  className="h-10 w-full rounded-lg border border-edge bg-overlay px-2 text-sm text-fg-muted outline-none"
+                />
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-fg-subtle">{GLASS_PO_HINT[item.stepCode]}</p>
+        </div>
+      )}
+
+      {canEditDates && !item.isDerived && !isGlassPO && (
         <div className="flex flex-col gap-2 border-t border-edge pt-3">
           <div className={`grid gap-2 ${visibleDateFields.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
             {visibleDateFields.map(({ key, label }) => (
@@ -827,9 +993,7 @@ export function TaskCard({
                   className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent text-white transition-colors hover:bg-accent-2 disabled:opacity-40"
                 >
                   {dateSubmitting ? (
-                    <svg viewBox="0 0 24 24" fill="none" strokeWidth={2.5} className="h-4 w-4 animate-spin stroke-current">
-                      <circle cx="12" cy="12" r="8.5" strokeDasharray="30 100" strokeLinecap="round" />
-                    </svg>
+                    <Spinner className="h-4 w-4" />
                   ) : (
                     <svg viewBox="0 0 24 24" fill="none" strokeWidth={2.5} className="h-4 w-4 stroke-current">
                       <path d="M5 12.5 10 17l9-10" strokeLinecap="round" strokeLinejoin="round" />
@@ -898,7 +1062,7 @@ export function TaskCard({
         </>
       )}
 
-      {panel === "none" && !item.isDerived && (
+      {panel === "none" && !item.isDerived && !isGlassPO && (
         <div className="flex gap-2">
           {item.status === "not_started" && (
             <>
@@ -915,7 +1079,12 @@ export function TaskCard({
                   Completed
                 </button>
               ) : (
-                <button className={btnPrimary} onClick={startStep} disabled={submitting || !canStartOrComplete}>
+                <button
+                  className={btnPrimary}
+                  onClick={startStep}
+                  disabled={submitting || !canStartOrComplete || blockedByUnsavedPlannedDates}
+                  title={blockedByUnsavedPlannedDates ? "Save the planned dates above first" : undefined}
+                >
                   Start
                 </button>
               )}
@@ -932,8 +1101,10 @@ export function TaskCard({
                 disabled={
                   submitting ||
                   !canStartOrComplete ||
+                  blockedByUnsavedPlannedDates ||
                   (item.stepCode !== "1A" && (needsLateReason || needsDelayCategory))
                 }
+                title={blockedByUnsavedPlannedDates ? "Save the planned dates above first" : undefined}
               >
                 Mark complete
               </button>
@@ -948,6 +1119,14 @@ export function TaskCard({
             </button>
           )}
         </div>
+      )}
+      {/* hasStatusAction (rather than repeating its isDerived/isGlassPO/completed checks) also
+          keeps this from lingering on a step that somehow reached completed with its planned
+          dates still unsaved — e.g. legacy data, or a direct API edit that bypassed the button
+          gate above — where Start/Mark complete are long gone and there'd be nothing left to
+          act on this hint. */}
+      {panel === "none" && hasStatusAction && item.status !== "blocked" && blockedByUnsavedPlannedDates && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">Save the planned dates above first</p>
       )}
     </div>
   );

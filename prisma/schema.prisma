@@ -123,9 +123,10 @@ model User {
   department   Department
   createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  statusChanges  StepStatusLog[]   @relation("StatusChangedBy")
-  qcCheckedItems ProcurementItem[] @relation("QcCheckedBy")
-  notifications  Notification[]
+  statusChanges       StepStatusLog[]      @relation("StatusChangedBy")
+  qcCheckedItems      ProcurementItem[]    @relation("QcCheckedBy")
+  qcCheckedGlassOrders GlassPurchaseOrder[] @relation("GlassQcCheckedBy")
+  notifications       Notification[]
 
   @@index([department])
   @@map("users")
@@ -166,9 +167,10 @@ model Project {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  phaseSteps       PhaseStep[]
-  procurementItems ProcurementItem[]
-  notifications    Notification[]
+  phaseSteps         PhaseStep[]
+  procurementItems   ProcurementItem[]
+  glassPurchaseOrder GlassPurchaseOrder?
+  notifications      Notification[]
 
   @@index([currentPhase])
   @@index([overallStatus])
@@ -337,16 +339,116 @@ model ProcurementActionItem {
   procurementItemId String          @map("procurement_item_id")
   procurementItem   ProcurementItem @relation(fields: [procurementItemId], references: [id], onDelete: Cascade)
 
-  taskLabel   String    @map("task_label")
-  plannedDate DateTime  @map("planned_date") @db.Timestamptz(3)
-  actualDate  DateTime? @map("actual_date") @db.Timestamptz(3)
-  note        String?   @db.Text
+  taskLabel   String     @map("task_label")
+  // Which department this ad-hoc follow-up is assigned to — chosen at creation time (see the
+  // "+ Add row" form in ProcurementTracker.tsx), independent of whichever department the
+  // procurement item's fixed stages belong to. Defaulted rather than required at the column
+  // level so existing rows (and direct-Prisma test fixtures) don't need a backfill; the API
+  // route itself always requires an explicit choice on create.
+  department  Department @default(purchase)
+  // When true, this row gets the "qc" stage's Pass/Fail button pair instead of a single Mark
+  // complete button — some follow-up tasks (e.g. "re-inspect on arrival") are themselves a
+  // pass/fail check. Opted into at creation only (see the checkbox next to Department in
+  // AddActionItemRow), same as department — not editable afterward.
+  isPassFail  Boolean    @default(false) @map("is_pass_fail")
+  plannedDate DateTime   @map("planned_date") @db.Timestamptz(3)
+  actualDate  DateTime?  @map("actual_date") @db.Timestamptz(3)
+  // Only meaningful when isPassFail is true — null until that outcome is recorded, same
+  // "unset/passed/failed" meaning as ProcurementItem.qcPassed on the fixed qc stage.
+  qcPassed    Boolean?   @map("qc_passed")
+  note        String?    @db.Text
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@index([procurementItemId])
   @@map("procurement_action_items")
+}
+
+// The 6-stage tracker for 3A ("Glass PO: requirement, quote, payment") — deliberately separate
+// from ProcurementItem/ItemType (section/hardware/gasket): those exist for Phase 2 the moment
+// 1D completes and drive 2A/2D1/2F's derived status, none of which applies here. This is a
+// single row per project, created once Phase 3 is seeded (2F completes — see
+// seedNextPhaseIfNeeded). Unlike Phase 2's procurement, Phase 3 never carries a *computed*
+// planned date (see rescheduleProjectDates's phase_3 exclusion) — every xPlannedDate column here
+// is a plain, freeform field filled in by hand, not a forecast with a manual override on top the
+// way ProcurementItem's xPlannedOverride columns are. 3A's own PhaseStep status is nonetheless
+// derived from requirementCreatedAt/orderConfirmedAt — see syncGlassPOStepStatus.
+model GlassPurchaseOrder {
+  id        String  @id @default(cuid())
+  projectId String  @unique @map("project_id")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  requirementCreatedAt DateTime? @map("requirement_created_at") @db.Timestamptz(3)
+  requirementNote      String?   @map("requirement_note") @db.Text
+  requirementPlannedDate DateTime? @map("requirement_planned_date") @db.Timestamptz(3)
+
+  quoteCreatedAt       DateTime? @map("quote_created_at") @db.Timestamptz(3)
+  quoteNote            String?   @map("quote_note") @db.Text
+  quotePlannedDate     DateTime? @map("quote_planned_date") @db.Timestamptz(3)
+
+  paymentSettledAt     DateTime? @map("payment_settled_at") @db.Timestamptz(3)
+  paymentNote          String?   @map("payment_note") @db.Text
+  paymentPlannedDate   DateTime? @map("payment_planned_date") @db.Timestamptz(3)
+
+  orderConfirmedAt     DateTime? @map("order_confirmed_at") @db.Timestamptz(3)
+  orderNote            String?   @map("order_note") @db.Text
+  orderPlannedDate     DateTime? @map("order_planned_date") @db.Timestamptz(3)
+
+  actualArrivalDate    DateTime? @map("actual_arrival_date") @db.Timestamptz(3)
+  arrivalNote          String?   @map("arrival_note") @db.Text
+  arrivalPlannedDate   DateTime? @map("arrival_planned_date") @db.Timestamptz(3)
+
+  qcCheckedAt     DateTime? @map("qc_checked_at") @db.Timestamptz(3)
+  qcCheckedBy     String?   @map("qc_checked_by")
+  qcCheckedByUser User?     @relation("GlassQcCheckedBy", fields: [qcCheckedBy], references: [id])
+  // null = not yet checked, true = passed, false = failed — same 3-state convention as
+  // ProcurementItem.qcPassed. A failed check is what unlocks the action plan + custom rows below.
+  qcPassed        Boolean?  @map("qc_passed")
+  qcNote          String?   @map("qc_note") @db.Text
+  qcPlannedDate   DateTime? @map("qc_planned_date") @db.Timestamptz(3)
+
+  // Only meaningful once qcPassed is false — the corrective plan for redoing the glass PO.
+  // Planned 2 days after qc_checked_at (see computeExpectedActionPlanDate, shared with
+  // ProcurementItem's own action plan); the note is mandatory here unconditionally, unlike the
+  // stages above where it's only required when late or correcting an already-done row.
+  actionPlanAt   DateTime? @map("action_plan_at") @db.Timestamptz(3)
+  actionPlanNote String?   @map("action_plan_note") @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  actionItems GlassActionItem[]
+
+  @@map("glass_purchase_orders")
+}
+
+// A user-defined follow-up task under the glass PO's action plan — open-ended, unlike every
+// other stage above, which is a fixed column pair. Only ever created once the glass PO has
+// actually failed QC and its action plan is marked (see the /action-items route) — mirrors
+// ProcurementActionItem exactly, just scoped to GlassPurchaseOrder instead of ProcurementItem.
+model GlassActionItem {
+  id                   String             @id @default(cuid())
+  glassPurchaseOrderId String             @map("glass_purchase_order_id")
+  glassPurchaseOrder   GlassPurchaseOrder @relation(fields: [glassPurchaseOrderId], references: [id], onDelete: Cascade)
+
+  taskLabel   String     @map("task_label")
+  // Same "picked at creation, independent of the fixed stages" idea as
+  // ProcurementActionItem.department — see its comment for why this is defaulted.
+  department  Department @default(purchase)
+  // Same "opt into Pass/Fail at creation" idea as ProcurementActionItem.isPassFail.
+  isPassFail  Boolean    @default(false) @map("is_pass_fail")
+  plannedDate DateTime   @map("planned_date") @db.Timestamptz(3)
+  actualDate  DateTime?  @map("actual_date") @db.Timestamptz(3)
+  // Only meaningful when isPassFail is true — see ProcurementActionItem.qcPassed.
+  qcPassed    Boolean?   @map("qc_passed")
+  note        String?    @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([glassPurchaseOrderId])
+  @@map("glass_action_items")
 }
 
 model StepStatusLog {

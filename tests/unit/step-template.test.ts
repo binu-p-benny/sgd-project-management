@@ -39,8 +39,8 @@ describe("buildPhase1Steps", () => {
     expect(byCode["1A"].plannedDurationDays).toBe(1);
   });
 
-  it("1B: Project Engineer, depends on 1A, duration null until visit_urgency is set", () => {
-    expect(byCode["1B"].owningDepartment).toBe("project_engineer");
+  it("1B: Design Engineer, depends on 1A, duration null until visit_urgency is set", () => {
+    expect(byCode["1B"].owningDepartment).toBe("design_engineer");
     expect(byCode["1B"].dependsOn).toEqual(["1A"]);
     expect(byCode["1B"].plannedDurationDays).toBeNull();
   });

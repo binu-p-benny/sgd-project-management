@@ -17,6 +17,20 @@ export const DEPARTMENT_LABELS: Record<Department, string> = {
   owner_admin: "Owner / Admin",
 };
 
+// The real work departments a task can be assigned to — owner_admin is an admin role, not
+// something a step or ad-hoc row is ever "owned by", so it's left out here (same reasoning
+// AdminFilters' department filter already applied — this is that same list, made shared so a
+// second picker doesn't have to redefine it).
+// `as const satisfies` (not `: Department[]`) so this is also a non-empty tuple of literal
+// strings — the shape z.enum() needs directly, with no runtime array to keep in sync by hand.
+export const ASSIGNABLE_DEPARTMENTS = [
+  "hr_admin",
+  "project_engineer",
+  "design_engineer",
+  "purchase",
+  "accounts",
+] as const satisfies readonly Department[];
+
 export const PHASE_LABELS: Record<ProjectPhase, string> = {
   phase_1: "Phase 1 · Onboarding",
   phase_2: "Phase 2 · Procurement",

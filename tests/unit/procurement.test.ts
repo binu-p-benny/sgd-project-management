@@ -14,10 +14,10 @@ import {
   computeExpectedHardwareGasketQuoteDate,
   computeExpectedHardwareGasketPaymentDate,
   computeExpectedHardwareGasketArrivalDate,
-  computeExpectedHardwareGasketQCDate,
   computeHardwareGasketChainDates,
   computePhase2PlanAnchor,
   computeItemArrivalPlanned,
+  computeSectionQCPlanned,
   type ProcurementItemArrivalInputs,
 } from "@/lib/procurement";
 
@@ -295,30 +295,29 @@ describe("computePhase2PlanAnchor", () => {
   });
 });
 
-describe("Hardware/gasket chain: each stage plans a working-day span (Sundays skipped) after the previous stage's own planned date", () => {
+describe("Hardware/gasket chain: Quote/Payment/Arrival each plan a working-day span (Sundays skipped) after the previous stage's own planned date; QC is not its own forecast at all — see computeHardwareGasketChainDates", () => {
   const requirementPlanned = new Date("2026-08-24T00:00:00.000Z"); // Monday
 
   it("computeExpectedHardwareGasketQuoteDate: 14 working days after Requirement, skipping 2 Sundays", () => {
     expect(computeExpectedHardwareGasketQuoteDate(requirementPlanned)).toEqual(new Date("2026-09-09T00:00:00.000Z"));
   });
 
-  it("chains Payment, Arrival and QC the same way off each previous stage's own date", () => {
+  it("chains Payment and Arrival by working days off each previous stage's own date", () => {
     const quote = computeExpectedHardwareGasketQuoteDate(requirementPlanned);
     const payment = computeExpectedHardwareGasketPaymentDate(quote);
     const arrival = computeExpectedHardwareGasketArrivalDate(payment);
-    const qc = computeExpectedHardwareGasketQCDate(arrival);
 
     expect(payment).toEqual(new Date("2026-09-11T00:00:00.000Z")); // quote + 2 working days
     expect(arrival).toEqual(new Date("2026-09-23T00:00:00.000Z")); // payment + 10 working days
-    expect(qc).toEqual(new Date("2026-09-25T00:00:00.000Z")); // arrival + 2 working days
   });
 });
 
 describe("computeHardwareGasketChainDates", () => {
   const requirementPlanned = new Date("2026-08-24T00:00:00.000Z"); // Monday
+  const sectionQCPlanned = new Date("2026-10-15T00:00:00.000Z"); // arbitrary — unrelated to requirementPlanned
 
-  it("everything is null when Requirement itself has no planned date", () => {
-    expect(computeHardwareGasketChainDates(null, {})).toEqual({
+  it("everything is null when Requirement and Section's QC planned date are both null", () => {
+    expect(computeHardwareGasketChainDates(null, null, {})).toEqual({
       quote: null,
       payment: null,
       order: null,
@@ -327,30 +326,44 @@ describe("computeHardwareGasketChainDates", () => {
     });
   });
 
-  it("prefills the whole chain as a forecast from Requirement's planned date, with no overrides", () => {
-    const result = computeHardwareGasketChainDates(requirementPlanned, {});
+  it("prefills Quote/Payment/Order/Arrival as a forecast from Requirement's planned date, with no overrides — QC is Section's own QC planned date, not a forecast off Arrival at all", () => {
+    const result = computeHardwareGasketChainDates(requirementPlanned, sectionQCPlanned, {});
 
     expect(result.quote).toEqual(new Date("2026-09-09T00:00:00.000Z"));
     expect(result.payment).toEqual(new Date("2026-09-11T00:00:00.000Z"));
     expect(result.order).toEqual(result.payment); // Order tracks Payment's date by default
     expect(result.arrival).toEqual(new Date("2026-09-23T00:00:00.000Z"));
-    expect(result.qc).toEqual(new Date("2026-09-25T00:00:00.000Z"));
+    expect(result.qc).toEqual(sectionQCPlanned);
   });
 
-  it("a manual quote override wins for its own display and re-anchors payment, order, arrival and QC onward", () => {
+  it("QC tracks Section's QC planned date exactly, regardless of what this item's own Arrival is — a manual arrival override doesn't touch QC at all", () => {
+    const overrideArrival = new Date("2026-10-01T00:00:00.000Z");
+    const result = computeHardwareGasketChainDates(requirementPlanned, sectionQCPlanned, { arrival: overrideArrival });
+
+    expect(result.arrival).toEqual(overrideArrival);
+    expect(result.qc).toEqual(sectionQCPlanned); // unaffected by the arrival override
+  });
+
+  it("a change to Section's own QC planned date carries straight through, with no override on this item", () => {
+    const laterSectionQC = new Date("2026-11-01T00:00:00.000Z");
+    const result = computeHardwareGasketChainDates(requirementPlanned, laterSectionQC, {});
+    expect(result.qc).toEqual(laterSectionQC);
+  });
+
+  it("a manual quote override wins for its own display and re-anchors payment, order and arrival onward — QC is unaffected either way", () => {
     const overrideQuote = new Date("2026-09-15T00:00:00.000Z");
-    const result = computeHardwareGasketChainDates(requirementPlanned, { quote: overrideQuote });
+    const result = computeHardwareGasketChainDates(requirementPlanned, sectionQCPlanned, { quote: overrideQuote });
 
     expect(result.quote).toEqual(overrideQuote);
     expect(result.payment).toEqual(new Date("2026-09-17T00:00:00.000Z")); // override + 2 working days
     expect(result.order).toEqual(result.payment);
     expect(result.arrival).toEqual(computeExpectedHardwareGasketArrivalDate(result.payment!));
-    expect(result.qc).toEqual(computeExpectedHardwareGasketQCDate(result.arrival!));
+    expect(result.qc).toEqual(sectionQCPlanned);
   });
 
-  it("a manual payment override leaves quote untouched but re-anchors order, arrival and QC", () => {
+  it("a manual payment override leaves quote untouched but re-anchors order and arrival", () => {
     const overridePayment = new Date("2026-09-20T00:00:00.000Z");
-    const result = computeHardwareGasketChainDates(requirementPlanned, { payment: overridePayment });
+    const result = computeHardwareGasketChainDates(requirementPlanned, sectionQCPlanned, { payment: overridePayment });
 
     expect(result.quote).toEqual(new Date("2026-09-09T00:00:00.000Z")); // unaffected — before the override
     expect(result.payment).toEqual(overridePayment);
@@ -360,25 +373,16 @@ describe("computeHardwareGasketChainDates", () => {
 
   it("order's own override wins independently of payment's date", () => {
     const overrideOrder = new Date("2026-12-25T00:00:00.000Z");
-    const result = computeHardwareGasketChainDates(requirementPlanned, { order: overrideOrder });
+    const result = computeHardwareGasketChainDates(requirementPlanned, sectionQCPlanned, { order: overrideOrder });
 
     expect(result.order).toEqual(overrideOrder);
     // Nothing downstream reads Order — arrival still chains off Payment, unaffected.
     expect(result.arrival).toEqual(new Date("2026-09-23T00:00:00.000Z"));
   });
 
-  it("a manual arrival override leaves quote/payment/order untouched but re-anchors QC", () => {
-    const overrideArrival = new Date("2026-10-01T00:00:00.000Z");
-    const result = computeHardwareGasketChainDates(requirementPlanned, { arrival: overrideArrival });
-
-    expect(result.payment).toEqual(new Date("2026-09-11T00:00:00.000Z")); // unaffected
-    expect(result.arrival).toEqual(overrideArrival);
-    expect(result.qc).toEqual(new Date("2026-10-03T00:00:00.000Z")); // override + 2 working days
-  });
-
-  it("a manual QC override wins outright, independent of arrival", () => {
+  it("a manual QC override wins outright, independent of both Arrival and Section's own QC planned date", () => {
     const overrideQC = new Date("2027-01-01T00:00:00.000Z");
-    const result = computeHardwareGasketChainDates(requirementPlanned, { qc: overrideQC });
+    const result = computeHardwareGasketChainDates(requirementPlanned, sectionQCPlanned, { qc: overrideQC });
 
     expect(result.qc).toEqual(overrideQC);
     expect(result.arrival).not.toBeNull();
@@ -394,6 +398,7 @@ describe("computeItemArrivalPlanned: one item's Actual arrival planned date, the
     paymentPlannedOverride: null,
     orderPlannedOverride: null,
     arrivalPlannedOverride: null,
+    qcPlannedOverride: null,
     orderConfirmedAt: null,
     materialDespatchAt: null,
     materialDespatchPlannedOverride: null,
@@ -427,5 +432,42 @@ describe("computeItemArrivalPlanned: one item's Actual arrival planned date, the
       null
     );
     expect(result).toEqual(new Date("2027-02-03T00:00:00.000Z")); // 14+2+10 working days, off its own anchor
+  });
+});
+
+describe("computeSectionQCPlanned: hardware/gasket's own QC planned date comes from this — see computeHardwareGasketChainDates", () => {
+  const phase2PlanAnchor = new Date("2026-08-24T00:00:00.000Z"); // Monday
+  const emptyFields: Omit<ProcurementItemArrivalInputs, "itemType"> = {
+    planAnchorOverride: null,
+    requirementPlannedOverride: null,
+    quotePlannedOverride: null,
+    paymentPlannedOverride: null,
+    orderPlannedOverride: null,
+    arrivalPlannedOverride: null,
+    qcPlannedOverride: null,
+    orderConfirmedAt: null,
+    materialDespatchAt: null,
+    materialDespatchPlannedOverride: null,
+    arrivedForPowderCoatingAt: null,
+    arrivedForPowderCoatingPlannedOverride: null,
+  };
+
+  it("null for hardware/gasket — this is Section-only", () => {
+    expect(computeSectionQCPlanned({ itemType: "hardware", ...emptyFields }, phase2PlanAnchor)).toBeNull();
+    expect(computeSectionQCPlanned({ itemType: "gasket", ...emptyFields }, phase2PlanAnchor)).toBeNull();
+  });
+
+  it("matches computeSectionChainDates's own QC for the same section item — no drift between the two", () => {
+    const item = { itemType: "section" as const, ...emptyFields };
+    const arrival = computeItemArrivalPlanned(item, phase2PlanAnchor)!;
+    expect(computeSectionQCPlanned(item, phase2PlanAnchor)).toEqual(
+      new Date(arrival.getTime() + 2 * 24 * 60 * 60 * 1000) // arrival + 2 calendar days
+    );
+  });
+
+  it("a manual override on Section's own QC row carries straight through", () => {
+    const overrideQC = new Date("2027-03-01T00:00:00.000Z");
+    const item = { itemType: "section" as const, ...emptyFields, qcPlannedOverride: overrideQC };
+    expect(computeSectionQCPlanned(item, phase2PlanAnchor)).toEqual(overrideQC);
   });
 });

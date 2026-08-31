@@ -2,9 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession, isAdminEditor } from "@/lib/auth";
-import { syncDerivedStepStatus } from "@/lib/step-actions";
-import { rescheduleProjectDates } from "@/lib/reschedule";
-import { resolveProcurementItemFromActionItem } from "@/lib/procurement";
+import { syncGlassPOStepStatus } from "@/lib/step-actions";
+import { resolveGlassPurchaseOrderFromActionItem } from "@/lib/glass";
 
 const dateOrNull = z
   .string()
@@ -20,12 +19,10 @@ const updateSchema = z.object({
 });
 
 /**
- * Records progress against one custom action-plan row — actual date, note, and (only for a row
- * created with isPassFail) the pass/fail outcome; taskLabel, department and isPassFail itself
- * are all fixed at creation, same as every fixed stage's own Planned column never being editable
- * after the fact. Whether a note is required (late completion, a correction, or a fail outcome)
- * is enforced client-side only, same as the fixed stages above it — there's no server-side check
- * here either, for the same reason.
+ * Records progress against one custom action-plan row under the glass PO — actual date, note,
+ * and (only for a row created with isPassFail) the pass/fail outcome; taskLabel/department/
+ * isPassFail are fixed at creation. Mirrors /api/procurement-action-items/[id] exactly, just
+ * scoped to GlassActionItem — including the Pass-resolves-the-parent's-QC propagation.
  */
 export async function PATCH(
   request: NextRequest,
@@ -42,9 +39,9 @@ export async function PATCH(
   }
 
   const { id } = await params;
-  const actionItem = await prisma.procurementActionItem.findUnique({
+  const actionItem = await prisma.glassActionItem.findUnique({
     where: { id },
-    include: { procurementItem: true },
+    include: { glassPurchaseOrder: true },
   });
   if (!actionItem) {
     return NextResponse.json({ error: "Action item not found" }, { status: 404 });
@@ -57,27 +54,24 @@ export async function PATCH(
   }
 
   // Clearing actualDate back to empty is a revert — qcPassed resets with it, same as the fixed
-  // "qc" stage's own qcCheckedAt/qcPassed coupling in /api/procurement-items/[id].
+  // "qc" stage's own qcCheckedAt/qcPassed coupling in /api/glass-purchase-orders/[id].
   const { actualDate, qcPassed, ...rest } = parsed.data;
   const newQcPassed = actualDate === null ? null : qcPassed;
-  const updated = await prisma.procurementActionItem.update({
+  const updated = await prisma.glassActionItem.update({
     where: { id },
     data: { ...rest, actualDate, qcPassed: newQcPassed },
   });
 
-  // A genuine Pass on a pass/fail row resolves the item's own QC failure — see
-  // resolveProcurementItemFromActionItem for the full rationale.
-  const resolved = await resolveProcurementItemFromActionItem(
-    actionItem.procurementItemId,
+  // A genuine Pass on a pass/fail row resolves the glass PO's own QC failure — see
+  // resolveGlassPurchaseOrderFromActionItem for the full rationale.
+  const resolved = await resolveGlassPurchaseOrderFromActionItem(
+    actionItem.glassPurchaseOrderId,
     actionItem.isPassFail,
     newQcPassed ?? null,
     actualDate ?? null
   );
   if (resolved) {
-    await syncDerivedStepStatus(actionItem.procurementItem.projectId, "2A", session.userId);
-    await syncDerivedStepStatus(actionItem.procurementItem.projectId, "2D1", session.userId);
-    await syncDerivedStepStatus(actionItem.procurementItem.projectId, "2F", session.userId);
-    await rescheduleProjectDates(actionItem.procurementItem.projectId);
+    await syncGlassPOStepStatus(actionItem.glassPurchaseOrder.projectId, session.userId);
   }
 
   return NextResponse.json(updated);

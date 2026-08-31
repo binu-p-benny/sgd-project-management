@@ -26,7 +26,7 @@ export function buildPhase1Steps(): StepTemplateItem[] {
       stepCode: "1B",
       stepName: "Site visit",
       phase: "phase_1",
-      owningDepartment: "project_engineer",
+      owningDepartment: "design_engineer",
       plannedDurationDays: null, // derived from visit_urgency once 1A sets it
       dependsOn: ["1A"],
     },

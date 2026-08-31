@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getSession, isAdminEditor } from "@/lib/auth";
 import { ProcurementTracker } from "@/components/procurement/ProcurementTracker";
+import { GlassTracker, type GlassStageData } from "@/components/glass/GlassTracker";
 import { PaymentEditor } from "@/components/projects/PaymentEditor";
 import { StepProgressBar } from "@/components/projects/StepProgressBar";
 import { TaskCard } from "@/components/my-tasks/TaskCard";
@@ -16,6 +17,7 @@ import {
   computeSectionChainDates,
   computeHardwareGasketChainDates,
   computeItemArrivalPlanned,
+  computeSectionQCPlanned,
   computePhase2PlanAnchor,
 } from "@/lib/procurement";
 import { findUpstreamDelay } from "@/lib/reschedule";
@@ -202,6 +204,7 @@ export default async function ProjectDetailPage({
       // 2A<2D1<2D2<2F, 3A<3B<3C1<3C2<3E — lexicographic order matches intended sequence).
       phaseSteps: { orderBy: [{ createdAt: "asc" }, { stepCode: "asc" }] },
       procurementItems: { include: { actionItems: { orderBy: { createdAt: "asc" } } } },
+      glassPurchaseOrder: { include: { actionItems: { orderBy: { createdAt: "asc" } } } },
     },
   });
 
@@ -257,15 +260,23 @@ export default async function ProjectDetailPage({
     project.phaseSteps.map((s) => ({ stepCode: s.stepCode, dependsOn: s.dependsOn, delayCategory: s.delayCategory }))
   );
 
+  // Hardware/gasket's own QC planned date is Section's — all three item types get QC-checked
+  // together, in the same pass (see computeHardwareGasketChainDates) — so this is resolved once,
+  // up front, rather than inside the per-item .map() below where hardware/gasket's own iteration
+  // has no way to see Section's independently-computed chain from a different iteration.
+  const sectionItem = project.procurementItems.find((i) => i.itemType === "section");
+  const sectionQCPlanned = sectionItem ? computeSectionQCPlanned(sectionItem, phase2PlanAnchor) : null;
+
   const procurementTracker = (
     <ProcurementTracker
       canEdit={!!session && (isAdminEditor(session) || session.department === "purchase")}
       canEditRequirement={!!session && session.department === "design_engineer"}
+      canEditPayment={!!session && session.department === "accounts"}
       items={[...project.procurementItems]
         .sort((a, b) => ITEM_TYPE_ORDER[a.itemType] - ITEM_TYPE_ORDER[b.itemType])
         .map((item) => {
           // A restarted item (after a QC failure) carries its own client-given planned date
-          // instead of the project's default — see resetProcurementItem in step-actions.ts.
+          // instead of the project's default — see resetProcurementItem in procurement.ts.
           // Every other item keeps following the shared anchor as before.
           const itemPlanAnchor = item.planAnchorOverride ?? phase2PlanAnchor;
           const planned = computeProcurementPlannedDates(item.itemType, itemPlanAnchor, {
@@ -299,7 +310,7 @@ export default async function ProjectDetailPage({
               )
             : null;
           const hwGasketChain = isHardwareOrGasket
-            ? computeHardwareGasketChainDates(planned.requirement, {
+            ? computeHardwareGasketChainDates(planned.requirement, sectionQCPlanned, {
                 quote: item.quotePlannedOverride,
                 payment: item.paymentPlannedOverride,
                 order: item.orderPlannedOverride,
@@ -326,7 +337,9 @@ export default async function ProjectDetailPage({
               note: item.requirementNote,
               plannedDate: planned.requirement,
               plannedDateField: "requirementPlannedOverride" as const,
+              department: "design_engineer" as const,
               requirementGated: true,
+              paymentGated: false,
               qcPassed: null,
             },
             {
@@ -338,7 +351,9 @@ export default async function ProjectDetailPage({
               note: item.quoteNote,
               plannedDate: resolvedQuote,
               plannedDateField: "quotePlannedOverride" as const,
+              department: "purchase" as const,
               requirementGated: false,
+              paymentGated: false,
               qcPassed: null,
             },
             {
@@ -350,7 +365,9 @@ export default async function ProjectDetailPage({
               note: item.paymentNote,
               plannedDate: resolvedPayment,
               plannedDateField: "paymentPlannedOverride" as const,
+              department: "accounts" as const,
               requirementGated: false,
+              paymentGated: true,
               qcPassed: null,
             },
             {
@@ -362,7 +379,9 @@ export default async function ProjectDetailPage({
               note: item.orderNote,
               plannedDate: resolvedOrder,
               plannedDateField: "orderPlannedOverride" as const,
+              department: "purchase" as const,
               requirementGated: false,
+              paymentGated: false,
               qcPassed: null,
             },
             // Section only — plans off Order confirmed's own ground-truth date, not the shared
@@ -379,7 +398,9 @@ export default async function ProjectDetailPage({
                     note: item.materialDespatchNote,
                     plannedDate: sectionChain!.materialDespatch,
                     plannedDateField: "materialDespatchPlannedOverride" as const,
+                    department: "purchase" as const,
                     requirementGated: false,
+                    paymentGated: false,
                     qcPassed: null,
                   },
                   {
@@ -391,7 +412,9 @@ export default async function ProjectDetailPage({
                     note: item.arrivedForPowderCoatingNote,
                     plannedDate: sectionChain!.powderCoatingArrival,
                     plannedDateField: "arrivedForPowderCoatingPlannedOverride" as const,
+                    department: "purchase" as const,
                     requirementGated: false,
+                    paymentGated: false,
                     qcPassed: null,
                   },
                 ]
@@ -405,7 +428,9 @@ export default async function ProjectDetailPage({
               note: item.arrivalNote,
               plannedDate: resolvedArrival,
               plannedDateField: "arrivalPlannedOverride" as const,
+              department: "purchase" as const,
               requirementGated: false,
+              paymentGated: false,
               qcPassed: null,
             },
             {
@@ -417,7 +442,9 @@ export default async function ProjectDetailPage({
               note: item.qcNote,
               plannedDate: resolvedQC,
               plannedDateField: "qcPlannedOverride" as const,
+              department: "purchase" as const,
               requirementGated: false,
+              paymentGated: false,
               qcPassed: item.qcPassed,
             },
             // Only exists once this item has actually failed QC — nothing to plan an action
@@ -435,7 +462,9 @@ export default async function ProjectDetailPage({
                     note: item.actionPlanNote,
                     plannedDate: item.qcCheckedAt ? computeExpectedActionPlanDate(item.qcCheckedAt) : null,
                     plannedDateField: null,
+                    department: "purchase" as const,
                     requirementGated: false,
+                    paymentGated: false,
                     qcPassed: null,
                   },
                 ]
@@ -450,7 +479,9 @@ export default async function ProjectDetailPage({
             actualDate: stage.actualDate?.toISOString() ?? null,
             note: stage.note,
             overrun: isProcurementStageOverrun(stage.plannedDate, stage.actualDate),
+            department: stage.department,
             requirementGated: stage.requirementGated,
+            paymentGated: stage.paymentGated,
             qcPassed: stage.qcPassed,
           }));
 
@@ -464,6 +495,9 @@ export default async function ProjectDetailPage({
             actionItems: item.actionItems.map((a) => ({
               id: a.id,
               taskLabel: a.taskLabel,
+              department: a.department,
+              isPassFail: a.isPassFail,
+              qcPassed: a.qcPassed,
               plannedDate: a.plannedDate.toISOString(),
               actualDate: a.actualDate?.toISOString() ?? null,
               note: a.note,
@@ -473,6 +507,160 @@ export default async function ProjectDetailPage({
         })}
     />
   );
+
+  // Quote/Order are Purchase's own domain — same split as the procurement tracker: Requirement
+  // created belongs to Design Engineer (2A's own gate), Payment done belongs to Accounts.
+  const canEditGlass = !!session && (isAdminEditor(session) || session.department === "purchase");
+  const canEditGlassRequirement = !!session && session.department === "design_engineer";
+  const canEditGlassPayment = !!session && session.department === "accounts";
+  const glassPO = project.glassPurchaseOrder;
+  const glassStages: {
+    id: string;
+    label: string;
+    dateField: string;
+    noteField: string;
+    actualDate: Date | null;
+    note: string | null;
+    plannedDate: Date | null;
+    plannedDateField: string | null;
+    department: GlassStageData["department"];
+    requirementGated: boolean;
+    paymentGated: boolean;
+    qcPassed: boolean | null;
+  }[] = glassPO
+    ? [
+        {
+          id: "requirement",
+          label: "Requirement created",
+          dateField: "requirementCreatedAt",
+          noteField: "requirementNote",
+          actualDate: glassPO.requirementCreatedAt,
+          note: glassPO.requirementNote,
+          plannedDate: glassPO.requirementPlannedDate,
+          plannedDateField: "requirementPlannedDate",
+          department: "design_engineer",
+          requirementGated: true,
+          paymentGated: false,
+          qcPassed: null,
+        },
+        {
+          id: "quote",
+          label: "Quote created",
+          dateField: "quoteCreatedAt",
+          noteField: "quoteNote",
+          actualDate: glassPO.quoteCreatedAt,
+          note: glassPO.quoteNote,
+          plannedDate: glassPO.quotePlannedDate,
+          plannedDateField: "quotePlannedDate",
+          department: "purchase",
+          requirementGated: false,
+          paymentGated: false,
+          qcPassed: null,
+        },
+        {
+          id: "payment",
+          label: "Payment done",
+          dateField: "paymentSettledAt",
+          noteField: "paymentNote",
+          actualDate: glassPO.paymentSettledAt,
+          note: glassPO.paymentNote,
+          plannedDate: glassPO.paymentPlannedDate,
+          plannedDateField: "paymentPlannedDate",
+          department: "accounts",
+          requirementGated: false,
+          paymentGated: true,
+          qcPassed: null,
+        },
+        {
+          id: "order",
+          label: "Order confirmed",
+          dateField: "orderConfirmedAt",
+          noteField: "orderNote",
+          actualDate: glassPO.orderConfirmedAt,
+          note: glassPO.orderNote,
+          plannedDate: glassPO.orderPlannedDate,
+          plannedDateField: "orderPlannedDate",
+          department: "purchase",
+          requirementGated: false,
+          paymentGated: false,
+          qcPassed: null,
+        },
+        {
+          id: "arrival",
+          label: "Actual arrival",
+          dateField: "actualArrivalDate",
+          noteField: "arrivalNote",
+          actualDate: glassPO.actualArrivalDate,
+          note: glassPO.arrivalNote,
+          plannedDate: glassPO.arrivalPlannedDate,
+          plannedDateField: "arrivalPlannedDate",
+          department: "purchase",
+          requirementGated: false,
+          paymentGated: false,
+          qcPassed: null,
+        },
+        {
+          id: "qc",
+          label: "QC checked",
+          dateField: "qcCheckedAt",
+          noteField: "qcNote",
+          actualDate: glassPO.qcCheckedAt,
+          note: glassPO.qcNote,
+          plannedDate: glassPO.qcPlannedDate,
+          plannedDateField: "qcPlannedDate",
+          department: "purchase",
+          requirementGated: false,
+          paymentGated: false,
+          qcPassed: glassPO.qcPassed,
+        },
+        // Only exists once the glass PO has actually failed QC — nothing to plan an action
+        // around before then. Plans off qc_checked_at itself, same formula as the procurement
+        // tracker's own action plan row. Its own Planned date stays system-computed — only the
+        // 6 fixed stages above get a manual Planned field.
+        ...(glassPO.qcPassed === false
+          ? [
+              {
+                id: "actionPlan",
+                label: "Action plan",
+                dateField: "actionPlanAt",
+                noteField: "actionPlanNote",
+                actualDate: glassPO.actionPlanAt,
+                note: glassPO.actionPlanNote,
+                plannedDate: glassPO.qcCheckedAt ? computeExpectedActionPlanDate(glassPO.qcCheckedAt) : null,
+                plannedDateField: null,
+                department: "purchase" as const,
+                requirementGated: false,
+                paymentGated: false,
+                qcPassed: null,
+              },
+            ]
+          : []),
+      ]
+    : [];
+  const glassTracker = glassPO ? (
+    <GlassTracker
+      id={glassPO.id}
+      canEdit={canEditGlass}
+      canEditRequirement={canEditGlassRequirement}
+      canEditPayment={canEditGlassPayment}
+      canAddActionItem={glassPO.qcPassed === false && !!glassPO.actionPlanAt}
+      stages={glassStages.map((stage) => ({
+        ...stage,
+        actualDate: stage.actualDate?.toISOString() ?? null,
+        plannedDate: stage.plannedDate?.toISOString() ?? null,
+      }))}
+      actionItems={glassPO.actionItems.map((a) => ({
+        id: a.id,
+        taskLabel: a.taskLabel,
+        department: a.department,
+        isPassFail: a.isPassFail,
+        qcPassed: a.qcPassed,
+        plannedDate: a.plannedDate.toISOString(),
+        actualDate: a.actualDate?.toISOString() ?? null,
+        note: a.note,
+      }))}
+    />
+  ) : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -577,8 +765,24 @@ export default async function ProjectDetailPage({
       {(canEditEverything ? editablePhase3Only.length > 0 : phase3Only.length > 0) && (
         <div className="flex flex-col gap-4">
           {canEditEverything
-            ? editablePhase3Only.map(({ phase, items }) => <EditablePhaseGroup key={phase} phase={phase} items={items} />)
-            : phase3Only.map(({ phase, steps }) => <ReadOnlyPhaseGroup key={phase} phase={phase} steps={steps} />)}
+            ? editablePhase3Only.map(({ phase, items }) => (
+                <EditablePhaseGroup
+                  key={phase}
+                  phase={phase}
+                  items={items}
+                  insertBeforeStepCode="3B"
+                  insertContent={glassTracker}
+                />
+              ))
+            : phase3Only.map(({ phase, steps }) => (
+                <ReadOnlyPhaseGroup
+                  key={phase}
+                  phase={phase}
+                  steps={steps}
+                  insertBeforeStepCode="3B"
+                  insertContent={glassTracker}
+                />
+              ))}
         </div>
       )}
 

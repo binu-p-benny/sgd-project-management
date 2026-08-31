@@ -17,6 +17,8 @@ import {
   advanceThroughPhase2,
   patchProcurementItem,
   markAllRequirementsCreated,
+  completeGlassPO,
+  completeGlassDelivery,
 } from "../helpers/scenarios";
 import type { Department } from "@prisma/client";
 
@@ -219,10 +221,11 @@ describe("the cascade follows the timeline, not just the dependency graph", () =
     const project = await createTestProject();
     await advanceThroughPhase1(project.id, users, "emergency");
     await advanceThroughPhase2(project.id, users);
-    for (const code of ["2D2", "3A", "3C1"]) {
+    for (const code of ["2D2", "3C1"]) {
       const step = await getStep(project.id, code);
       await updateStepStatus(step.id, "completed", users.owner_admin);
     }
+    await completeGlassPO(project.id, users.purchase);
 
     // Nothing in the template lists 2D2 in its depends_on — a graph walk from it finds nothing,
     // which is what used to leave phase 3 untouched here.
@@ -324,7 +327,9 @@ describe("reverting a phase gate walks the project back without destroying the p
     await advanceThroughPhase1(project.id, users, "emergency");
     await advanceThroughPhase2(project.id, users);
 
-    for (const code of ["3A", "3B", "3C1", "3C2", "3E"]) {
+    await completeGlassPO(project.id, users.purchase);
+    await completeGlassDelivery(project.id, users.purchase);
+    for (const code of ["3C1", "3C2", "3E"]) {
       const step = await getStep(project.id, code);
       await updateStepStatus(step.id, "completed", users.owner_admin);
     }
@@ -529,10 +534,9 @@ describe("reverting a derived step clears the procurement data it derives from",
 
     // Complete a manual step in each of phase 2 and 3, so the cascade spans phases and its
     // ordering is worth asserting. advanceThroughPhase2 leaves both at not_started.
-    for (const code of ["2D2", "3A"]) {
-      const step = await getStep(project.id, code);
-      await updateStepStatus(step.id, "completed", users.owner_admin);
-    }
+    const twoD2 = await getStep(project.id, "2D2");
+    await updateStepStatus(twoD2.id, "completed", users.owner_admin);
+    await completeGlassPO(project.id, users.purchase);
 
     const oneC = await getStep(project.id, "1C");
     const plan = await planStepRevert(oneC.id);
@@ -563,8 +567,7 @@ describe("reverting a derived step clears the procurement data it derives from",
     await advanceThroughPhase2(project.id, users);
 
     expect((await getStep(project.id, "2F")).status).toBe("completed");
-    const threeA = await getStep(project.id, "3A");
-    await updateStepStatus(threeA.id, "completed", users.purchase);
+    await completeGlassPO(project.id, users.purchase);
 
     await patchProcurementItem(project.id, "gasket", users.purchase, { qcCheckedAt: null });
 
@@ -573,6 +576,13 @@ describe("reverting a derived step clears the procurement data it derives from",
     expect(twoF.actualEndDate).toBeNull();
     expect((await getStep(project.id, "3A")).status).toBe("not_started");
     expect((await getProject(project.id)).currentPhase).toBe("phase_2");
+
+    // 3A was swept up here via syncDerivedStepStatus's own cascade (2F un-completing), not a
+    // revertStep call — its glass_purchase_orders row has to be cleared right along with its
+    // status, or the leftover data would fight the status back to completed on the next edit.
+    const glassPO = await prisma.glassPurchaseOrder.findUniqueOrThrow({ where: { projectId: project.id } });
+    expect(glassPO.requirementCreatedAt).toBeNull();
+    expect(glassPO.orderConfirmedAt).toBeNull();
 
     // Phase 3's rows survive the unwind, so re-checking QC restores the phase rather than re-seeding it.
     await patchProcurementItem(project.id, "gasket", users.purchase, { qcCheckedAt: new Date() });

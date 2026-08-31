@@ -20,6 +20,7 @@ import {
   DERIVED_STEP_STAGE,
 } from "@/lib/procurement";
 import { rescheduleProjectDates } from "@/lib/reschedule";
+import { createEmptyGlassPurchaseOrderForProject } from "@/lib/glass";
 
 // 2A, 2D1 and 2F are derived from procurement_items — never manually settable.
 export const DERIVED_STEP_CODES = new Set(["2A", "2D1", "2F"]);
@@ -29,6 +30,14 @@ export const DERIVED_STEP_CODES = new Set(["2A", "2D1", "2F"]);
 // only these are ever asked for one: they're the steps most likely to have a client- or
 // team-caused reason worth distinguishing, rather than a purely internal derived/auto-stamped one.
 export const DELAY_CATEGORY_STEP_CODES = new Set(["1A", "1B", "1C", "1D", "2D2"]);
+
+// Phase 3 never gets a computed planned date (rescheduleProjectDates excludes the whole phase),
+// but 3C1 and 3C2 still get a manual planned start+end each, and 3E a manual planned end only
+// (see MANUAL_PLANNED_END_ONLY_STEP_CODES in TaskCard.tsx — a single on-site QC check has no
+// planned start worth tracking), each filled in by hand via their own small Save CTA — see
+// /api/phase-steps/[id]/dates. Every other step's planned_start_date/planned_end_date stays
+// fully system-computed and this route rejects writes to them, same as it always has.
+export const MANUAL_PLANNED_DATE_STEP_CODES = new Set(["3C1", "3C2", "3E"]);
 
 export class StepActionError extends Error {
   status: number;
@@ -92,7 +101,9 @@ async function applyVisitUrgency(projectId: string, visitUrgency: VisitUrgency, 
     { stepCode: "1D", dependsOn: ["1C"], plannedDurationDays: 2 },
   ];
   const dates = computePlannedDates(
-    remainingTemplate.map((s) => ({ ...s, phase: "phase_1" as const, stepName: "", owningDepartment: "purchase" as const })),
+    // owningDepartment is a placeholder here — computePlannedDates never reads it, this
+    // array only exists to satisfy StepTemplateItem's shape for the date computation below.
+    remainingTemplate.map((s) => ({ ...s, phase: "phase_1" as const, stepName: "", owningDepartment: "accounts" as const })),
     anchor
   );
 
@@ -254,6 +265,10 @@ async function seedNextPhaseIfNeeded(
 
   if (completedStepCode === "2F") {
     await seedPhaseSteps(projectId, "phase_3", buildPhase3Steps(glassType), completedAt, "2F");
+    // 3A's own TaskCard stays a plain manually-completed step (see DERIVED_STEP_CODES —
+    // unlike 2A/2D1/2F, nothing derives its status). This just seeds the row the glass tracker
+    // table sits on, so Requirement/Quote/Payment/Order have somewhere to be filled in by hand.
+    await createEmptyGlassPurchaseOrderForProject(projectId);
   }
 }
 
@@ -356,6 +371,8 @@ const STEP_PROJECT_OUTPUTS: Record<
     needsConsent: boolean;
     /** Fields this step writes onto *other* steps' rows, which go back to their template value. */
     stepFields?: { stepCode: string; fields: Record<string, unknown> }[];
+    /** Fields this step writes onto its glass_purchase_orders row (3A and 3B, currently). */
+    glassPurchaseOrderFields?: Record<string, unknown>;
   }
 > = {
   // 1A's completion is what sets visit urgency, which in turn is the only thing that gives 1B a
@@ -373,6 +390,55 @@ const STEP_PROJECT_OUTPUTS: Record<
     label: "the payment status, amount received and payment note",
     needsConsent: true,
   },
+  // 3A's requirement/quote/payment/order/arrival/QC dates live on its own glass_purchase_orders
+  // row (see GlassPurchaseOrder in schema.prisma) rather than fields on the project or another
+  // step — the same "output that has to go with a revert" idea as 1A/1D above, just a third
+  // table. No direct `fields`/`stepFields` here; glassPurchaseOrderFields is handled by its own
+  // branch below, and its action-plan follow-up rows (GlassActionItem) by clearProjectOutputs
+  // directly, since a bare field-clear can't cascade the way deleting the parent row would.
+  "3A": {
+    fields: {},
+    label: "the glass PO tracker's dates, notes and action plan",
+    needsConsent: true,
+    glassPurchaseOrderFields: {
+      requirementCreatedAt: null,
+      requirementNote: null,
+      requirementPlannedDate: null,
+      quoteCreatedAt: null,
+      quoteNote: null,
+      quotePlannedDate: null,
+      paymentSettledAt: null,
+      paymentNote: null,
+      paymentPlannedDate: null,
+      orderConfirmedAt: null,
+      orderNote: null,
+      orderPlannedDate: null,
+      actualArrivalDate: null,
+      arrivalNote: null,
+      arrivalPlannedDate: null,
+      qcCheckedAt: null,
+      qcCheckedBy: null,
+      qcPassed: null,
+      qcNote: null,
+      qcPlannedDate: null,
+      actionPlanAt: null,
+      actionPlanNote: null,
+    },
+  },
+  // 3B ("Glass delivery") is derived from the same glass_purchase_orders row's Actual arrival
+  // stage (see syncGlassPOStepStatus) — reverting it clears just that stage, not the whole row
+  // (3A's own entry above already owns clearing everything, including these same two fields, for
+  // when 3A itself is reverted). Planned stays: an arrival date someone already scheduled isn't
+  // discarded just because the actual outcome is being corrected.
+  "3B": {
+    fields: {},
+    label: "the glass PO tracker's actual arrival date",
+    needsConsent: true,
+    glassPurchaseOrderFields: {
+      actualArrivalDate: null,
+      arrivalNote: null,
+    },
+  },
 };
 
 /** Applies STEP_PROJECT_OUTPUTS for every reverted step code that has any. */
@@ -387,6 +453,15 @@ async function clearProjectOutputs(projectId: string, stepCodes: string[]) {
   for (const { stepCode, fields } of outputs.flatMap((o) => o.stepFields ?? [])) {
     await prisma.phaseStep.updateMany({ where: { projectId, stepCode }, data: fields });
   }
+
+  const glassPurchaseOrderFields = outputs.find((o) => o.glassPurchaseOrderFields)?.glassPurchaseOrderFields;
+  if (glassPurchaseOrderFields) {
+    await prisma.glassPurchaseOrder.updateMany({ where: { projectId }, data: glassPurchaseOrderFields });
+    // A field-clear on the parent row doesn't cascade the way deleting it would — its action-plan
+    // follow-up rows (only ever created after a QC failure that's now being wiped away) need to
+    // go explicitly.
+    await prisma.glassActionItem.deleteMany({ where: { glassPurchaseOrder: { projectId } } });
+  }
 }
 
 /**
@@ -398,6 +473,13 @@ async function clearProjectOutputs(projectId: string, stepCodes: string[]) {
  * destroy records the user never asked to discard. The two callers handle that gap differently:
  * revertStep clears that data up front once the user has consented, while syncDerivedStepStatus
  * is already re-deriving each of 2A/2D1/2F in turn.
+ *
+ * 3A/3B are swept up here like any other non-derived step (neither is in DERIVED_STEP_CODES —
+ * see syncGlassPOStepStatus for why), so this also clears their glass_purchase_orders fields via
+ * clearProjectOutputs — otherwise a downgrade reached through syncDerivedStepStatus (e.g. 2F
+ * un-completing because a QC checkbox got unchecked) would reset their status here but leave the
+ * underlying glass PO data sitting there unrecorded-but-still-present, ready to fight the status
+ * back to completed the next time that row is edited.
  */
 async function cascadeRevertLaterSteps(
   projectId: string,
@@ -444,7 +526,9 @@ async function cascadeRevertLaterSteps(
     ),
   ]);
 
-  return toRevert.map((s) => s.stepCode);
+  const revertedCodes = toRevert.map((s) => s.stepCode);
+  await clearProjectOutputs(projectId, revertedCodes);
+  return revertedCodes;
 }
 
 /**
@@ -572,6 +656,114 @@ export async function syncDerivedStepStatus(
   await refreshProjectOverallStatus(projectId);
 }
 
+/**
+ * Keeps 3A ("Glass PO: requirement, quote, payment") and 3B ("Glass delivery") in sync with the
+ * glass_purchase_orders row that now drives both — same spirit as syncDerivedStepStatus above,
+ * but deliberately a separate, smaller function rather than a third branch there: that one is
+ * shaped around procurement_items' 3-items-per-project, multi-stage lifecycle
+ * (PROCUREMENT_LIFECYCLE, DERIVED_STEP_STAGE), none of which fits a single glass-PO row. Kept out
+ * of DERIVED_STEP_CODES for the same reason — that set feeds planStepRevert's procurement-reset
+ * math (fromStage/DERIVED_STEP_STAGE), which is hard-wired to the section/hardware/gasket chain;
+ * folding either in there would make reverting it alone wipe out unrelated procurement data.
+ * Instead 3A/3B revert as ordinary steps (see STEP_PROJECT_OUTPUTS above), and this function is
+ * what re-derives their status afterward once the glass PO row is cleared.
+ *
+ * Unlike syncDerivedStepStatus, this always writes the current dates onto each step (not just
+ * once, the first time progress is made) — a correction in the glass PO tracker has to show up
+ * here too, not just the initial value. 3A tracks "Requirement created" (start) / "Order
+ * confirmed" (end), same as always. 3B tracks only "Actual arrival" — there's no separate start
+ * to it, just a planned date and an actual one (and unlike 3A, that planned date does get written
+ * onto the step — see syncOneGlassPODerivedStep's newPlannedEnd). 3B has no Start/Mark complete
+ * CTA either — see GLASS_PO_STEP_CODES in TaskCard.tsx.
+ */
+export async function syncGlassPOStepStatus(projectId: string, actorId: string) {
+  const glassPO = await prisma.glassPurchaseOrder.findUnique({ where: { projectId } });
+  if (!glassPO) return;
+
+  await syncOneGlassPODerivedStep(projectId, "3A", actorId, {
+    complete: glassPO.orderConfirmedAt !== null,
+    anyProgress: glassPO.requirementCreatedAt !== null,
+    newStart: glassPO.requirementCreatedAt,
+    newEnd: glassPO.orderConfirmedAt,
+  });
+
+  await syncOneGlassPODerivedStep(projectId, "3B", actorId, {
+    complete: glassPO.actualArrivalDate !== null,
+    anyProgress: glassPO.arrivalPlannedDate !== null,
+    newStart: null,
+    newEnd: glassPO.actualArrivalDate,
+    newPlannedEnd: glassPO.arrivalPlannedDate,
+  });
+}
+
+async function syncOneGlassPODerivedStep(
+  projectId: string,
+  stepCode: "3A" | "3B",
+  actorId: string,
+  derived: {
+    complete: boolean;
+    anyProgress: boolean;
+    newStart: Date | null;
+    newEnd: Date | null;
+    /** Omitted (3A's case) = this step's planned_end_date is left alone entirely — Phase 3 stays
+     *  unplanned by default (see rescheduleProjectDates's phase_3 exclusion). */
+    newPlannedEnd?: Date | null;
+  }
+) {
+  const step = await prisma.phaseStep.findFirst({ where: { projectId, stepCode } });
+  if (!step) return;
+
+  const { complete, anyProgress, newStart, newEnd, newPlannedEnd } = derived;
+  const newStatus: StepStatus = complete ? "completed" : anyProgress ? "in_progress" : "not_started";
+
+  const statusChanged = newStatus !== step.status;
+  const startChanged = (newStart?.getTime() ?? null) !== (step.actualStartDate?.getTime() ?? null);
+  const endChanged = (newEnd?.getTime() ?? null) !== (step.actualEndDate?.getTime() ?? null);
+  const plannedEndChanged =
+    newPlannedEnd !== undefined && (newPlannedEnd?.getTime() ?? null) !== (step.plannedEndDate?.getTime() ?? null);
+  if (!statusChanged && !startChanged && !endChanged && !plannedEndChanged) return;
+
+  const isDowngrade = STATUS_RANK[newStatus] < STATUS_RANK[step.status];
+
+  await prisma.phaseStep.update({
+    where: { id: step.id },
+    data: {
+      status: newStatus,
+      blockedReason: null,
+      blockedNote: null,
+      actualStartDate: newStart,
+      actualEndDate: newEnd,
+      ...(newPlannedEnd !== undefined ? { plannedEndDate: newPlannedEnd } : {}),
+    },
+  });
+
+  if (statusChanged) {
+    await prisma.stepStatusLog.create({
+      data: {
+        phaseStepId: step.id,
+        changedByUserId: actorId,
+        oldStatus: step.status,
+        newStatus,
+        reason: isDowngrade
+          ? "Auto-derived from the glass PO tracker — reverted as its data was cleared"
+          : "Auto-derived from the glass PO tracker",
+      },
+    });
+  }
+
+  if (isDowngrade) {
+    await cascadeRevertLaterSteps(
+      projectId,
+      stepCode,
+      actorId,
+      `Reverted with upstream ${stepCode} (glass PO data cleared)`
+    );
+  }
+
+  await recomputeProjectPhase(projectId);
+  await refreshProjectOverallStatus(projectId);
+}
+
 export async function updateStepStatus(
   stepId: string,
   newStatus: StepStatus,
@@ -588,6 +780,14 @@ export async function updateStepStatus(
     throw new StepActionError(
       400,
       `${step.stepCode}'s status is derived from procurement_items and can't be set manually`
+    );
+  }
+
+  // Deliberately not folded into DERIVED_STEP_CODES — see syncGlassPOStepStatus for why.
+  if (step.stepCode === "3A" || step.stepCode === "3B") {
+    throw new StepActionError(
+      400,
+      `${step.stepCode}'s status is derived from the glass PO tracker and can't be set manually`
     );
   }
 
@@ -1006,11 +1206,20 @@ export async function revertStep(
   );
 
   // Data these steps wrote onto the project itself goes with them, same as their own rows.
-  await clearProjectOutputs(projectId, [
-    plan.step.stepCode,
-    ...cascaded,
-    ...(plan.procurementReset?.stepCodes ?? []),
-  ]);
+  // `cascaded` already had its own outputs cleared inside cascadeRevertLaterSteps — this only
+  // needs to cover the revert target itself and whatever procurementReset separately reset.
+  await clearProjectOutputs(projectId, [plan.step.stepCode, ...(plan.procurementReset?.stepCodes ?? [])]);
+
+  // Neither 3A nor 3B is derived in the DERIVED_STEP_CODES sense (see syncGlassPOStepStatus for
+  // why), so when either is the direct target the block above just gave it a plain manual-step
+  // revert (status -> in_progress, dates left as they were) — this corrects that to whatever the
+  // now-cleared glass PO row actually implies (not_started). A no-op when they only appear via
+  // `cascaded`, since cascadeRevertLaterSteps already wrote the correct not_started status and
+  // cleared dates for that case directly.
+  const revertedStepCodes = [plan.step.stepCode, ...cascaded];
+  if (revertedStepCodes.includes("3A") || revertedStepCodes.includes("3B")) {
+    await syncGlassPOStepStatus(projectId, actorId);
+  }
 
   await recomputeProjectPhase(projectId);
   await rescheduleProjectDates(projectId);

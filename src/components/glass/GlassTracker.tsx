@@ -3,46 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSyncedDraft } from "@/hooks/useSyncedDraft";
-import { DELAY_CATEGORY_LABELS, DEPARTMENT_LABELS, ASSIGNABLE_DEPARTMENTS } from "@/lib/labels";
+import { DEPARTMENT_LABELS, ASSIGNABLE_DEPARTMENTS } from "@/lib/labels";
 import type { Department } from "@prisma/client";
-
-// Matches the chart-series-1/2/3 mapping used for these item types elsewhere on the dashboard.
-const ITEM_TYPE_WRAP: Record<string, string> = {
-  section:
-    "bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-400 dark:ring-indigo-500/25",
-  hardware:
-    "bg-teal-50 text-teal-700 ring-1 ring-inset ring-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:ring-teal-500/25",
-  gasket:
-    "bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25",
-};
-
-function ItemTypeIcon({ itemType, className }: { itemType: string; className?: string }) {
-  const common = { viewBox: "0 0 24 24", fill: "none", strokeWidth: 1.8, className };
-  if (itemType === "hardware") {
-    return (
-      <svg {...common}>
-        <path
-          d="M14.5 6.5a3.5 3.5 0 0 0-4.6 4.6L4 17v3h3l5.9-5.9a3.5 3.5 0 0 0 4.6-4.6l-2.3 2.3-2-2 2.3-2.3Z"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    );
-  }
-  if (itemType === "gasket") {
-    return (
-      <svg {...common}>
-        <circle cx="12" cy="12" r="8" />
-        <circle cx="12" cy="12" r="3.5" />
-      </svg>
-    );
-  }
-  return (
-    <svg {...common}>
-      <path d="M4 6a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6Z" strokeLinejoin="round" />
-    </svg>
-  );
-}
 
 function CheckIcon({ className }: { className?: string }) {
   return (
@@ -69,18 +31,45 @@ function XIcon({ className }: { className?: string }) {
   );
 }
 
-interface StageData {
+// Some browsers only open the native calendar when the small icon is clicked, not the rest of
+// the field — showPicker() makes the whole input open it on any click. Same helper as
+// ProcurementTracker's — small enough, and self-contained, to duplicate rather than share.
+function openPicker(e: React.MouseEvent<HTMLInputElement>) {
+  const input = e.currentTarget;
+  if (typeof input.showPicker === "function") {
+    try {
+      input.showPicker();
+    } catch {
+      // no-op: unsupported in this browser, or not triggered by a direct user gesture
+    }
+  }
+}
+
+function toDateInputValue(iso: string | null): string {
+  if (!iso) return "";
+  return iso.slice(0, 10);
+}
+
+function formatDate(iso: string | null): string {
+  if (!iso) return "—";
+  return new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" }).format(
+    new Date(iso)
+  );
+}
+
+export interface GlassStageData {
   id: string;
   label: string;
   dateField: string;
   noteField: string;
-  plannedDate: string | null;
-  /** PATCH body key for this stage's manual Planned-date override, or null when the Planned
-   *  column stays system-computed and un-editable (Action plan, custom rows). */
-  plannedDateField: string | null;
   actualDate: string | null;
   note: string | null;
-  overrun: boolean;
+  /** Plain freeform date, filled in by hand — there's no computed forecast for these to sit on
+   *  top of (see GlassPurchaseOrder in schema.prisma), unlike the procurement tracker's Planned
+   *  column. Null (and un-editable) for the Action plan row, which stays system-computed off
+   *  qc_checked_at, and for custom rows, fixed at creation — same as the procurement tracker. */
+  plannedDate: string | null;
+  plannedDateField: string | null;
   /** Which department owns this row — shown as a tag, same label set the step cards use. */
   department: Department;
   /** Design Engineer (2A's owner) can edit this row even without full Purchase access. */
@@ -96,7 +85,7 @@ interface StageData {
   qcPassed: boolean | null;
 }
 
-interface ActionItemData {
+interface GlassActionItemData {
   id: string;
   taskLabel: string;
   /** Chosen by whoever added the row — see the department select in AddActionItemRow. */
@@ -107,50 +96,6 @@ interface ActionItemData {
   plannedDate: string;
   actualDate: string | null;
   note: string | null;
-  overrun: boolean;
-}
-
-interface ProcurementItemData {
-  id: string;
-  itemType: string;
-  stages: StageData[];
-  /** Set once this item has been restarted after a QC failure — its own planned-date anchor
-   *  instead of the project's default. */
-  planAnchorOverride: string | null;
-  /** Set when a step upstream of 2A (e.g. 1B) completed late with a delay_category — explains
-   *  why this item's planned dates trace back to that anchor. Null for a restarted item, since
-   *  its own planAnchorOverride makes it independent of the project's shared chain. */
-  upstreamDelay: { stepCode: string; category: string } | null;
-  /** Whether the "+ Add row" CTA should show at all — mirrors the /action-items route's own
-   *  server-side check (failed QC + a recorded action plan), so the button never appears only
-   *  to fail on click. */
-  canAddActionItem: boolean;
-  actionItems: ActionItemData[];
-}
-
-function toDateInputValue(iso: string | null): string {
-  if (!iso) return "";
-  return iso.slice(0, 10);
-}
-
-function formatDate(iso: string | null): string {
-  if (!iso) return "—";
-  return new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" }).format(
-    new Date(iso)
-  );
-}
-
-// Some browsers only open the native calendar when the small icon is clicked, not the rest of
-// the field — showPicker() makes the whole input open it on any click.
-function openPicker(e: React.MouseEvent<HTMLInputElement>) {
-  const input = e.currentTarget;
-  if (typeof input.showPicker === "function") {
-    try {
-      input.showPicker();
-    } catch {
-      // no-op: unsupported in this browser, or not triggered by a direct user gesture
-    }
-  }
 }
 
 function StageRow({
@@ -159,17 +104,12 @@ function StageRow({
   editable,
   onSaved,
 }: {
-  /** Full PATCH URL for this row — /api/procurement-items/:id for a fixed stage,
-   *  /api/procurement-action-items/:id for a custom one. */
   endpoint: string;
-  stage: StageData;
+  stage: GlassStageData;
   editable: boolean;
   onSaved: () => void;
 }) {
   const isDone = stage.actualDate !== null;
-  // useSyncedDraft resyncs these when a sibling row's save triggers router.refresh() and this
-  // row's own server data changes underneath it — a plain useState would only ever seed from
-  // the very first render.
   const [dateDraft, setDateDraft] = useSyncedDraft(stage.actualDate, toDateInputValue);
   const [noteDraft, setNoteDraft] = useSyncedDraft(stage.note, (v) => v ?? "");
   const [saving, setSaving] = useState<"date" | "note" | null>(null);
@@ -178,34 +118,18 @@ function StageRow({
   const [savingPlanned, setSavingPlanned] = useState(false);
   const [plannedError, setPlannedError] = useState<string | null>(null);
 
-  // Editing an already-done row's date to a *different*, non-empty value is a correction, not
-  // a live edit — it un-does the "Done" badge and brings back the completion button(s), same
-  // as a not-yet-done row, and always needs a reason regardless of lateness (a correction to a
-  // settled record should always be explained). Clearing the field back to empty is treated
-  // separately, as an immediate revert — see handleDateInputChange.
+  // Editing an already-done row's date to a *different*, non-empty value is a correction, not a
+  // live edit — brings back the completion button and always needs a reason, same rule as the
+  // procurement tracker's stages. There's no "late" concept here (Planned is a plain manual
+  // field, not a forecast to compare against), so a correction is the only thing that ever
+  // requires a note on the fixed stages — the action plan and QC fail are the exceptions below.
   const isCorrection = isDone && dateDraft !== "" && dateDraft !== toDateInputValue(stage.actualDate);
   const showsCompletionAction = !isDone || isCorrection;
-
-  // What actually gets saved if "Mark complete" is clicked right now — the chosen date, or
-  // today if none was picked (see handleMarkComplete). Comparing against that, rather than
-  // just today's date, is what lets a deliberately-backdated late entry still require a
-  // reason even though the field wasn't left empty.
-  const effectiveActualDate = dateDraft || toDateInputValue(new Date().toISOString());
-  const plannedDateValue = toDateInputValue(stage.plannedDate);
-  const isLate = plannedDateValue !== "" && effectiveActualDate > plannedDateValue;
-  // Row-level highlight, deliberately based on the saved actual date rather than isLate's
-  // live draft — so the whole row doesn't flash rose mid-edit before anything's submitted.
-  // Same rose used for a step's own late completion on its TaskCard.
-  const isSavedLate = stage.actualDate !== null && stage.plannedDate !== null && stage.actualDate > stage.plannedDate;
   const isActionPlan = stage.id === "actionPlan";
-  // The action plan's note is mandatory unconditionally, unlike every other stage where it's
-  // only required when correcting a settled row or completing late — folding it into
-  // needsReason here means the button-disabled and placeholder logic below need no changes.
-  const needsReason = (isCorrection || isLate || isActionPlan) && !noteDraft.trim();
+  const needsReason = (isCorrection || isActionPlan) && !noteDraft.trim();
   // The fixed qc stage, or a custom row opted into the same Pass/Fail treatment at creation.
   const isQC = stage.id === "qc" || !!stage.isPassFail;
-  // A QC failure always needs a note explaining it, whether or not the date itself is late —
-  // a stricter, unconditional version of needsReason that applies only to the Fail action.
+  // A QC failure always needs a note explaining it, whether or not it's a correction.
   const failNeedsNote = isQC && !noteDraft.trim();
 
   async function patch(body: Record<string, unknown>, field: "date" | "note") {
@@ -231,12 +155,9 @@ function StageRow({
     }
   }
 
-  // Saves immediately on change rather than waiting for a separate confirm step — there's no
-  // spare column here for one, and a native date input's onChange only fires on a deliberate
-  // pick, not per keystroke. Clearing it back to empty removes the override the same way
-  // clearing an Actual date reverts it: immediately, no confirmation needed. Every stage after
-  // this one re-anchors from the new value (see computeProcurementPlannedDates) the moment the
-  // page refreshes, since their own Planned columns are recomputed server-side from it.
+  // Saves immediately on change, same as the procurement tracker's Planned column — no separate
+  // confirm step, and every later row re-reads this from the server the moment the page
+  // refreshes. Clearing it back to empty removes the value the same way clearing Actual does.
   async function handlePlannedChange(value: string) {
     setPlannedDraft(value);
     if (!stage.plannedDateField) return;
@@ -262,9 +183,6 @@ function StageRow({
     }
   }
 
-  // Bundles the note into every completion/correction submit rather than relying on a prior
-  // blur having already saved it — needed now that a note can be mandatory (a correction, or
-  // a QC fail) right at the moment this button is clicked.
   function handleMarkComplete() {
     const value = dateDraft || toDateInputValue(new Date().toISOString());
     setDateDraft(value);
@@ -277,22 +195,13 @@ function StageRow({
     const value = dateDraft || toDateInputValue(new Date().toISOString());
     setDateDraft(value);
     patch(
-      {
-        [stage.dateField]: new Date(value).toISOString(),
-        qcPassed: passed,
-        [stage.noteField]: noteDraft.trim() || null,
-      },
+      { [stage.dateField]: new Date(value).toISOString(), qcPassed: passed, [stage.noteField]: noteDraft.trim() || null },
       "date"
     );
   }
 
   function handleDateInputChange(value: string) {
     setDateDraft(value);
-    // Clearing an already-done row's date is treated as an immediate revert — no confirm step,
-    // no reason needed, same as "undo" anywhere else in this app. Changing it to a *different*
-    // date instead is a correction: it just updates the draft here: isCorrection then brings
-    // back the completion button(s), which is what actually submits it (see handleMarkComplete/
-    // handleQCOutcome), with a reason required first.
     if (isDone && !value) {
       patch({ [stage.dateField]: null }, "date");
     }
@@ -305,7 +214,7 @@ function StageRow({
   }
 
   return (
-    <tr className={`border-t border-edge ${isSavedLate ? "bg-rose-500/10 dark:bg-rose-500/[0.08]" : ""}`}>
+    <tr className="border-t border-edge">
       <td className="whitespace-nowrap px-3 py-2.5">
         <div className="flex items-center gap-2">
           <span
@@ -314,7 +223,7 @@ function StageRow({
                 ? stage.qcPassed === false
                   ? "bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400"
                   : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
-                : isCorrection || stage.overrun
+                : isCorrection
                   ? "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
                   : "bg-overlay text-fg-subtle"
             }`}
@@ -337,32 +246,19 @@ function StageRow({
       </td>
 
       <td className="whitespace-nowrap px-3 py-2.5">
-        <div className="flex items-center gap-1.5">
-          <input
-            type="date"
-            value={plannedDraft}
-            disabled={!editable || !stage.plannedDateField || savingPlanned}
-            onChange={(e) => handlePlannedChange(e.target.value)}
-            onClick={openPicker}
-            title={
-              stage.plannedDateField
-                ? editable
-                  ? "Edit the planned date — every later stage shifts to match"
-                  : "Planned"
-                : "Planned — system-computed, not editable"
-            }
-            className={`h-9 w-[9.5rem] rounded-lg border px-2 text-sm outline-none disabled:opacity-80 ${
-              editable && stage.plannedDateField
-                ? "border-edge bg-bg text-fg focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-50"
-                : "border-edge bg-overlay text-fg-muted"
-            }`}
-          />
-          {!isDone && stage.overrun && (
-            <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-inset ring-amber-500/25 dark:text-amber-400">
-              Overdue
-            </span>
-          )}
-        </div>
+        <input
+          type="date"
+          value={plannedDraft}
+          disabled={!editable || !stage.plannedDateField || savingPlanned}
+          onChange={(e) => handlePlannedChange(e.target.value)}
+          onClick={openPicker}
+          title={stage.plannedDateField ? "Filled in by hand — nothing computes this" : "Planned — not editable"}
+          className={`h-9 w-[9.5rem] rounded-lg border px-2 text-sm outline-none disabled:opacity-80 ${
+            editable && stage.plannedDateField
+              ? "border-edge bg-bg text-fg focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-50"
+              : "border-edge bg-overlay text-fg-muted"
+          }`}
+        />
         {plannedError && <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">{plannedError}</p>}
       </td>
 
@@ -392,9 +288,7 @@ function StageRow({
                   ? "Note (required if it fails)"
                   : isActionPlan
                     ? "Note (required)"
-                    : needsReason
-                      ? "Reason required — this date is after planned"
-                      : "Reason (if delayed) or note"
+                    : "Note (optional)"
             }
             value={noteDraft}
             disabled={saving === "note"}
@@ -479,17 +373,10 @@ function StageRow({
   );
 }
 
-/** The "+ Add row" CTA after the action plan row, and the inline task/planned-date form it
- *  opens into. Only ever rendered when the item both failed QC and has its action plan marked
- *  (see ProcurementItemData.canAddActionItem) — can be clicked as many times as needed, each
- *  one creating one more open-ended follow-up row via POST /action-items. */
-function AddActionItemRow({
-  procurementItemId,
-  onSaved,
-}: {
-  procurementItemId: string;
-  onSaved: () => void;
-}) {
+/** The "+ Add row" CTA after the action plan row, and the inline task/planned-date form it opens
+ *  into. Only ever rendered once the glass PO both failed QC and has its action plan marked (see
+ *  canAddActionItem) — mirrors ProcurementTracker's AddActionItemRow exactly. */
+function AddActionItemRow({ glassPurchaseOrderId, onSaved }: { glassPurchaseOrderId: string; onSaved: () => void }) {
   const [adding, setAdding] = useState(false);
   const [taskDraft, setTaskDraft] = useState("");
   const [departmentDraft, setDepartmentDraft] = useState("");
@@ -515,7 +402,7 @@ function AddActionItemRow({
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/procurement-items/${procurementItemId}/action-items`, {
+      const res = await fetch(`/api/glass-purchase-orders/${glassPurchaseOrderId}/action-items`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -631,156 +518,100 @@ function AddActionItemRow({
   );
 }
 
-function ItemTable({
-  item,
+/**
+ * The 3A ("Glass PO") tracker table — Requirement created / Quote created / Payment done /
+ * Order confirmed / Actual arrival / QC checked, each an actual date + note filled in by hand,
+ * plus a plain manual Planned date column (no computed forecast — see GlassPurchaseOrder in
+ * schema.prisma). Sits alongside 3A's own TaskCard rather than replacing it. Once QC fails, an
+ * Action plan row and a "+ Add row" CTA for custom follow-up tasks appear, mirroring the
+ * procurement tracker's own QC-failure flow exactly.
+ */
+export function GlassTracker({
+  id,
+  stages,
   canEdit,
   canEditRequirement,
   canEditPayment,
+  canAddActionItem,
+  actionItems,
 }: {
-  item: ProcurementItemData;
-  canEdit: boolean;
-  canEditRequirement: boolean;
-  canEditPayment: boolean;
-}) {
-  const router = useRouter();
-
-  // Excludes "action plan" — the header count refers to the fixed lifecycle only, and folding
-  // in a conditionally-shown stage would make it wrong. The denominator itself is derived from
-  // the fixed stages actually present rather than hardcoded, since Section carries 8 and
-  // hardware/gasket carry 6.
-  const fixedStages = item.stages.filter((s) => s.id !== "actionPlan");
-  const doneCount = fixedStages.filter((s) => s.actualDate !== null).length;
-
-  return (
-    <div
-      className={`flex flex-col gap-3 rounded-xl border p-4 ${
-        item.upstreamDelay
-          ? "border-cyan-500/50 bg-cyan-500/5 dark:border-cyan-500/40 dark:bg-cyan-500/[0.04]"
-          : "border-edge bg-surface"
-      }`}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2.5">
-          <span
-            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${ITEM_TYPE_WRAP[item.itemType] ?? "bg-overlay text-fg-muted"}`}
-          >
-            <ItemTypeIcon itemType={item.itemType} className="h-5 w-5 stroke-current" />
-          </span>
-          <span className="font-medium capitalize text-fg">{item.itemType}</span>
-          {item.planAnchorOverride && (
-            <span
-              className="rounded-full bg-overlay px-2 py-0.5 text-[11px] font-medium text-fg-muted ring-1 ring-inset ring-edge"
-              title="This item was restarted after a QC failure and now plans off its own date instead of the project default"
-            >
-              Restarted · planned from {formatDate(item.planAnchorOverride)}
-            </span>
-          )}
-        </div>
-        <span className="text-xs font-medium text-fg-subtle">
-          {doneCount} / {fixedStages.length} done
-        </span>
-      </div>
-
-      {item.upstreamDelay && (
-        <div className="text-xs text-fg-subtle">
-          {DELAY_CATEGORY_LABELS[item.upstreamDelay.category as keyof typeof DELAY_CATEGORY_LABELS]} on{" "}
-          {item.upstreamDelay.stepCode} —{" "}
-          {item.upstreamDelay.category === "in_house"
-            ? "these planned dates weren't pushed out"
-            : "these planned dates shifted to match"}
-        </div>
-      )}
-
-      <div className="overflow-x-auto rounded-lg border border-edge">
-        <table className="w-full border-collapse text-left">
-          <thead>
-            <tr className="bg-overlay text-[11px] font-semibold uppercase tracking-wider text-fg-subtle">
-              <th className="whitespace-nowrap px-3 py-2 font-semibold">Task</th>
-              <th className="whitespace-nowrap px-3 py-2 font-semibold">Planned</th>
-              <th className="whitespace-nowrap px-3 py-2 font-semibold">Actual</th>
-              <th className="px-3 py-2 font-semibold">Reason / note</th>
-              <th className="whitespace-nowrap px-3 py-2 font-semibold">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {item.stages.map((stage) => (
-              <StageRow
-                key={stage.id}
-                endpoint={`/api/procurement-items/${item.id}`}
-                stage={stage}
-                editable={
-                  stage.requirementGated
-                    ? canEdit || canEditRequirement
-                    : stage.paymentGated
-                      ? canEdit || canEditPayment
-                      : canEdit
-                }
-                onSaved={() => router.refresh()}
-              />
-            ))}
-            {item.actionItems.map((actionItem) => (
-              <StageRow
-                key={actionItem.id}
-                endpoint={`/api/procurement-action-items/${actionItem.id}`}
-                stage={{
-                  id: actionItem.id,
-                  label: actionItem.taskLabel,
-                  dateField: "actualDate",
-                  noteField: "note",
-                  plannedDate: actionItem.plannedDate,
-                  plannedDateField: null,
-                  actualDate: actionItem.actualDate,
-                  note: actionItem.note,
-                  overrun: actionItem.overrun,
-                  department: actionItem.department,
-                  isPassFail: actionItem.isPassFail,
-                  requirementGated: false,
-                  paymentGated: false,
-                  qcPassed: actionItem.qcPassed,
-                }}
-                editable={canEdit}
-                onSaved={() => router.refresh()}
-              />
-            ))}
-            {canEdit && item.canAddActionItem && (
-              <AddActionItemRow procurementItemId={item.id} onSaved={() => router.refresh()} />
-            )}
-          </tbody>
-        </table>
-      </div>
-
-    </div>
-  );
-}
-
-export function ProcurementTracker({
-  items,
-  canEdit,
-  canEditRequirement,
-  canEditPayment,
-}: {
-  items: ProcurementItemData[];
+  id: string;
+  stages: GlassStageData[];
   canEdit: boolean;
   /** Design Engineer (2A's owner) can edit the "Requirement created" row even without full Purchase access. */
   canEditRequirement: boolean;
   /** Accounts can edit the "Payment done" row even without full Purchase access. */
   canEditPayment: boolean;
+  /** Whether the "+ Add row" CTA should show at all — mirrors the /action-items route's own
+   *  server-side check (failed QC + a recorded action plan), so the button never appears only to
+   *  fail on click. */
+  canAddActionItem: boolean;
+  actionItems: GlassActionItemData[];
 }) {
-  if (items.length === 0) return null;
+  const router = useRouter();
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="text-lg font-semibold text-fg">Procurement</h2>
+      <h2 className="text-lg font-semibold text-fg">Glass PO</h2>
       <div className="flex flex-col gap-4">
-        {items.map((item) => (
-          <ItemTable
-            key={item.id}
-            item={item}
-            canEdit={canEdit}
-            canEditRequirement={canEditRequirement}
-            canEditPayment={canEditPayment}
-          />
-        ))}
+        <div className="flex flex-col gap-3 rounded-xl border border-edge bg-surface p-4">
+          <div className="overflow-x-auto rounded-lg border border-edge">
+            <table className="w-full border-collapse text-left">
+              <thead>
+                <tr className="bg-overlay text-[11px] font-semibold uppercase tracking-wider text-fg-subtle">
+                  <th className="whitespace-nowrap px-3 py-2 font-semibold">Task</th>
+                  <th className="whitespace-nowrap px-3 py-2 font-semibold">Planned</th>
+                  <th className="whitespace-nowrap px-3 py-2 font-semibold">Actual</th>
+                  <th className="px-3 py-2 font-semibold">Reason / note</th>
+                  <th className="whitespace-nowrap px-3 py-2 font-semibold">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stages.map((stage) => (
+                  <StageRow
+                    key={stage.id}
+                    endpoint={`/api/glass-purchase-orders/${id}`}
+                    stage={stage}
+                    editable={
+                      stage.requirementGated
+                        ? canEdit || canEditRequirement
+                        : stage.paymentGated
+                          ? canEdit || canEditPayment
+                          : canEdit
+                    }
+                    onSaved={() => router.refresh()}
+                  />
+                ))}
+                {actionItems.map((actionItem) => (
+                  <StageRow
+                    key={actionItem.id}
+                    endpoint={`/api/glass-action-items/${actionItem.id}`}
+                    stage={{
+                      id: actionItem.id,
+                      label: actionItem.taskLabel,
+                      dateField: "actualDate",
+                      noteField: "note",
+                      plannedDate: actionItem.plannedDate,
+                      plannedDateField: null,
+                      actualDate: actionItem.actualDate,
+                      note: actionItem.note,
+                      department: actionItem.department,
+                      isPassFail: actionItem.isPassFail,
+                      requirementGated: false,
+                      paymentGated: false,
+                      qcPassed: actionItem.qcPassed,
+                    }}
+                    editable={canEdit}
+                    onSaved={() => router.refresh()}
+                  />
+                ))}
+                {canEdit && canAddActionItem && (
+                  <AddActionItemRow glassPurchaseOrderId={id} onSaved={() => router.refresh()} />
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
   );

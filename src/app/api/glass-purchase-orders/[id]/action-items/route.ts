@@ -12,14 +12,11 @@ const createSchema = z.object({
 });
 
 /**
- * Adds one custom follow-up task under an item's action plan — only reachable once that item
- * has actually failed QC and its action plan is marked (mirrors the "Add row" CTA's own
- * visibility in ProcurementTracker). Unlike every fixed stage above it, there's no cap on how
- * many of these an item can have; each is its own row, added one at a time. Department is
- * chosen by whoever adds the row (any of ASSIGNABLE_DEPARTMENTS) — independent of whichever
- * department owns the item's fixed stages, since a QC-failure follow-up can land anywhere.
- * isPassFail opts the row into the "qc" stage's Pass/Fail button pair instead of a single Mark
- * complete — some follow-ups (e.g. a re-inspection) are themselves a pass/fail check.
+ * Adds one custom follow-up task under the glass PO's action plan — only reachable once it has
+ * actually failed QC and its action plan is marked (mirrors the "Add row" CTA's own visibility in
+ * GlassTracker). Mirrors /api/procurement-items/[id]/action-items exactly, just scoped to
+ * GlassPurchaseOrder/GlassActionItem — including the freely-chosen department and the Pass/Fail
+ * opt-in.
  */
 export async function POST(
   request: NextRequest,
@@ -36,13 +33,13 @@ export async function POST(
   }
 
   const { id } = await params;
-  const item = await prisma.procurementItem.findUnique({ where: { id } });
-  if (!item) {
-    return NextResponse.json({ error: "Procurement item not found" }, { status: 404 });
+  const glassPO = await prisma.glassPurchaseOrder.findUnique({ where: { id } });
+  if (!glassPO) {
+    return NextResponse.json({ error: "Glass purchase order not found" }, { status: 404 });
   }
-  if (item.qcPassed !== false || !item.actionPlanAt) {
+  if (glassPO.qcPassed !== false || !glassPO.actionPlanAt) {
     return NextResponse.json(
-      { error: "This item needs a failed QC check and a recorded action plan before rows can be added" },
+      { error: "This needs a failed QC check and a recorded action plan before rows can be added" },
       { status: 400 }
     );
   }
@@ -53,9 +50,9 @@ export async function POST(
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const actionItem = await prisma.procurementActionItem.create({
+  const actionItem = await prisma.glassActionItem.create({
     data: {
-      procurementItemId: id,
+      glassPurchaseOrderId: id,
       taskLabel: parsed.data.taskLabel,
       department: parsed.data.department,
       isPassFail: parsed.data.isPassFail,
