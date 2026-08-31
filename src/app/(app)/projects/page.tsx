@@ -5,11 +5,13 @@ import { ProjectFilters } from "@/components/projects/ProjectFilters";
 import { DeleteProjectButton } from "@/components/projects/DeleteProjectButton";
 import { getEffectiveOverallStatus, projectHasOverrun, type EffectiveOverallStatus } from "@/lib/overrun";
 import { buildAllStepCodes } from "@/lib/step-template";
+import { getProjectActiveDepartments } from "@/lib/project-filters";
 import {
   PHASE_LABELS,
   OVERALL_STATUS_LABELS,
   OVERALL_STATUS_COLORS,
   PAYMENT_STATUS_LABELS,
+  DEPARTMENT_LABELS,
 } from "@/lib/labels";
 import type { Department, PaymentStatus, ProjectPhase } from "@prisma/client";
 
@@ -23,12 +25,44 @@ const STEP_NAME_BY_CODE = new Map(buildAllStepCodes().map((s) => [s.stepCode, s.
  * than current_phase.
  */
 function getCurrentStep(
-  steps: { stepCode: string; stepName: string; status: string }[]
-): { stepCode: string; stepName: string } | null {
+  steps: {
+    stepCode: string;
+    stepName: string;
+    status: string;
+    owningDepartment: Department;
+    secondaryDepartment: Department | null;
+  }[]
+): {
+  stepCode: string;
+  stepName: string;
+  owningDepartment: Department;
+  secondaryDepartment: Department | null;
+} | null {
   const open = steps
     .filter((s) => s.status !== "completed")
     .sort((a, b) => a.stepCode.localeCompare(b.stepCode));
   return open[0] ?? null;
+}
+
+/** Small pill per department currently active on a project (see getProjectActiveDepartments) —
+ *  "—" once nothing is (project fully wrapped up, payments included). Shared between the mobile
+ *  card and desktop table layouts below. */
+function DepartmentBadges({ departments }: { departments: Set<Department> }) {
+  if (departments.size === 0) {
+    return <span className="text-fg-subtle">—</span>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {Array.from(departments).map((d) => (
+        <span
+          key={d}
+          className="rounded-full bg-overlay px-2 py-0.5 text-[11px] font-medium text-fg-muted ring-1 ring-inset ring-edge"
+        >
+          {DEPARTMENT_LABELS[d]}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 function formatINR(amount: number): string {
@@ -48,7 +82,7 @@ function daysAgo(n: number): Date {
 const ACTIVE_FILTER_LABEL: Record<string, (value: string) => string> = {
   phase: (v) => `Phase: ${PHASE_LABELS[v as ProjectPhase] ?? v}`,
   status: (v) => `Status: ${OVERALL_STATUS_LABELS[v as EffectiveOverallStatus] ?? v}`,
-  department: (v) => `Department: ${v.replace("_", " ")}`,
+  department: (v) => `Currently with ${DEPARTMENT_LABELS[v as Department] ?? v}`,
   paymentStatus: (v) => `Payment: ${PAYMENT_STATUS_LABELS[v as PaymentStatus] ?? v}`,
   newDays: (v) => `Created in last ${v} days`,
   overdue: () => `Has an overdue step`,
@@ -82,35 +116,71 @@ export default async function ProjectsPage({
   const rawProjects = await prisma.project.findMany({
     where: {
       ...(phase ? { currentPhase: phase } : {}),
-      ...(department ? { phaseSteps: { some: { owningDepartment: department } } } : {}),
       ...(paymentStatus ? { paymentStatus } : {}),
     },
     include: {
-      phaseSteps: { select: { stepCode: true, stepName: true, plannedEndDate: true, status: true } },
-      procurementItems: { select: { expectedArrivalDate: true, actualArrivalDate: true, qcPassed: true } },
+      phaseSteps: {
+        select: {
+          stepCode: true,
+          stepName: true,
+          plannedEndDate: true,
+          status: true,
+          owningDepartment: true,
+          secondaryDepartment: true,
+        },
+      },
+      procurementItems: {
+        select: {
+          itemType: true,
+          expectedArrivalDate: true,
+          actualArrivalDate: true,
+          qcPassed: true,
+          requirementCreatedAt: true,
+          quoteCreatedAt: true,
+          paymentSettledAt: true,
+          orderConfirmedAt: true,
+          materialDespatchAt: true,
+          arrivedForPowderCoatingAt: true,
+          qcCheckedAt: true,
+        },
+      },
+      glassPurchaseOrder: {
+        select: { requirementCreatedAt: true, quoteCreatedAt: true, paymentSettledAt: true, orderConfirmedAt: true },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
 
   const newSince = newDays ? daysAgo(newDays) : undefined;
 
-  // status=delayed, status=qc_failed and overdue=1 can't be stored-column filters — none of
-  // them are event-driven (see overrun.ts) — so they're computed and applied here in JS.
+  // status=delayed, status=qc_failed, overdue=1 and department can't be stored-column filters —
+  // none of them are event-driven (see overrun.ts) or a plain field match — so they're computed
+  // and applied here in JS.
   const projects = rawProjects
-    .map((p) => ({
-      ...p,
-      effectiveStatus: getEffectiveOverallStatus(
-        p.overallStatus,
-        projectHasOverrun(p.phaseSteps, p.procurementItems),
-        p.procurementItems.some((i) => i.qcPassed === false)
-      ),
-      hasOverdue: projectHasOverrun(p.phaseSteps, p.procurementItems),
-      currentStep: getCurrentStep(p.phaseSteps),
-    }))
+    .map((p) => {
+      const currentStep = getCurrentStep(p.phaseSteps);
+      return {
+        ...p,
+        effectiveStatus: getEffectiveOverallStatus(
+          p.overallStatus,
+          projectHasOverrun(p.phaseSteps, p.procurementItems),
+          p.procurementItems.some((i) => i.qcPassed === false)
+        ),
+        hasOverdue: projectHasOverrun(p.phaseSteps, p.procurementItems),
+        currentStep,
+        activeDepartments: getProjectActiveDepartments(
+          currentStep,
+          p.currentPhase !== "phase_1",
+          p.procurementItems,
+          p.glassPurchaseOrder
+        ),
+      };
+    })
     .filter((p) => !status || p.effectiveStatus === status)
     .filter((p) => !newSince || p.createdAt >= newSince)
     .filter((p) => !overdueOnly || p.hasOverdue)
-    .filter((p) => !currentStepFilter || p.currentStep?.stepCode === currentStepFilter);
+    .filter((p) => !currentStepFilter || p.currentStep?.stepCode === currentStepFilter)
+    .filter((p) => !department || p.activeDepartments.has(department));
 
   const activeFilters = Object.entries(params).filter(([, v]) => v);
 
@@ -192,6 +262,7 @@ export default async function ProjectsPage({
                       "Completed"
                     )}
                   </div>
+                  <DepartmentBadges departments={project.activeDepartments} />
                   <div className="text-xs text-fg-subtle">Payment: {PAYMENT_STATUS_LABELS[project.paymentStatus]}</div>
                 </Link>
                 {canDelete && (
@@ -211,6 +282,7 @@ export default async function ProjectsPage({
                   <th className="px-4 py-3 font-medium">Project</th>
                   <th className="px-4 py-3 font-medium">Phase</th>
                   <th className="w-56 px-4 py-3 font-medium">Current step</th>
+                  <th className="px-4 py-3 font-medium">Department</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Payment</th>
                   <th className="px-4 py-3 font-medium text-right">Final cost</th>
@@ -238,6 +310,9 @@ export default async function ProjectsPage({
                       ) : (
                         "Completed"
                       )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <DepartmentBadges departments={project.activeDepartments} />
                     </td>
                     <td className="px-4 py-3">
                       <span
