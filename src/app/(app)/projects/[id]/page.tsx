@@ -6,6 +6,7 @@ import { getSession, isAdminEditor } from "@/lib/auth";
 import { ProcurementTracker } from "@/components/procurement/ProcurementTracker";
 import { GlassTracker, type GlassStageData } from "@/components/glass/GlassTracker";
 import { PaymentEditor } from "@/components/projects/PaymentEditor";
+import { PhaseReviewCard } from "@/components/projects/PhaseReviewCard";
 import { StepProgressBar } from "@/components/projects/StepProgressBar";
 import { TaskCard } from "@/components/my-tasks/TaskCard";
 import { getMyTasks, type MyTaskItem } from "@/lib/my-tasks";
@@ -72,12 +73,21 @@ function EditablePhaseGroup({
   items,
   insertBeforeStepCode,
   insertContent,
+  appendToBeforeGrid,
+  appendToAfterGrid,
 }: {
   phase: StepPhase;
   items: MyTaskItem[];
   /** Step code to split this phase's cards at, so e.g. Procurement can sit between 2A and 2D1. */
   insertBeforeStepCode?: string;
   insertContent?: ReactNode;
+  /** Rendered as one more card inside the "before" grid itself (not a full-width block between
+   *  grids, unlike insertContent) — so it fills whatever empty columns are left in that row on
+   *  wide screens, e.g. sitting right next to 1D instead of pushing a new row underneath it. */
+  appendToBeforeGrid?: ReactNode;
+  /** Same idea as appendToBeforeGrid, but inside the "after" grid — for a phase that also has an
+   *  insertBeforeStepCode split (e.g. sitting next to 3E, after Glass PO's own insertContent). */
+  appendToAfterGrid?: ReactNode;
 }) {
   const splitIndex = insertBeforeStepCode
     ? items.findIndex((item) => item.stepCode === insertBeforeStepCode)
@@ -93,6 +103,7 @@ function EditablePhaseGroup({
           {before.map((item) => (
             <TaskCard key={item.id} item={item} canEditDates canRevert showDepartment />
           ))}
+          {appendToBeforeGrid}
         </div>
       </div>
       {insertContent}
@@ -101,6 +112,7 @@ function EditablePhaseGroup({
           {after.map((item) => (
             <TaskCard key={item.id} item={item} canEditDates canRevert showDepartment />
           ))}
+          {appendToAfterGrid}
         </div>
       )}
     </div>
@@ -152,12 +164,17 @@ function ReadOnlyPhaseGroup({
   steps,
   insertBeforeStepCode,
   insertContent,
+  trailingContent,
 }: {
   phase: StepPhase;
   steps: PhaseStep[];
   /** Step code to split this phase's cards at, so e.g. Procurement can sit between 2A and 2D1. */
   insertBeforeStepCode?: string;
   insertContent?: ReactNode;
+  /** Rendered after everything else in this phase — read-only rows are a plain stacked list, so
+   *  unlike EditablePhaseGroup's grid-aligned appendTo*Grid there's only one sensible place for
+   *  this to go regardless of where insertContent's own split lands. */
+  trailingContent?: ReactNode;
 }) {
   const splitIndex = insertBeforeStepCode
     ? steps.findIndex((step) => step.stepCode === insertBeforeStepCode)
@@ -183,6 +200,7 @@ function ReadOnlyPhaseGroup({
           ))}
         </div>
       )}
+      {trailingContent}
     </div>
   );
 }
@@ -249,6 +267,48 @@ export default async function ProjectDetailPage({
     oneD?.plannedEndDate ?? null,
     oneD?.actualEndDate ?? null,
     oneD?.delayCategory ?? null
+  );
+
+  // Each customer review card's "Planned end date" is just a read-only mirror of its matching
+  // step's own — see PhaseReviewCard's own comment for why it doesn't store a planned date at
+  // all. sm:col-span-2 on the wrapper only does anything where the card actually lands inside an
+  // editable grid (appendToBeforeGrid/appendToAfterGrid below): 1A-1D and 3B/3C1/3C2/3E each fill
+  // 3 columns with one card alone on its own last row on xl screens, so spanning 2 uses the rest
+  // of that row instead of leaving it empty; at sm's 2 columns that same span just makes it the
+  // full width of its own row. In the read-only (non-grid) view this class has nothing to act on
+  // and is simply inert.
+  const canEditReview = !!session && isAdminEditor(session);
+  const twoA = project.phaseSteps.find((s) => s.stepCode === "2A");
+  const phase1ReviewCard = (
+    <div className="sm:col-span-2">
+      <PhaseReviewCard
+        title="Phase 1 customer review"
+        projectId={project.id}
+        plannedEndDate={twoA?.plannedEndDate?.toISOString() ?? null}
+        plannedEndDateHint="2A's own planned date (Purchase requirement) — fixed, not editable here"
+        actualEndDate={project.phase1ReviewActualEndDate?.toISOString() ?? null}
+        note={project.phase1ReviewNote}
+        canEdit={canEditReview}
+        actualEndDateField="phase1ReviewActualEndDate"
+        noteField="phase1ReviewNote"
+      />
+    </div>
+  );
+  const threeE = project.phaseSteps.find((s) => s.stepCode === "3E");
+  const phase3ReviewCard = (
+    <div className="sm:col-span-2">
+      <PhaseReviewCard
+        title="Phase 3 customer review"
+        projectId={project.id}
+        plannedEndDate={threeE?.plannedEndDate?.toISOString() ?? null}
+        plannedEndDateHint="3E's own planned date (Final QC on site) — fixed, not editable here"
+        actualEndDate={project.phase3ReviewActualEndDate?.toISOString() ?? null}
+        note={project.phase3ReviewNote}
+        canEdit={canEditReview}
+        actualEndDateField="phase3ReviewActualEndDate"
+        noteField="phase3ReviewNote"
+      />
+    </div>
   );
 
   // Procurement items sit "under" 2A rather than being phase_steps themselves, so they don't
@@ -749,6 +809,7 @@ export default async function ProjectDetailPage({
                 items={items}
                 insertBeforeStepCode={phase === "phase_2" ? MATERIALS_ARRIVED_STEP_CODE : undefined}
                 insertContent={phase === "phase_2" ? procurementTracker : undefined}
+                appendToBeforeGrid={phase === "phase_1" ? phase1ReviewCard : undefined}
               />
             ))
           : beforePhase3.map(({ phase, steps }) => (
@@ -758,6 +819,7 @@ export default async function ProjectDetailPage({
                 steps={steps}
                 insertBeforeStepCode={phase === "phase_2" ? MATERIALS_ARRIVED_STEP_CODE : undefined}
                 insertContent={phase === "phase_2" ? procurementTracker : undefined}
+                trailingContent={phase === "phase_1" ? phase1ReviewCard : undefined}
               />
             ))}
       </div>
@@ -772,6 +834,7 @@ export default async function ProjectDetailPage({
                   items={items}
                   insertBeforeStepCode="3B"
                   insertContent={glassTracker}
+                  appendToAfterGrid={phase3ReviewCard}
                 />
               ))
             : phase3Only.map(({ phase, steps }) => (
@@ -781,6 +844,7 @@ export default async function ProjectDetailPage({
                   steps={steps}
                   insertBeforeStepCode="3B"
                   insertContent={glassTracker}
+                  trailingContent={phase3ReviewCard}
                 />
               ))}
         </div>

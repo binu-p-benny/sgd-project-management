@@ -45,6 +45,13 @@ const updateProjectSchema = z.object({
   paymentStatus: z.nativeEnum(PaymentStatus).optional(),
   amountReceived: z.number().min(0).optional(),
   notes: z.string().nullable().optional(),
+  // The Phase 1/3 customer review cards (Step timeline, HR & Admin only) — see the comment on
+  // the Project model. Fall under "general info" below, same admin-only gate as the rest of that
+  // group; nothing here ever touches phase_steps or procurement_items.
+  phase1ReviewActualEndDate: dateOrNull,
+  phase1ReviewNote: z.string().nullable().optional(),
+  phase3ReviewActualEndDate: dateOrNull,
+  phase3ReviewNote: z.string().nullable().optional(),
 });
 
 // "notes" counts as a payment-adjacent field for permission purposes — Accounts should
