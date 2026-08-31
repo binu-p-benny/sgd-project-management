@@ -487,6 +487,63 @@ model PaymentSchedule {
   @@map("payment_schedules")
 }
 
+// A standalone work order — deliberately outside the Project/PhaseStep graph: no phases, no
+// dependency chain, no derived statuses. Mirrors Project's own client-facing fields (name/
+// clientName/clientPhone/clientAddress/finalCost) under different labels, but that's where the
+// resemblance to a Project ends — a service's entire lifecycle is its own flat list of work
+// items (see ServiceItem), started empty and grown one row at a time.
+model Service {
+  id            String  @id @default(cuid())
+  title         String
+  clientName    String  @map("client_name")
+  clientPhone   String  @map("client_phone")
+  clientAddress String  @map("client_address")
+  description   String? @db.Text
+
+  finalCost Decimal @map("final_cost") @db.Decimal(12, 2)
+
+  // Soft delete — same convention as Project (see lib/prisma.ts, which enforces the filter
+  // centrally so every read path stays hidden without each query having to remember it).
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  items ServiceItem[]
+
+  @@index([deletedAt])
+  @@map("services")
+}
+
+// One open-ended work-item row on a service — there's no fixed stage list the way
+// ProcurementItem has (requirement/quote/order/arrival/QC): a service starts with zero of
+// these, and work begins the moment the first one is added. Same shape, and same "+ Add row"
+// flow, as ProcurementActionItem's own custom follow-up rows (task, department, optional
+// pass/fail, planned/actual date, note) — see ServiceTracker.tsx.
+model ServiceItem {
+  id        String  @id @default(cuid())
+  serviceId String  @map("service_id")
+  service   Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  taskLabel  String     @map("task_label")
+  department Department @default(purchase)
+  // When true, this row gets a Pass/Fail button pair instead of a single Mark complete button —
+  // same opt-in-at-creation idea as ProcurementActionItem.isPassFail.
+  isPassFail Boolean    @default(false) @map("is_pass_fail")
+  plannedDate DateTime  @map("planned_date") @db.Timestamptz(3)
+  actualDate DateTime?  @map("actual_date") @db.Timestamptz(3)
+  // Only meaningful when isPassFail is true — null until that outcome is recorded, same
+  // "unset/passed/failed" convention as ProcurementActionItem.qcPassed.
+  qcPassed Boolean?  @map("qc_passed")
+  note     String?   @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([serviceId])
+  @@map("service_items")
+}
+
 model StepStatusLog {
   id          String    @id @default(cuid())
   phaseStepId String    @map("phase_step_id")

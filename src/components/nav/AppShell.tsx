@@ -27,6 +27,16 @@ const PROJECTS_ICON = (
   </svg>
 );
 
+const SERVICES_ICON = (
+  <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-full w-full stroke-current">
+    <path
+      d="M14.5 6.5a3.5 3.5 0 0 0-4.6 4.6L4 17v3h3l5.9-5.9a3.5 3.5 0 0 0 4.6-4.6l-2.3 2.3-2-2 2.3-2.3Z"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 const DASHBOARD_ICON = (
   <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-full w-full stroke-current">
     <rect x="4" y="4" width="7" height="9" rx="1" />
@@ -74,7 +84,11 @@ function navItemsFor(department: Department): NavItem[] {
       ? { href: "/dashboard", label: "Dashboard", icon: DASHBOARD_ICON }
       : { href: "/my-tasks", label: "My Tasks", icon: HOME_ICON };
 
-  const items: NavItem[] = [primary, { href: "/projects", label: "Projects", icon: PROJECTS_ICON }];
+  const items: NavItem[] = [
+    primary,
+    { href: "/projects", label: "Projects", icon: PROJECTS_ICON },
+    { href: "/services", label: "Services", icon: SERVICES_ICON },
+  ];
 
   // HR & Admin proxy-edits any department's steps/procurement/payment on their behalf.
   if (department === "owner_admin" || department === "hr_admin") {

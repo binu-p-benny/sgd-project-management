@@ -10,6 +10,11 @@ const PATH_TO_PROJECT: Record<string, object> = {
   PhaseStep: { project: { deletedAt: null } },
   ProcurementItem: { project: { deletedAt: null } },
   StepStatusLog: { phaseStep: { project: { deletedAt: null } } },
+  // Service is its own soft-deletable root, not actually project-scoped — named PATH_TO_PROJECT
+  // for the common case, but the mechanism is really "path to a deletedAt root", which a service
+  // and its items satisfy just as well as a project and its children do.
+  Service: { deletedAt: null },
+  ServiceItem: { service: { deletedAt: null } },
 };
 
 // Reads. Writes are deliberately left alone: a soft-deleted project's rows can still be updated

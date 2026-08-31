@@ -7,6 +7,7 @@ import type {
   DelayCategory,
 } from "@prisma/client";
 import type { EffectiveOverallStatus } from "@/lib/overrun";
+import type { ServiceStatus } from "@/lib/service";
 
 export const DEPARTMENT_LABELS: Record<Department, string> = {
   hr_admin: "HR & Admin",
@@ -54,6 +55,24 @@ export const OVERALL_STATUS_COLORS: Record<EffectiveOverallStatus, string> = {
   // Distinct from blocked's red — a QC failure is a specific, correctable gate, not a generic
   // "someone reported a blocker" state, and the two shouldn't be visually indistinguishable.
   qc_failed: "bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200 dark:bg-orange-500/10 dark:text-orange-400 dark:ring-orange-500/25",
+};
+
+export const SERVICE_STATUS_LABELS: Record<ServiceStatus, string> = {
+  not_started: "Not started",
+  in_progress: "In progress",
+  delayed: "Delayed",
+  completed: "Completed",
+};
+
+// Same on_track/delayed/completed color triple as OVERALL_STATUS_COLORS — in_progress here
+// plays on_track's role (emerald: actively moving, nothing overdue), and completed is
+// deliberately neutral rather than green, same "it's over, not a thing to celebrate on a badge"
+// reasoning Project's own completed color already uses.
+export const SERVICE_STATUS_COLORS: Record<ServiceStatus, string> = {
+  not_started: "bg-overlay text-fg-muted ring-1 ring-inset ring-edge",
+  in_progress: "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/25",
+  delayed: "bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25",
+  completed: "bg-overlay text-fg-muted ring-1 ring-inset ring-edge",
 };
 
 export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
