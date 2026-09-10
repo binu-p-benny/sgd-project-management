@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { PHASE_LABELS, OVERALL_STATUS_LABELS, DEPARTMENT_LABELS } from "@/lib/labels";
+import { OVERALL_STATUS_LABELS, DEPARTMENT_LABELS } from "@/lib/labels";
 import { buildAllStepCodes } from "@/lib/step-template";
+import { PHASE_PROGRESS_FILTER_OPTIONS } from "@/lib/project-filters";
 
 const STEP_OPTIONS = buildAllStepCodes();
 
@@ -32,7 +33,7 @@ export function ProjectFilters() {
         onChange={(e) => setParam("phase", e.target.value)}
       >
         <option value="">All phases</option>
-        {Object.entries(PHASE_LABELS).map(([value, label]) => (
+        {PHASE_PROGRESS_FILTER_OPTIONS.map(({ value, label }) => (
           <option key={value} value={value}>
             {label}
           </option>

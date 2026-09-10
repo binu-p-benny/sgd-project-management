@@ -4,6 +4,9 @@ import {
   currentGlassPODepartment,
   currentStepDepartments,
   getProjectActiveDepartments,
+  getPhaseProgress,
+  matchesPhaseProgressFilter,
+  PHASE_PROGRESS_FILTER_OPTIONS,
   type ProcurementItemFields,
   type GlassPurchaseOrderFields,
 } from "@/lib/project-filters";
@@ -145,6 +148,29 @@ describe("getProjectActiveDepartments: the union /projects' department filter ma
     expect(departments.has("accounts")).toBe(true);
   });
 
+  it("flags Purchase alongside Accounts for an unpaid item — Purchase owns everything else in the chain and needs visibility on Payment too", () => {
+    const items = [
+      {
+        itemType: "hardware" as const,
+        ...EMPTY_ITEM_FIELDS,
+        requirementCreatedAt: new Date(),
+        quoteCreatedAt: new Date(),
+      },
+    ];
+    const departments = getProjectActiveDepartments(null, true, items, null);
+    expect(departments).toEqual(new Set(["accounts", "purchase"]));
+  });
+
+  it("flags Purchase alongside Accounts for an unpaid glass PO too", () => {
+    const glassPurchaseOrder = {
+      ...EMPTY_GLASS_FIELDS,
+      requirementCreatedAt: new Date(),
+      quoteCreatedAt: new Date(),
+    };
+    const departments = getProjectActiveDepartments(null, false, [], glassPurchaseOrder);
+    expect(departments).toEqual(new Set(["accounts", "purchase"]));
+  });
+
   it("a fully-completed project with every item fully paid has no active departments", () => {
     const done: ProcurementItemFields = {
       requirementCreatedAt: new Date(),
@@ -174,5 +200,159 @@ describe("getProjectActiveDepartments: the union /projects' department filter ma
     ];
     const departments = getProjectActiveDepartments(currentStep, false, dayOneEmptyItems, null);
     expect(departments).toEqual(new Set(["hr_admin", "project_engineer"])); // no design_engineer
+  });
+});
+
+describe("getPhaseProgress: where a single phase's own steps stand", () => {
+  it("phase_1 (no phase before it) is not_started when it has no rows yet", () => {
+    expect(getPhaseProgress([], "phase_1")).toBe("not_started");
+  });
+  it("not_started when every step in the phase is still not_started", () => {
+    expect(
+      getPhaseProgress(
+        [
+          { phase: "phase_1", status: "not_started" },
+          { phase: "phase_1", status: "not_started" },
+        ],
+        "phase_1"
+      )
+    ).toBe("not_started");
+  });
+  it("completed only once every step in the phase is completed", () => {
+    expect(
+      getPhaseProgress(
+        [
+          { phase: "phase_1", status: "completed" },
+          { phase: "phase_1", status: "completed" },
+        ],
+        "phase_1"
+      )
+    ).toBe("completed");
+  });
+  it("in_progress once some but not all steps are touched", () => {
+    expect(
+      getPhaseProgress(
+        [
+          { phase: "phase_1", status: "completed" },
+          { phase: "phase_1", status: "not_started" },
+        ],
+        "phase_1"
+      )
+    ).toBe("in_progress");
+  });
+  it("in_progress for a blocked step too, even if nothing else has started", () => {
+    expect(
+      getPhaseProgress(
+        [
+          { phase: "phase_1", status: "blocked" },
+          { phase: "phase_1", status: "not_started" },
+        ],
+        "phase_1"
+      )
+    ).toBe("in_progress");
+  });
+  it("only looks at the target phase's own steps, ignoring the others", () => {
+    expect(
+      getPhaseProgress(
+        [
+          { phase: "phase_1", status: "completed" },
+          { phase: "phase_2", status: "not_started" },
+        ],
+        "phase_2"
+      )
+    ).toBe("not_started");
+  });
+
+  describe("not_started requires the phase before it to be fully completed", () => {
+    it("null (not this phase's 3 buckets at all) when the phase before it isn't done yet", () => {
+      // Still on 1B — Phase 2 has no rows at all, same shape as "reached but idle" would look.
+      expect(getPhaseProgress([{ phase: "phase_1", status: "in_progress" }], "phase_2")).toBeNull();
+    });
+    it("null even once the phase before it is only in_progress, not completed", () => {
+      expect(
+        getPhaseProgress(
+          [
+            { phase: "phase_1", status: "completed" },
+            { phase: "phase_2", status: "in_progress" },
+          ],
+          "phase_3"
+        )
+      ).toBeNull();
+    });
+    it("not_started once the phase before it is genuinely, fully completed — the reached-but-idle case", () => {
+      expect(
+        getPhaseProgress(
+          [
+            { phase: "phase_1", status: "completed" },
+            { phase: "phase_2", status: "completed" },
+            { phase: "phase_2", status: "completed" },
+            { phase: "phase_3", status: "not_started" },
+          ],
+          "phase_3"
+        )
+      ).toBe("not_started");
+    });
+    it("in_progress/completed pass through regardless — maybeEarlyUnlockPhase3 can start Phase 3 before 2F completes", () => {
+      const steps = [
+        { phase: "phase_1" as const, status: "completed" as const },
+        { phase: "phase_2" as const, status: "in_progress" as const }, // 2F still pending
+        { phase: "phase_3" as const, status: "in_progress" as const }, // 3A already started early
+      ];
+      expect(getPhaseProgress(steps, "phase_3")).toBe("in_progress");
+    });
+  });
+});
+
+describe("PHASE_PROGRESS_FILTER_OPTIONS: the /projects phase filter's full option list", () => {
+  it("has one option per (phase, progress) pair, 9 total, in phase then workflow order", () => {
+    expect(PHASE_PROGRESS_FILTER_OPTIONS.map((o) => o.value)).toEqual([
+      "phase_1.not_started",
+      "phase_1.in_progress",
+      "phase_1.completed",
+      "phase_2.not_started",
+      "phase_2.in_progress",
+      "phase_2.completed",
+      "phase_3.not_started",
+      "phase_3.in_progress",
+      "phase_3.completed",
+    ]);
+  });
+  it("labels read like 'Phase 1 · Not started'", () => {
+    expect(PHASE_PROGRESS_FILTER_OPTIONS.find((o) => o.value === "phase_2.in_progress")?.label).toBe(
+      "Phase 2 · In progress"
+    );
+  });
+});
+
+describe("matchesPhaseProgressFilter", () => {
+  // Phase 2 genuinely, fully completed, Phase 3 not yet touched — the "just arrived, hasn't
+  // started" case "Phase 3 · Not started" is meant to surface (see getPhaseProgress).
+  const steps = [
+    { phase: "phase_1" as const, status: "completed" as const },
+    { phase: "phase_2" as const, status: "completed" as const },
+    { phase: "phase_3" as const, status: "not_started" as const },
+  ];
+  it("matches a project whose named phase is at the given progress", () => {
+    expect(matchesPhaseProgressFilter("phase_1.completed", steps)).toBe(true);
+    expect(matchesPhaseProgressFilter("phase_2.completed", steps)).toBe(true);
+    expect(matchesPhaseProgressFilter("phase_3.not_started", steps)).toBe(true);
+  });
+  it("false for every other (phase, progress) combination", () => {
+    expect(matchesPhaseProgressFilter("phase_1.not_started", steps)).toBe(false);
+    expect(matchesPhaseProgressFilter("phase_2.not_started", steps)).toBe(false);
+    expect(matchesPhaseProgressFilter("phase_3.in_progress", steps)).toBe(false);
+    expect(matchesPhaseProgressFilter("phase_3.completed", steps)).toBe(false);
+  });
+  it("a project still mid Phase 2 never matches any Phase 3 option — not just 'not_started'", () => {
+    const midPhase2 = [
+      { phase: "phase_1" as const, status: "completed" as const },
+      { phase: "phase_2" as const, status: "in_progress" as const },
+    ];
+    expect(matchesPhaseProgressFilter("phase_3.not_started", midPhase2)).toBe(false);
+    expect(matchesPhaseProgressFilter("phase_3.in_progress", midPhase2)).toBe(false);
+    expect(matchesPhaseProgressFilter("phase_3.completed", midPhase2)).toBe(false);
+  });
+  it("false for an unrecognized filter value, same as a bogus currentStep code", () => {
+    expect(matchesPhaseProgressFilter("not_a_real_value", steps)).toBe(false);
   });
 });

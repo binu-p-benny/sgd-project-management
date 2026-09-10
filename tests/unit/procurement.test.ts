@@ -18,6 +18,7 @@ import {
   computePhase2PlanAnchor,
   computeItemArrivalPlanned,
   computeSectionQCPlanned,
+  computeAllProcurementPlannedDates,
   type ProcurementItemArrivalInputs,
 } from "@/lib/procurement";
 
@@ -469,5 +470,50 @@ describe("computeSectionQCPlanned: hardware/gasket's own QC planned date comes f
     const overrideQC = new Date("2027-03-01T00:00:00.000Z");
     const item = { itemType: "section" as const, ...emptyFields, qcPlannedOverride: overrideQC };
     expect(computeSectionQCPlanned(item, phase2PlanAnchor)).toEqual(overrideQC);
+  });
+});
+
+describe("computeAllProcurementPlannedDates: every stage's Planned date for one item, the same way page.tsx computes them inline", () => {
+  const phase2PlanAnchor = new Date("2026-08-24T00:00:00.000Z"); // Monday
+  const emptyFields: Omit<ProcurementItemArrivalInputs, "itemType"> = {
+    planAnchorOverride: null,
+    requirementPlannedOverride: null,
+    quotePlannedOverride: null,
+    paymentPlannedOverride: null,
+    orderPlannedOverride: null,
+    arrivalPlannedOverride: null,
+    qcPlannedOverride: null,
+    orderConfirmedAt: null,
+    materialDespatchAt: null,
+    materialDespatchPlannedOverride: null,
+    arrivedForPowderCoatingAt: null,
+    arrivedForPowderCoatingPlannedOverride: null,
+  };
+
+  it("section: arrival/qc match computeItemArrivalPlanned/computeSectionQCPlanned, plus despatch/powder-coating", () => {
+    const item = { itemType: "section" as const, ...emptyFields };
+    const result = computeAllProcurementPlannedDates(item, phase2PlanAnchor, null);
+    expect(result.arrival).toEqual(computeItemArrivalPlanned(item, phase2PlanAnchor));
+    expect(result.qc).toEqual(computeSectionQCPlanned(item, phase2PlanAnchor));
+    expect(result.materialDespatch).not.toBeNull();
+    expect(result.arrivedForPowderCoating).not.toBeNull();
+  });
+
+  it("hardware/gasket: arrival matches computeItemArrivalPlanned, qc matches the section item's own qc when passed through", () => {
+    const sectionItem = { itemType: "section" as const, ...emptyFields };
+    const sectionQCPlanned = computeSectionQCPlanned(sectionItem, phase2PlanAnchor);
+    const hardwareItem = { itemType: "hardware" as const, ...emptyFields };
+    const result = computeAllProcurementPlannedDates(hardwareItem, phase2PlanAnchor, sectionQCPlanned);
+    expect(result.arrival).toEqual(computeItemArrivalPlanned(hardwareItem, phase2PlanAnchor));
+    expect(result.qc).toEqual(sectionQCPlanned);
+    expect(result.materialDespatch).toBeNull();
+    expect(result.arrivedForPowderCoating).toBeNull();
+  });
+
+  it("hardware/gasket's own qc override still wins over the section's qc", () => {
+    const overrideQC = new Date("2027-03-01T00:00:00.000Z");
+    const hardwareItem = { itemType: "hardware" as const, ...emptyFields, qcPlannedOverride: overrideQC };
+    const result = computeAllProcurementPlannedDates(hardwareItem, phase2PlanAnchor, new Date("2026-01-01T00:00:00.000Z"));
+    expect(result.qc).toEqual(overrideQC);
   });
 });

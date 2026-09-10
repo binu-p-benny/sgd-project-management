@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { isProcurementItemOverrun, isStepOverrun, getEffectiveOverallStatus, projectHasOverrun } from "@/lib/overrun";
+import { getServiceStatus, type ServiceStatus } from "@/lib/service";
 import type { Department, ItemType, OverallStatus, PaymentStatus, ProjectPhase, StepStatus } from "@prisma/client";
 
 // Fixed across every project regardless of which phases have been seeded so far
@@ -431,4 +432,34 @@ export async function getStepsDueThisWeek(limit = 15): Promise<UpcomingStepRow[]
     plannedEndDate: step.plannedEndDate!,
     daysRemaining: Math.ceil((step.plannedEndDate!.getTime() - now.getTime()) / msPerDay),
   }));
+}
+
+export type ServiceOverview = { total: number } & Record<ServiceStatus, number>;
+
+/** Service counts by status, same "compute at read time" status as the services list itself
+ *  (see getServiceStatus) — services have no phase/procurement machinery, so this is the whole
+ *  overview rather than one slice of it. */
+export async function getServiceOverview(): Promise<ServiceOverview> {
+  const services = await prisma.service.findMany({
+    select: {
+      completedAt: true,
+      reviewCompletedAt: true,
+      items: { select: { plannedDate: true, actualDate: true } },
+    },
+  });
+
+  const counts: ServiceOverview = {
+    total: services.length,
+    not_started: 0,
+    in_progress: 0,
+    delayed: 0,
+    completed: 0,
+    review_not_completed: 0,
+  };
+
+  for (const s of services) {
+    counts[getServiceStatus(s.items, s.completedAt, s.reviewCompletedAt)] += 1;
+  }
+
+  return counts;
 }

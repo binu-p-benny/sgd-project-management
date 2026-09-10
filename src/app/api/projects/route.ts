@@ -8,9 +8,7 @@ import type { OverallStatus, PaymentStatus, ProjectPhase } from "@prisma/client"
 
 const createProjectSchema = z.object({
   name: z.string().min(1),
-  clientName: z.string().min(1),
-  clientPhone: z.string().min(1),
-  clientAddress: z.string().min(1),
+  clientId: z.string().min(1),
   finalCost: z.number().positive(),
   glassType: z.enum(["normal", "laminated"]),
 });
@@ -28,6 +26,12 @@ export async function POST(request: NextRequest) {
   }
 
   const data = parsed.data;
+
+  const client = await prisma.client.findUnique({ where: { id: data.clientId }, select: { id: true } });
+  if (!client) {
+    return NextResponse.json({ error: "Client not found" }, { status: 400 });
+  }
+
   const now = new Date();
 
   // Visit urgency isn't known yet at creation — it's decided on the actual welcome call
@@ -42,9 +46,7 @@ export async function POST(request: NextRequest) {
     const created = await tx.project.create({
       data: {
         name: data.name,
-        clientName: data.clientName,
-        clientPhone: data.clientPhone,
-        clientAddress: data.clientAddress,
+        clientId: data.clientId,
         finalCost: data.finalCost,
         glassType: data.glassType,
         plannedStartDate: now,

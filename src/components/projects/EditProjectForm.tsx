@@ -2,6 +2,8 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { ClientCombobox, type SelectedClient } from "@/components/clients/ClientCombobox";
+import { Spinner } from "@/components/ui/Spinner";
 
 const inputClass =
   "h-12 w-full rounded-lg border border-edge bg-bg px-3 text-base text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30";
@@ -9,9 +11,7 @@ const labelClass = "text-sm font-medium text-fg-muted";
 
 interface EditableFields {
   name: string;
-  clientName: string;
-  clientPhone: string;
-  clientAddress: string;
+  client: SelectedClient;
   roughDesignCompletedAt: string; // yyyy-mm-dd or ""
   notes: string;
 }
@@ -24,11 +24,16 @@ export function EditProjectForm({
   initial: EditableFields;
 }) {
   const router = useRouter();
-  const [form, setForm] = useState(initial);
+  const [form, setForm] = useState({
+    name: initial.name,
+    roughDesignCompletedAt: initial.roughDesignCompletedAt,
+    notes: initial.notes,
+  });
+  const [client, setClient] = useState<SelectedClient | null>(initial.client);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  function update<K extends keyof EditableFields>(key: K, value: string) {
+  function update<K extends keyof typeof form>(key: K, value: string) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
@@ -48,17 +53,20 @@ export function EditProjectForm({
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    setSaving(true);
 
+    if (!client) {
+      setError("Select or add a client");
+      return;
+    }
+
+    setSaving(true);
     try {
       const res = await fetch(`/api/projects/${projectId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: form.name,
-          clientName: form.clientName,
-          clientPhone: form.clientPhone,
-          clientAddress: form.clientAddress,
+          clientId: client.id,
           roughDesignCompletedAt: form.roughDesignCompletedAt
             ? new Date(form.roughDesignCompletedAt).toISOString()
             : null,
@@ -105,46 +113,7 @@ export function EditProjectForm({
         />
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="clientName" className={labelClass}>
-          Client name
-        </label>
-        <input
-          id="clientName"
-          required
-          value={form.clientName}
-          onChange={(e) => update("clientName", e.target.value)}
-          className={inputClass}
-        />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="clientPhone" className={labelClass}>
-          Client phone
-        </label>
-        <input
-          id="clientPhone"
-          type="tel"
-          required
-          value={form.clientPhone}
-          onChange={(e) => update("clientPhone", e.target.value)}
-          className={inputClass}
-        />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="clientAddress" className={labelClass}>
-          Client address
-        </label>
-        <textarea
-          id="clientAddress"
-          required
-          rows={3}
-          value={form.clientAddress}
-          onChange={(e) => update("clientAddress", e.target.value)}
-          className="w-full rounded-lg border border-edge bg-bg px-3 py-2.5 text-base text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
-        />
-      </div>
+      <ClientCombobox id="client" value={client} onChange={setClient} />
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor="roughDesignCompletedAt" className={labelClass}>
@@ -194,7 +163,7 @@ export function EditProjectForm({
           disabled={saving}
           className="flex h-12 flex-1 items-center justify-center rounded-lg bg-accent text-base font-medium text-white transition-colors hover:bg-accent-2 disabled:opacity-50"
         >
-          {saving ? "Saving…" : "Save changes"}
+          {saving ? <Spinner className="h-4 w-4" /> : "Save changes"}
         </button>
       </div>
     </form>

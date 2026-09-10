@@ -5,6 +5,9 @@ import {
   daysBlocked,
   projectHasOverrun,
   getEffectiveOverallStatus,
+  getProjectBlockedStep,
+  getProjectDelayReason,
+  getProjectQcFailureReason,
 } from "@/lib/overrun";
 
 const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -92,5 +95,76 @@ describe("getEffectiveOverallStatus", () => {
   });
   it("defaults to no QC failure when the third argument is omitted", () => {
     expect(getEffectiveOverallStatus("on_track", false)).toBe("on_track");
+  });
+});
+
+describe("getProjectBlockedStep", () => {
+  it("null when nothing is blocked", () => {
+    expect(getProjectBlockedStep([{ stepCode: "1A", status: "in_progress" }])).toBeNull();
+  });
+  it("finds the blocked step among not-blocked ones", () => {
+    expect(
+      getProjectBlockedStep([
+        { stepCode: "1A", status: "completed" },
+        { stepCode: "1B", status: "blocked" },
+        { stepCode: "1C", status: "not_started" },
+      ])
+    ).toEqual({ stepCode: "1B", status: "blocked" });
+  });
+  it("earliest by step_code if more than one is somehow blocked", () => {
+    expect(
+      getProjectBlockedStep([
+        { stepCode: "2F", status: "blocked" },
+        { stepCode: "1B", status: "blocked" },
+      ])
+    ).toEqual({ stepCode: "1B", status: "blocked" });
+  });
+});
+
+describe("getProjectDelayReason", () => {
+  it("null when nothing is overrun", () => {
+    expect(
+      getProjectDelayReason(
+        [{ stepCode: "1B", stepName: "Site visit", plannedEndDate: tomorrow, status: "in_progress" }],
+        [{ itemType: "hardware", expectedArrivalDate: tomorrow, actualArrivalDate: null }]
+      )
+    ).toBeNull();
+  });
+  it("an overdue step wins, earliest by step_code", () => {
+    const reason = getProjectDelayReason(
+      [
+        { stepCode: "2F", stepName: "Material QC", plannedEndDate: yesterday, status: "in_progress" },
+        { stepCode: "1B", stepName: "Site visit", plannedEndDate: yesterday, status: "in_progress" },
+      ],
+      []
+    );
+    expect(reason).toEqual({ kind: "step", stepCode: "1B", stepName: "Site visit", plannedEndDate: yesterday });
+  });
+  it("falls back to an overdue procurement item's arrival once no step is overrun", () => {
+    const reason = getProjectDelayReason(
+      [{ stepCode: "1B", stepName: "Site visit", plannedEndDate: tomorrow, status: "in_progress" }],
+      [{ itemType: "hardware", expectedArrivalDate: yesterday, actualArrivalDate: null }]
+    );
+    expect(reason).toEqual({ kind: "item", itemType: "hardware", expectedArrivalDate: yesterday });
+  });
+});
+
+describe("getProjectQcFailureReason", () => {
+  it("null when nothing has failed QC", () => {
+    expect(getProjectQcFailureReason([{ stepCode: "3E", stepName: "Final QC on site", qcPassed: true }], [])).toBeNull();
+  });
+  it("a failed procurement item wins over 3E", () => {
+    const reason = getProjectQcFailureReason(
+      [{ stepCode: "3E", stepName: "Final QC on site", qcPassed: false }],
+      [{ itemType: "gasket", qcPassed: false }]
+    );
+    expect(reason).toEqual({ kind: "item", itemType: "gasket" });
+  });
+  it("falls back to 3E once no procurement item has failed", () => {
+    const reason = getProjectQcFailureReason(
+      [{ stepCode: "3E", stepName: "Final QC on site", qcPassed: false }],
+      [{ itemType: "gasket", qcPassed: true }]
+    );
+    expect(reason).toEqual({ kind: "step", stepCode: "3E", stepName: "Final QC on site" });
   });
 });

@@ -1,29 +1,32 @@
 import {
   getProjectSituationCounts,
   getBlockedStepsSorted,
-  getDepartmentWorkload,
+  getPhaseStatusSummary,
   getProjectProgressList,
   getStepsDueThisWeek,
   getRecentActivity,
+  getServiceOverview,
 } from "@/lib/dashboard";
 import { ProjectStatTiles } from "@/components/dashboard/ProjectStatTiles";
 import { BlockedStepsWidget } from "@/components/dashboard/BlockedStepsWidget";
-import { DepartmentWorkloadWidget } from "@/components/dashboard/DepartmentWorkloadWidget";
+import { PhaseStatusWidget } from "@/components/dashboard/PhaseStatusWidget";
 import { ProjectProgressWidget } from "@/components/dashboard/ProjectProgressWidget";
 import { UpcomingStepsWidget } from "@/components/dashboard/UpcomingStepsWidget";
 import { RecentActivityWidget } from "@/components/dashboard/RecentActivityWidget";
+import { ServiceStatusWidget } from "@/components/dashboard/ServiceStatusWidget";
 
 export default async function DashboardPage() {
-  let situationCounts, blocked, departmentWorkload, projectProgress, dueThisWeek, recentActivity;
+  let situationCounts, blocked, phaseStatus, projectProgress, dueThisWeek, recentActivity, serviceOverview;
   try {
-    [situationCounts, blocked, departmentWorkload, projectProgress, dueThisWeek, recentActivity] =
+    [situationCounts, blocked, phaseStatus, projectProgress, dueThisWeek, recentActivity, serviceOverview] =
       await Promise.all([
         getProjectSituationCounts(),
         getBlockedStepsSorted(),
-        getDepartmentWorkload(),
+        getPhaseStatusSummary(),
         getProjectProgressList(),
         getStepsDueThisWeek(),
         getRecentActivity(),
+        getServiceOverview(),
       ]);
   } catch (error) {
     console.error("[dashboard] failed to load dashboard data", error);
@@ -48,13 +51,15 @@ export default async function DashboardPage() {
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <BlockedStepsWidget data={blocked} />
-        <DepartmentWorkloadWidget data={departmentWorkload} />
+        <PhaseStatusWidget data={phaseStatus} />
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <ProjectProgressWidget initialData={projectProgress} />
         <UpcomingStepsWidget data={dueThisWeek} />
       </div>
+
+      <ServiceStatusWidget data={serviceOverview} />
 
       <RecentActivityWidget initialData={recentActivity.rows} initialCursor={recentActivity.nextCursor} />
     </div>

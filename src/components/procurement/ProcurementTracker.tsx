@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSyncedDraft } from "@/hooks/useSyncedDraft";
+import { Spinner } from "@/components/ui/Spinner";
 import { DELAY_CATEGORY_LABELS, DEPARTMENT_LABELS, ASSIGNABLE_DEPARTMENTS } from "@/lib/labels";
 import type { Department } from "@prisma/client";
 
@@ -83,6 +84,9 @@ interface StageData {
   overrun: boolean;
   /** Which department owns this row — shown as a tag, same label set the step cards use. */
   department: Department;
+  /** Purchase owns every other row in this lifecycle and needs visibility on Payment too —
+   *  mirrors PhaseStep's owningDepartment + secondaryDepartment (see 1A). Only set on Payment. */
+  secondaryDepartment?: Department | null;
   /** Design Engineer (2A's owner) can edit this row even without full Purchase access. */
   requirementGated: boolean;
   /** Accounts can edit this row even without full Purchase access. */
@@ -157,6 +161,7 @@ function StageRow({
   endpoint,
   stage,
   editable,
+  previousStageDone,
   onSaved,
 }: {
   /** Full PATCH URL for this row — /api/procurement-items/:id for a fixed stage,
@@ -164,6 +169,10 @@ function StageRow({
   endpoint: string;
   stage: StageData;
   editable: boolean;
+  /** False when the fixed stage immediately above this one in the table isn't done yet — blocks
+   *  completing this one out of order. Always true for the first stage and for every custom
+   *  action-item row (see ItemTable), which aren't part of the sequential chain. */
+  previousStageDone: boolean;
   onSaved: () => void;
 }) {
   const isDone = stage.actualDate !== null;
@@ -207,6 +216,9 @@ function StageRow({
   // A QC failure always needs a note explaining it, whether or not the date itself is late —
   // a stricter, unconditional version of needsReason that applies only to the Fail action.
   const failNeedsNote = isQC && !noteDraft.trim();
+  // Only gates a fresh completion, not a correction to an already-done row — fixing a settled
+  // date shouldn't be blocked by some unrelated earlier stage's own state.
+  const blockedByPreviousStage = !isDone && !previousStageDone;
 
   async function patch(body: Record<string, unknown>, field: "date" | "note") {
     setSaving(field);
@@ -332,6 +344,7 @@ function StageRow({
           <span className="text-sm font-medium text-fg">{stage.label}</span>
           <span className="shrink-0 rounded-full bg-overlay px-1.5 py-0.5 text-[10px] font-medium text-fg-muted ring-1 ring-inset ring-edge">
             {DEPARTMENT_LABELS[stage.department]}
+            {stage.secondaryDepartment ? ` + ${DEPARTMENT_LABELS[stage.secondaryDepartment]}` : ""}
           </span>
         </div>
       </td>
@@ -418,26 +431,42 @@ function StageRow({
               <button
                 type="button"
                 onClick={() => handleQCOutcome(true)}
-                disabled={saving === "date" || needsReason}
-                title={needsReason ? "Add a reason before submitting" : undefined}
+                disabled={saving === "date" || needsReason || blockedByPreviousStage}
+                title={
+                  blockedByPreviousStage
+                    ? "Complete the previous stage first"
+                    : needsReason
+                      ? "Add a reason before submitting"
+                      : undefined
+                }
                 className="flex h-9 items-center justify-center rounded-lg bg-emerald-600 px-3 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {saving === "date" ? "Saving…" : "Pass"}
+                {saving === "date" ? <Spinner className="h-3.5 w-3.5" /> : "Pass"}
               </button>
               <button
                 type="button"
                 onClick={() => handleQCOutcome(false)}
-                disabled={saving === "date" || failNeedsNote}
-                title={failNeedsNote ? "Add a note explaining the failure first" : undefined}
+                disabled={saving === "date" || failNeedsNote || blockedByPreviousStage}
+                title={
+                  blockedByPreviousStage
+                    ? "Complete the previous stage first"
+                    : failNeedsNote
+                      ? "Add a note explaining the failure first"
+                      : undefined
+                }
                 className="flex h-9 items-center justify-center rounded-lg border border-red-300 px-3 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-500/10"
               >
                 Fail
               </button>
             </div>
-            {(needsReason || failNeedsNote) && (
-              <span className="text-[11px] text-amber-600 dark:text-amber-400">
-                {failNeedsNote && !needsReason ? "Note required to fail" : "Add a reason first"}
-              </span>
+            {blockedByPreviousStage ? (
+              <span className="text-[11px] text-amber-600 dark:text-amber-400">Complete the previous stage first</span>
+            ) : (
+              (needsReason || failNeedsNote) && (
+                <span className="text-[11px] text-amber-600 dark:text-amber-400">
+                  {failNeedsNote && !needsReason ? "Note required to fail" : "Add a reason first"}
+                </span>
+              )
             )}
           </div>
         )}
@@ -446,13 +475,23 @@ function StageRow({
             <button
               type="button"
               onClick={handleMarkComplete}
-              disabled={saving === "date" || needsReason}
-              title={needsReason ? "Add a reason before submitting" : undefined}
+              disabled={saving === "date" || needsReason || blockedByPreviousStage}
+              title={
+                blockedByPreviousStage
+                  ? "Complete the previous stage first"
+                  : needsReason
+                    ? "Add a reason before submitting"
+                    : undefined
+              }
               className="flex h-9 items-center justify-center rounded-lg bg-accent px-3 text-xs font-medium text-white transition-colors hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {saving === "date" ? "Saving…" : "Mark complete"}
+              {saving === "date" ? <Spinner className="h-3.5 w-3.5" /> : "Mark complete"}
             </button>
-            {needsReason && <span className="text-[11px] text-amber-600 dark:text-amber-400">Add a reason first</span>}
+            {blockedByPreviousStage ? (
+              <span className="text-[11px] text-amber-600 dark:text-amber-400">Complete the previous stage first</span>
+            ) : (
+              needsReason && <span className="text-[11px] text-amber-600 dark:text-amber-400">Add a reason first</span>
+            )}
           </div>
         )}
         {isDone && !isCorrection && stage.qcPassed === false && (
@@ -623,7 +662,7 @@ function AddActionItemRow({
             disabled={submitting}
             className="flex h-9 items-center justify-center rounded-lg bg-accent px-3 text-xs font-medium text-white transition-colors hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {submitting ? "Adding…" : "Add"}
+            {submitting ? <Spinner className="h-3.5 w-3.5" /> : "Add"}
           </button>
         </div>
       </td>
@@ -703,7 +742,7 @@ function ItemTable({
             </tr>
           </thead>
           <tbody>
-            {item.stages.map((stage) => (
+            {item.stages.map((stage, index) => (
               <StageRow
                 key={stage.id}
                 endpoint={`/api/procurement-items/${item.id}`}
@@ -715,6 +754,7 @@ function ItemTable({
                       ? canEdit || canEditPayment
                       : canEdit
                 }
+                previousStageDone={index === 0 || item.stages[index - 1].actualDate !== null}
                 onSaved={() => router.refresh()}
               />
             ))}
@@ -739,6 +779,9 @@ function ItemTable({
                   qcPassed: actionItem.qcPassed,
                 }}
                 editable={canEdit}
+                // Custom follow-up rows are a flat todo list, not part of the fixed sequential
+                // chain — never blocked by one another.
+                previousStageDone
                 onSaved={() => router.refresh()}
               />
             ))}

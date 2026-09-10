@@ -331,7 +331,12 @@ describe("reverting a phase gate walks the project back without destroying the p
     await completeGlassDelivery(project.id, users.purchase);
     for (const code of ["3C1", "3C2", "3E"]) {
       const step = await getStep(project.id, code);
-      await updateStepStatus(step.id, "completed", users.owner_admin);
+      await updateStepStatus(
+        step.id,
+        "completed",
+        users.owner_admin,
+        code === "3E" ? { qcPassed: true } : undefined
+      );
     }
 
     const done = await getProject(project.id);
@@ -346,6 +351,50 @@ describe("reverting a phase gate walks the project back without destroying the p
     expect(reopened.currentPhase).toBe("phase_3");
     expect(reopened.overallStatus).toBe("on_track");
     expect(reopened.actualEndDate).toBeNull();
+  });
+
+  it("reverting 3E clears its QC outcome, action plan, and follow-up rows", async () => {
+    const project = await createTestProject();
+    await advanceThroughPhase1(project.id, users, "emergency");
+    await advanceThroughPhase2(project.id, users);
+    await completeGlassPO(project.id, users.purchase);
+    await completeGlassDelivery(project.id, users.purchase);
+    for (const code of ["3C1", "3C2"]) {
+      const step = await getStep(project.id, code);
+      await updateStepStatus(step.id, "completed", users.owner_admin);
+    }
+    const threeE = await getStep(project.id, "3E");
+    await updateStepStatus(threeE.id, "in_progress", users.owner_admin);
+    await prisma.phaseStep.update({
+      where: { id: threeE.id },
+      data: {
+        qcPassed: false,
+        qcCheckedAt: new Date(),
+        actionPlanAt: new Date(),
+        actionPlanNote: "Replace the cracked pane and re-inspect",
+      },
+    });
+    await prisma.phaseStepActionItem.create({
+      data: {
+        phaseStepId: threeE.id,
+        taskLabel: "Replace cracked pane",
+        department: "project_engineer",
+        plannedDate: new Date(),
+      },
+    });
+
+    await revertStep(threeE.id, users.owner_admin, { reason: REASON });
+
+    const reverted = await prisma.phaseStep.findUniqueOrThrow({
+      where: { id: threeE.id },
+      include: { actionItems: true },
+    });
+    expect(reverted.status).toBe("not_started");
+    expect(reverted.qcPassed).toBeNull();
+    expect(reverted.qcCheckedAt).toBeNull();
+    expect(reverted.actionPlanAt).toBeNull();
+    expect(reverted.actionPlanNote).toBeNull();
+    expect(reverted.actionItems).toHaveLength(0);
   });
 });
 

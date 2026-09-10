@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { updateStepStatus, revertStep, syncGlassPOStepStatus } from "@/lib/step-actions";
+import { updateStepStatus, revertStep, syncGlassPOStepStatus, maybeEarlyUnlockPhase3 } from "@/lib/step-actions";
 import { checkDependencyGate } from "@/lib/dependency-gate";
 import {
   createTestProject,
@@ -9,8 +9,15 @@ import {
   cleanupTestProjects,
   prisma,
 } from "../helpers/db";
-import { advanceThroughPhase1, advanceThroughPhase2, completeGlassPO, completeGlassDelivery } from "../helpers/scenarios";
-import type { Department, GlassType } from "@prisma/client";
+import {
+  advanceThroughPhase1,
+  advanceThroughPhase2,
+  completeGlassPO,
+  completeGlassDelivery,
+  markAllRequirementsCreated,
+  patchProcurementItem,
+} from "../helpers/scenarios";
+import type { Department, GlassType, ItemType } from "@prisma/client";
 
 let users: Record<Department, string>;
 
@@ -123,12 +130,101 @@ describe("3E is a parallel gate on BOTH 3B and 3C2", () => {
     const gate = await checkDependencyGate(threeE.id);
     expect(gate.allowed).toBe(true);
 
-    await updateStepStatus(threeE.id, "completed", users.project_engineer);
+    await updateStepStatus(threeE.id, "completed", users.project_engineer, { qcPassed: true });
 
     const projectAfter = await getProject(project.id);
     expect(projectAfter.currentPhase).toBe("completed");
     expect(projectAfter.overallStatus).toBe("completed");
     expect(projectAfter.actualEndDate).not.toBeNull();
+  });
+});
+
+describe("3E's final QC — a fail leaves the step (and project) open, only a pass finishes both", () => {
+  async function readyThreeE(project: { id: string }) {
+    await completeGlassPO(project.id, users.purchase);
+    await completeGlassDelivery(project.id, users.purchase);
+    const threeC1 = await getStep(project.id, "3C1");
+    await updateStepStatus(threeC1.id, "completed", users.project_engineer);
+    const threeC2 = await getStep(project.id, "3C2");
+    await updateStepStatus(threeC2.id, "completed", users.project_engineer);
+    const threeE = await getStep(project.id, "3E");
+    await updateStepStatus(threeE.id, "in_progress", users.project_engineer);
+    return getStep(project.id, "3E");
+  }
+
+  it("completing 3E without qcPassed: true is rejected", async () => {
+    const project = await projectAtPhase3();
+    const threeE = await readyThreeE(project);
+    await expect(
+      updateStepStatus(threeE.id, "completed", users.project_engineer)
+    ).rejects.toThrow("3E can only be completed once QC has passed");
+  });
+
+  it("a failed QC check (recorded without a status transition) leaves 3E in_progress and the project not completed", async () => {
+    const project = await projectAtPhase3();
+    const threeE = await readyThreeE(project);
+
+    await prisma.phaseStep.update({
+      where: { id: threeE.id },
+      data: { qcPassed: false, qcCheckedAt: new Date(), notes: "Cracked pane at the corner" },
+    });
+
+    const after = await getStep(project.id, "3E");
+    expect(after.status).toBe("in_progress");
+    expect(after.qcPassed).toBe(false);
+
+    const projectAfter = await getProject(project.id);
+    expect(projectAfter.currentPhase).toBe("phase_3");
+    expect(projectAfter.overallStatus).not.toBe("completed");
+  });
+
+  it("passing QC after a prior failure completes 3E and finishes the project", async () => {
+    const project = await projectAtPhase3();
+    const threeE = await readyThreeE(project);
+    await prisma.phaseStep.update({
+      where: { id: threeE.id },
+      data: { qcPassed: false, qcCheckedAt: new Date() },
+    });
+
+    await updateStepStatus(threeE.id, "completed", users.project_engineer, { qcPassed: true });
+
+    const after = await getStep(project.id, "3E");
+    expect(after.status).toBe("completed");
+    expect(after.qcPassed).toBe(true);
+
+    const projectAfter = await getProject(project.id);
+    expect(projectAfter.currentPhase).toBe("completed");
+    expect(projectAfter.overallStatus).toBe("completed");
+  });
+
+  it("a custom follow-up row can be created once QC has failed and an action plan is recorded", async () => {
+    const project = await projectAtPhase3();
+    const threeE = await readyThreeE(project);
+    await prisma.phaseStep.update({
+      where: { id: threeE.id },
+      data: {
+        qcPassed: false,
+        qcCheckedAt: new Date(),
+        actionPlanAt: new Date(),
+        actionPlanNote: "Replace the cracked pane and re-inspect",
+      },
+    });
+
+    const item = await prisma.phaseStepActionItem.create({
+      data: {
+        phaseStepId: threeE.id,
+        taskLabel: "Replace cracked pane",
+        department: "project_engineer",
+        plannedDate: new Date(),
+      },
+    });
+    expect(item.phaseStepId).toBe(threeE.id);
+
+    const withItems = await prisma.phaseStep.findUniqueOrThrow({
+      where: { id: threeE.id },
+      include: { actionItems: true },
+    });
+    expect(withItems.actionItems).toHaveLength(1);
   });
 });
 
@@ -394,5 +490,73 @@ describe("Glass PO's Actual arrival / QC checked rows, and the action plan a QC 
       where: { glassPurchaseOrderId: glassPO.id },
     });
     expect(remainingActionItems).toHaveLength(0);
+  });
+});
+
+describe("maybeEarlyUnlockPhase3 — every item arriving 2+ days ago unlocks phase 3 ahead of 2F itself completing", () => {
+  const ALL_ITEM_TYPES: ItemType[] = ["section", "hardware", "gasket"];
+  const DAY = 24 * 60 * 60 * 1000;
+
+  async function projectWithAllArrived(daysAgo: number) {
+    const project = await createTestProject();
+    await advanceThroughPhase1(project.id, users, "emergency");
+    await markAllRequirementsCreated(project.id, users.design_engineer);
+    const arrivedAt = new Date(Date.now() - daysAgo * DAY);
+    for (const itemType of ALL_ITEM_TYPES) {
+      await patchProcurementItem(project.id, itemType, users.purchase, { actualArrivalDate: arrivedAt });
+    }
+    return project;
+  }
+
+  it("does nothing while an item hasn't arrived yet", async () => {
+    const project = await createTestProject();
+    await advanceThroughPhase1(project.id, users, "emergency");
+    await markAllRequirementsCreated(project.id, users.design_engineer);
+    await patchProcurementItem(project.id, "section", users.purchase, { actualArrivalDate: new Date() });
+    await patchProcurementItem(project.id, "hardware", users.purchase, { actualArrivalDate: new Date() });
+
+    await maybeEarlyUnlockPhase3(project.id);
+
+    expect(await prisma.phaseStep.count({ where: { projectId: project.id, phase: "phase_3" } })).toBe(0);
+  });
+
+  it("does nothing until 2 days have passed since the last arrival", async () => {
+    const project = await projectWithAllArrived(1);
+
+    await maybeEarlyUnlockPhase3(project.id);
+
+    expect(await prisma.phaseStep.count({ where: { projectId: project.id, phase: "phase_3" } })).toBe(0);
+    expect((await getProject(project.id)).currentPhase).toBe("phase_2");
+  });
+
+  it("unlocks phase 3 (steps + glass PO) once 2 days have passed, even though 2F hasn't completed", async () => {
+    const project = await projectWithAllArrived(2);
+
+    await maybeEarlyUnlockPhase3(project.id);
+
+    const phase3Steps = await prisma.phaseStep.findMany({ where: { projectId: project.id, phase: "phase_3" } });
+    expect(phase3Steps.length).toBeGreaterThan(0);
+    expect(await prisma.glassPurchaseOrder.findUnique({ where: { projectId: project.id } })).not.toBeNull();
+
+    const twoF = await getStep(project.id, "2F");
+    expect(twoF.status).not.toBe("completed");
+    // currentPhase stays accurate to 2F's real state — only the steps/tracker are unlocked early.
+    expect((await getProject(project.id)).currentPhase).toBe("phase_2");
+  });
+
+  it("is a no-op once already unlocked, and 2F completing for real afterward doesn't duplicate anything", async () => {
+    const project = await projectWithAllArrived(3);
+    await maybeEarlyUnlockPhase3(project.id);
+    await maybeEarlyUnlockPhase3(project.id);
+
+    const stepsBefore = await prisma.phaseStep.count({ where: { projectId: project.id, phase: "phase_3" } });
+
+    for (const itemType of ALL_ITEM_TYPES) {
+      await patchProcurementItem(project.id, itemType, users.purchase, { qcCheckedAt: new Date() });
+    }
+
+    expect(await prisma.phaseStep.count({ where: { projectId: project.id, phase: "phase_3" } })).toBe(stepsBefore);
+    expect(await prisma.glassPurchaseOrder.count({ where: { projectId: project.id } })).toBe(1);
+    expect((await getProject(project.id)).currentPhase).toBe("phase_3");
   });
 });

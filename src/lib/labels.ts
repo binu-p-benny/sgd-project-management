@@ -62,17 +62,21 @@ export const SERVICE_STATUS_LABELS: Record<ServiceStatus, string> = {
   in_progress: "In progress",
   delayed: "Delayed",
   completed: "Completed",
+  review_not_completed: "Review not completed",
 };
 
 // Same on_track/delayed/completed color triple as OVERALL_STATUS_COLORS — in_progress here
 // plays on_track's role (emerald: actively moving, nothing overdue), and completed is
 // deliberately neutral rather than green, same "it's over, not a thing to celebrate on a badge"
-// reasoning Project's own completed color already uses.
+// reasoning Project's own completed color already uses. review_not_completed borrows the
+// customer review card's own fuchsia accent (see ServiceReviewCard) so the badge visually
+// points at where to go fix it.
 export const SERVICE_STATUS_COLORS: Record<ServiceStatus, string> = {
   not_started: "bg-overlay text-fg-muted ring-1 ring-inset ring-edge",
   in_progress: "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/25",
   delayed: "bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25",
   completed: "bg-overlay text-fg-muted ring-1 ring-inset ring-edge",
+  review_not_completed: "bg-fuchsia-50 text-fuchsia-700 ring-1 ring-inset ring-fuchsia-200 dark:bg-fuchsia-500/10 dark:text-fuchsia-400 dark:ring-fuchsia-500/25",
 };
 
 export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {

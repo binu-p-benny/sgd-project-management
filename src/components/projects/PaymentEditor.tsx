@@ -139,7 +139,7 @@ function MilestoneRow({
             disabled={submitting}
             className="flex h-8 items-center justify-center rounded-lg bg-accent px-3 text-xs font-medium text-white transition-colors hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {submitting ? "Saving…" : "Mark received"}
+            {submitting ? <Spinner className="h-3.5 w-3.5" /> : "Mark received"}
           </button>
         ) : (
           <span className="text-xs text-fg-subtle">—</span>

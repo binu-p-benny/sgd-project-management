@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
+import { Spinner } from "@/components/ui/Spinner";
 
 interface NotificationRow {
   id: string;
@@ -44,12 +45,14 @@ function DropdownPanel({
   anchorRect,
   notifications,
   unreadCount,
+  marking,
   onMarkAllRead,
   onMarkRead,
 }: {
   anchorRect: DOMRect;
   notifications: NotificationRow[];
   unreadCount: number;
+  marking: boolean;
   onMarkAllRead: () => void;
   onMarkRead: (id: string) => void;
 }) {
@@ -65,7 +68,13 @@ function DropdownPanel({
       <div className="flex items-center justify-between border-b border-edge px-3 py-2">
         <span className="text-sm font-semibold text-fg">Notifications</span>
         {unreadCount > 0 && (
-          <button type="button" onClick={onMarkAllRead} className="text-xs font-medium text-accent hover:underline">
+          <button
+            type="button"
+            onClick={onMarkAllRead}
+            disabled={marking}
+            className="flex items-center gap-1.5 text-xs font-medium text-accent hover:underline disabled:opacity-50"
+          >
+            {marking && <Spinner className="h-3 w-3" />}
             Mark all read
           </button>
         )}
@@ -112,6 +121,7 @@ export function NotificationBell() {
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
+  const [marking, setMarking] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
 
@@ -156,6 +166,10 @@ export function NotificationBell() {
   }
 
   async function markRead(id?: string) {
+    // Only the explicit "Mark all read" click gets a visible busy state — an individual
+    // notification's own click either navigates away immediately (it has a project to go to)
+    // or is too small a target to usefully show one.
+    if (!id) setMarking(true);
     try {
       await fetch("/api/notifications/mark-read", {
         method: "POST",
@@ -165,6 +179,8 @@ export function NotificationBell() {
       await load();
     } catch {
       // no-op — next poll will reconcile
+    } finally {
+      if (!id) setMarking(false);
     }
   }
 
@@ -190,6 +206,7 @@ export function NotificationBell() {
           anchorRect={anchorRect}
           notifications={notifications}
           unreadCount={unreadCount}
+          marking={marking}
           onMarkAllRead={() => markRead()}
           onMarkRead={(id) => markRead(id)}
         />

@@ -22,7 +22,11 @@ export interface MyTaskItem {
   blockedNote: string | null;
   delayCategory: string | null;
   notes: string | null;
-  project: { id: string; name: string; clientName: string };
+  // 3E only — null on every other step. A failure here leaves status at in_progress rather
+  // than completing anyway (see updateStepStatus in step-actions.ts), and unlocks the action
+  // plan + custom rows (SiteQCTracker) on the project detail page.
+  qcPassed: boolean | null;
+  project: { id: string; name: string; client: { name: string } };
   overrun: boolean;
   daysBlocked: number | null;
   // Distinct times the overdue cron has flagged this step, and the most recent one — from
@@ -67,7 +71,7 @@ export async function getMyTasks(
         ? { OR: [{ owningDepartment: department }, { secondaryDepartment: department }] }
         : {}),
     },
-    include: { project: { select: { id: true, name: true, clientName: true } } },
+    include: { project: { select: { id: true, name: true, client: { select: { name: true } } } } },
     orderBy: [{ updatedAt: "asc" }],
   });
 
@@ -131,7 +135,9 @@ export async function getMyTasks(
     let gateBlockedBy: string[] | null = null;
     if (!isDerived && (step.status === "not_started" || step.status === "in_progress")) {
       const gate = await checkDependencyGate(step.id);
-      gateBlockedBy = gate.allowed ? [] : gate.blockedBy;
+      // Names ("Site measurement & drawing"), not codes ("3C1") — this only ever feeds the
+      // "Waiting on: …" hint on TaskCard, which is meant to read as prose.
+      gateBlockedBy = gate.allowed ? [] : gate.blockedByLabels;
     }
 
     const overdueDates = overdueHistoryByStep.get(step.id) ?? [];
@@ -157,6 +163,7 @@ export async function getMyTasks(
       blockedNote: step.blockedNote,
       delayCategory: step.delayCategory,
       notes: step.notes,
+      qcPassed: step.qcPassed,
       project: step.project,
       overrun: isStepOverrun(step.plannedEndDate, step.status),
       daysBlocked: step.status === "blocked" ? daysBlocked(step.updatedAt) : null,

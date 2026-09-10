@@ -17,6 +17,26 @@ const ALL_DEPARTMENTS: Department[] = [
 ];
 
 let cachedUsers: Record<Department, string> | null = null;
+let cachedClientId: string | null = null;
+
+/** Upserts one shared throwaway client for every test project/service. Cached per test run,
+ *  same "never cleaned up, fixed id so re-runs reuse it" convention as ensureTestUsers. */
+async function ensureTestClient(): Promise<string> {
+  if (cachedClientId) return cachedClientId;
+
+  const client = await prisma.client.upsert({
+    where: { id: "__TEST_CLIENT__" },
+    update: {},
+    create: {
+      id: "__TEST_CLIENT__",
+      name: "Test Client",
+      phone: "0000000000",
+      address: "Test Address",
+    },
+  });
+  cachedClientId = client.id;
+  return client.id;
+}
 
 /** Upserts one throwaway user per department and returns department -> userId. Cached per test run. */
 export async function ensureTestUsers(): Promise<Record<Department, string>> {
@@ -47,13 +67,12 @@ export async function createTestProject(
   const now = new Date();
   const phase1 = buildPhase1Steps();
   const dates = computePlannedDates(phase1, now);
+  const clientId = await ensureTestClient();
 
   const project = await prisma.project.create({
     data: {
       name: overrides.name ?? `${TEST_PREFIX}Project ${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      clientName: "Test Client",
-      clientPhone: "0000000000",
-      clientAddress: "Test Address",
+      clientId,
       finalCost: overrides.finalCost ?? 100000,
       glassType: overrides.glassType ?? "normal",
       plannedStartDate: now,
@@ -91,13 +110,12 @@ export async function createTestProjectDayOne(
   const visitUrgency = overrides.visitUrgency ?? "hot";
   const steps = buildPhase1And2Steps(visitUrgency);
   const dates = computePlannedDates(steps, now);
+  const clientId = await ensureTestClient();
 
   const project = await prisma.project.create({
     data: {
       name: overrides.name ?? `${TEST_PREFIX}Project ${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      clientName: "Test Client",
-      clientPhone: "0000000000",
-      clientAddress: "Test Address",
+      clientId,
       finalCost: overrides.finalCost ?? 100000,
       glassType: overrides.glassType ?? "normal",
       visitUrgency,

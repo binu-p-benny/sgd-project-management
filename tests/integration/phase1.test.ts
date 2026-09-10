@@ -195,3 +195,54 @@ describe("Phase 1 — full 1A->1B->1C->1D walk, phase 2 gated on 1D", () => {
     expect(step.blockedReason).not.toBe("client_payment_hold");
   });
 });
+
+describe("updateStepStatus — caller-supplied actual dates (the /my-tasks table's own date input)", () => {
+  it("uses the supplied actualEndDate instead of defaulting to now", async () => {
+    const project = await createTestProject();
+    const oneA = await getStep(project.id, "1A");
+    const backdated = new Date("2020-01-15T00:00:00.000Z");
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, {
+      visitUrgency: "emergency",
+      actualEndDate: backdated,
+    });
+    const after = await getStep(project.id, "1A");
+    expect(after.actualEndDate?.toISOString()).toBe(backdated.toISOString());
+  });
+
+  it("uses the supplied actualStartDate instead of defaulting to now", async () => {
+    const project = await createTestProject();
+    const oneA = await getStep(project.id, "1A");
+    const backdated = new Date("2020-01-16T00:00:00.000Z");
+    await updateStepStatus(oneA.id, "in_progress", users.hr_admin, { actualStartDate: backdated });
+    const after = await getStep(project.id, "1A");
+    expect(after.actualStartDate?.toISOString()).toBe(backdated.toISOString());
+  });
+
+  it("still requires delayCategory when the supplied actualEndDate is late, even with no pre-existing actualEndDate", async () => {
+    const project = await createTestProject();
+    const oneA = await getStep(project.id, "1A");
+    const wayAfterPlanned = new Date(oneA.plannedEndDate!.getTime() + 5 * 24 * 60 * 60 * 1000);
+    await expect(
+      updateStepStatus(oneA.id, "completed", users.hr_admin, {
+        visitUrgency: "emergency",
+        actualEndDate: wayAfterPlanned,
+      })
+    ).rejects.toThrow(StepActionError);
+    await expect(
+      updateStepStatus(oneA.id, "completed", users.hr_admin, {
+        visitUrgency: "emergency",
+        actualEndDate: wayAfterPlanned,
+        delayCategory: "client_side",
+      })
+    ).resolves.toMatchObject({ status: "completed" });
+  });
+
+  it("falls back to now when no actual date is supplied, unchanged from before this option existed", async () => {
+    const project = await createTestProject();
+    const oneA = await getStep(project.id, "1A");
+    const before = Date.now();
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency" });
+    const after = await getStep(project.id, "1A");
+    expect(after.actualEndDate!.getTime()).toBeGreaterThanOrEqual(before);
+  });
+});

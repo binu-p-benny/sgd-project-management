@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getSession, isAdminEditor } from "@/lib/auth";
 import { ProcurementTracker } from "@/components/procurement/ProcurementTracker";
 import { GlassTracker, type GlassStageData } from "@/components/glass/GlassTracker";
+import { SiteQCTracker } from "@/components/projects/SiteQCTracker";
 import { PaymentEditor } from "@/components/projects/PaymentEditor";
 import { PhaseReviewCard } from "@/components/projects/PhaseReviewCard";
 import { StepProgressBar } from "@/components/projects/StepProgressBar";
@@ -22,6 +23,7 @@ import {
   computePhase2PlanAnchor,
 } from "@/lib/procurement";
 import { findUpstreamDelay } from "@/lib/reschedule";
+import { maybeEarlyUnlockPhase3 } from "@/lib/step-actions";
 import {
   PHASE_LABELS,
   OVERALL_STATUS_LABELS,
@@ -213,14 +215,33 @@ export default async function ProjectDetailPage({
   const { id } = await params;
   const session = await getSession();
 
+  // Full project detail — every phase at once, every department's history, admin-only actions
+  // like reverting a completed step or correcting a date after the fact (see canEditDates/
+  // canRevert below, which TaskCard renders unconditionally true on this page) — is an
+  // admin/owner console, not a per-department work surface. Everyone else's actual work lives
+  // in /my-tasks, whose own PATCH routes already carry their own per-department authorization
+  // regardless of this page's own gate.
+  if (!session || !isAdminEditor(session)) {
+    redirect("/my-tasks");
+  }
+
+  // Opportunistic — may seed phase 3 ahead of 2F actually completing if every procurement item
+  // arrived 2+ days ago (see maybeEarlyUnlockPhase3). Runs before the query below so a newly
+  // unlocked phase 3 shows up in this same request, not just on the next page load.
+  await maybeEarlyUnlockPhase3(id);
+
   const project = await prisma.project.findUnique({
     where: { id },
     include: {
+      client: true,
       // createdAt alone isn't a stable sort: steps within a phase are batch-inserted
       // via createMany and can share the same millisecond timestamp. stepCode as a
       // tiebreaker happens to sort correctly for every code in this schema (1A<1B<1C<1D,
       // 2A<2D1<2D2<2F, 3A<3B<3C1<3C2<3E — lexicographic order matches intended sequence).
-      phaseSteps: { orderBy: [{ createdAt: "asc" }, { stepCode: "asc" }] },
+      phaseSteps: {
+        orderBy: [{ createdAt: "asc" }, { stepCode: "asc" }],
+        include: { actionItems: { orderBy: { createdAt: "asc" } } },
+      },
       procurementItems: { include: { actionItems: { orderBy: { createdAt: "asc" } } } },
       glassPurchaseOrder: { include: { actionItems: { orderBy: { createdAt: "asc" } } } },
       paymentSchedule: true,
@@ -234,7 +255,9 @@ export default async function ProjectDetailPage({
 
   const effectiveStatus = getEffectiveOverallStatus(
     project.overallStatus,
-    projectHasOverrun(project.phaseSteps, project.procurementItems)
+    projectHasOverrun(project.phaseSteps, project.procurementItems),
+    project.procurementItems.some((i) => i.qcPassed === false) ||
+      project.phaseSteps.some((s) => s.stepCode === "3E" && s.qcPassed === false)
   );
 
   const stepsByPhase = PHASE_ORDER.map((phase) => ({
@@ -310,6 +333,47 @@ export default async function ProjectDetailPage({
         noteField="phase3ReviewNote"
       />
     </div>
+  );
+
+  // Same admin-or-owning-department authorization as the main phase-steps PATCH route — 3E's
+  // action plan and follow-up rows are that department's own field, not an admin-only proxy
+  // edit like the review card just above.
+  const canEditSiteQC =
+    !!session &&
+    !!threeE &&
+    (isAdminEditor(session) ||
+      session.department === threeE.owningDepartment ||
+      session.department === threeE.secondaryDepartment);
+  const siteQCTracker =
+    threeE && threeE.qcPassed === false ? (
+      <div className="sm:col-span-2">
+        <SiteQCTracker
+          phaseStepId={threeE.id}
+          actionPlanAt={threeE.actionPlanAt?.toISOString() ?? null}
+          actionPlanPlannedDate={
+            threeE.qcCheckedAt ? computeExpectedActionPlanDate(threeE.qcCheckedAt).toISOString() : null
+          }
+          actionPlanNote={threeE.actionPlanNote}
+          canEdit={canEditSiteQC}
+          canAddActionItem={threeE.qcPassed === false && !!threeE.actionPlanAt}
+          actionItems={threeE.actionItems.map((a) => ({
+            id: a.id,
+            taskLabel: a.taskLabel,
+            department: a.department,
+            isPassFail: a.isPassFail,
+            qcPassed: a.qcPassed,
+            plannedDate: a.plannedDate.toISOString(),
+            actualDate: a.actualDate?.toISOString() ?? null,
+            note: a.note,
+          }))}
+        />
+      </div>
+    ) : null;
+  const phase3TrailingContent = (
+    <>
+      {phase3ReviewCard}
+      {siteQCTracker}
+    </>
   );
 
   // No row exists until the first milestone is ever marked received (see the payment-schedule
@@ -410,6 +474,7 @@ export default async function ProjectDetailPage({
               plannedDate: planned.requirement,
               plannedDateField: "requirementPlannedOverride" as const,
               department: "design_engineer" as const,
+              secondaryDepartment: null,
               requirementGated: true,
               paymentGated: false,
               qcPassed: null,
@@ -424,6 +489,7 @@ export default async function ProjectDetailPage({
               plannedDate: resolvedQuote,
               plannedDateField: "quotePlannedOverride" as const,
               department: "purchase" as const,
+              secondaryDepartment: null,
               requirementGated: false,
               paymentGated: false,
               qcPassed: null,
@@ -438,6 +504,7 @@ export default async function ProjectDetailPage({
               plannedDate: resolvedPayment,
               plannedDateField: "paymentPlannedOverride" as const,
               department: "accounts" as const,
+              secondaryDepartment: "purchase" as const,
               requirementGated: false,
               paymentGated: true,
               qcPassed: null,
@@ -452,6 +519,7 @@ export default async function ProjectDetailPage({
               plannedDate: resolvedOrder,
               plannedDateField: "orderPlannedOverride" as const,
               department: "purchase" as const,
+              secondaryDepartment: null,
               requirementGated: false,
               paymentGated: false,
               qcPassed: null,
@@ -471,6 +539,7 @@ export default async function ProjectDetailPage({
                     plannedDate: sectionChain!.materialDespatch,
                     plannedDateField: "materialDespatchPlannedOverride" as const,
                     department: "purchase" as const,
+                    secondaryDepartment: null,
                     requirementGated: false,
                     paymentGated: false,
                     qcPassed: null,
@@ -485,6 +554,7 @@ export default async function ProjectDetailPage({
                     plannedDate: sectionChain!.powderCoatingArrival,
                     plannedDateField: "arrivedForPowderCoatingPlannedOverride" as const,
                     department: "purchase" as const,
+                    secondaryDepartment: null,
                     requirementGated: false,
                     paymentGated: false,
                     qcPassed: null,
@@ -501,6 +571,7 @@ export default async function ProjectDetailPage({
               plannedDate: resolvedArrival,
               plannedDateField: "arrivalPlannedOverride" as const,
               department: "purchase" as const,
+              secondaryDepartment: null,
               requirementGated: false,
               paymentGated: false,
               qcPassed: null,
@@ -515,6 +586,7 @@ export default async function ProjectDetailPage({
               plannedDate: resolvedQC,
               plannedDateField: "qcPlannedOverride" as const,
               department: "purchase" as const,
+              secondaryDepartment: null,
               requirementGated: false,
               paymentGated: false,
               qcPassed: item.qcPassed,
@@ -535,6 +607,7 @@ export default async function ProjectDetailPage({
                     plannedDate: item.qcCheckedAt ? computeExpectedActionPlanDate(item.qcCheckedAt) : null,
                     plannedDateField: null,
                     department: "purchase" as const,
+                    secondaryDepartment: null,
                     requirementGated: false,
                     paymentGated: false,
                     qcPassed: null,
@@ -552,6 +625,7 @@ export default async function ProjectDetailPage({
             note: stage.note,
             overrun: isProcurementStageOverrun(stage.plannedDate, stage.actualDate),
             department: stage.department,
+            secondaryDepartment: stage.secondaryDepartment,
             requirementGated: stage.requirementGated,
             paymentGated: stage.paymentGated,
             qcPassed: stage.qcPassed,
@@ -596,6 +670,7 @@ export default async function ProjectDetailPage({
     plannedDate: Date | null;
     plannedDateField: string | null;
     department: GlassStageData["department"];
+    secondaryDepartment?: GlassStageData["secondaryDepartment"];
     requirementGated: boolean;
     paymentGated: boolean;
     qcPassed: boolean | null;
@@ -639,6 +714,7 @@ export default async function ProjectDetailPage({
           plannedDate: glassPO.paymentPlannedDate,
           plannedDateField: "paymentPlannedDate",
           department: "accounts",
+          secondaryDepartment: "purchase",
           requirementGated: false,
           paymentGated: true,
           qcPassed: null,
@@ -747,9 +823,9 @@ export default async function ProjectDetailPage({
             <div>
               <h1 className="text-xl font-semibold text-fg">{project.name}</h1>
               <p className="text-sm text-fg-muted">
-                {project.clientName} · {project.clientPhone}
+                {project.client.name} · {project.client.phone}
               </p>
-              <p className="text-sm text-fg-muted">{project.clientAddress}</p>
+              <p className="text-sm text-fg-muted">{project.client.address}</p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -847,7 +923,7 @@ export default async function ProjectDetailPage({
                   items={items}
                   insertBeforeStepCode="3B"
                   insertContent={glassTracker}
-                  appendToAfterGrid={phase3ReviewCard}
+                  appendToAfterGrid={phase3TrailingContent}
                 />
               ))
             : phase3Only.map(({ phase, steps }) => (
@@ -857,7 +933,7 @@ export default async function ProjectDetailPage({
                   steps={steps}
                   insertBeforeStepCode="3B"
                   insertContent={glassTracker}
-                  trailingContent={phase3ReviewCard}
+                  trailingContent={phase3TrailingContent}
                 />
               ))}
         </div>

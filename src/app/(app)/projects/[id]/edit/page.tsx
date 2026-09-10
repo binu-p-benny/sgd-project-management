@@ -14,7 +14,7 @@ export default async function EditProjectPage({
     redirect(`/projects/${id}`);
   }
 
-  const project = await prisma.project.findUnique({ where: { id } });
+  const project = await prisma.project.findUnique({ where: { id }, include: { client: true } });
   if (!project) notFound();
 
   return (
@@ -24,9 +24,7 @@ export default async function EditProjectPage({
         projectId={project.id}
         initial={{
           name: project.name,
-          clientName: project.clientName,
-          clientPhone: project.clientPhone,
-          clientAddress: project.clientAddress,
+          client: project.client,
           roughDesignCompletedAt: project.roughDesignCompletedAt?.toISOString().slice(0, 10) ?? "",
           notes: project.notes ?? "",
         }}

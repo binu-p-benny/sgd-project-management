@@ -1,10 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { DEPARTMENT_LABELS } from "@/lib/labels";
 import { ThemeToggle } from "./ThemeToggle";
 import { NotificationBell } from "./NotificationBell";
+import { Spinner } from "@/components/ui/Spinner";
 import type { Department } from "@prisma/client";
 
 interface NavItem {
@@ -37,6 +39,13 @@ const SERVICES_ICON = (
   </svg>
 );
 
+const CLIENTS_ICON = (
+  <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-full w-full stroke-current">
+    <circle cx="12" cy="8" r="3.2" />
+    <path d="M5 20c0-3.6 3.1-6.5 7-6.5s7 2.9 7 6.5" strokeLinecap="round" />
+  </svg>
+);
+
 const DASHBOARD_ICON = (
   <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-full w-full stroke-current">
     <rect x="4" y="4" width="7" height="9" rx="1" />
@@ -50,6 +59,13 @@ const ADMIN_ICON = (
   <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-full w-full stroke-current">
     <path d="M12 3.5 18.5 6v5.5c0 4.5-2.8 7.7-6.5 9-3.7-1.3-6.5-4.5-6.5-9V6L12 3.5Z" strokeLinecap="round" strokeLinejoin="round" />
     <path d="M9.3 12.2l1.9 1.9 3.5-3.9" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const PERFORMANCE_ICON = (
+  <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-full w-full stroke-current">
+    <path d="M7 5h10v3a5 5 0 0 1-10 0V5Z" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M7 6H4.5a2 2 0 0 0 2.5 3.6M17 6h2.5A2 2 0 0 1 17 9.6M9.5 19h5M12 14v5" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 
@@ -84,15 +100,25 @@ function navItemsFor(department: Department): NavItem[] {
       ? { href: "/dashboard", label: "Dashboard", icon: DASHBOARD_ICON }
       : { href: "/my-tasks", label: "My Tasks", icon: HOME_ICON };
 
-  const items: NavItem[] = [
-    primary,
-    { href: "/projects", label: "Projects", icon: PROJECTS_ICON },
-    { href: "/services", label: "Services", icon: SERVICES_ICON },
-  ];
+  const items: NavItem[] = [primary];
 
-  // HR & Admin proxy-edits any department's steps/procurement/payment on their behalf.
-  if (department === "owner_admin" || department === "hr_admin") {
-    items.push({ href: "/admin", label: "Admin", icon: ADMIN_ICON });
+  // HR & Admin proxy-edits any department's steps/procurement/payment on their behalf — same
+  // pairing /clients', /projects' and /services' own layout.tsx gate on, so these links only
+  // ever appear for someone who can actually get past them.
+  const isAdmin = department === "owner_admin" || department === "hr_admin";
+  if (isAdmin) {
+    items.push(
+      { href: "/clients", label: "Clients", icon: CLIENTS_ICON },
+      { href: "/projects", label: "Projects", icon: PROJECTS_ICON },
+      { href: "/services", label: "Services", icon: SERVICES_ICON },
+      { href: "/admin", label: "Admin", icon: ADMIN_ICON }
+    );
+  }
+
+  // Department scoring / bonus is the owner's alone — HR & Admin would be grading themselves
+  // (see /performance's own layout.tsx gate).
+  if (department === "owner_admin") {
+    items.push({ href: "/performance", label: "Performance", icon: PERFORMANCE_ICON });
   }
 
   return items;
@@ -108,8 +134,10 @@ export function AppShell({
   const pathname = usePathname();
   const router = useRouter();
   const items = navItemsFor(session.department);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   async function handleLogout() {
+    setLoggingOut(true);
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/login");
     router.refresh();
@@ -162,11 +190,12 @@ export function AppShell({
           <ThemeToggle />
           <button
             onClick={handleLogout}
-            className="group/item mt-1 flex w-full items-center gap-3 rounded-lg py-1 text-sm font-medium text-fg-muted transition-colors hover:text-fg"
+            disabled={loggingOut}
+            className="group/item mt-1 flex w-full items-center gap-3 rounded-lg py-1 text-sm font-medium text-fg-muted transition-colors hover:text-fg disabled:opacity-60"
           >
-            <IconChip active={false}>{LOGOUT_ICON}</IconChip>
+            <IconChip active={false}>{loggingOut ? <Spinner className="h-4 w-4" /> : LOGOUT_ICON}</IconChip>
             <span className="whitespace-nowrap opacity-0 transition-opacity duration-150 group-hover:opacity-100">
-              Log out
+              {loggingOut ? "Logging out…" : "Log out"}
             </span>
           </button>
         </div>
@@ -184,7 +213,12 @@ export function AppShell({
           <div className="flex items-center gap-3">
             <NotificationBell />
             <ThemeToggle variant="iconOnly" />
-            <button onClick={handleLogout} className="text-sm font-medium text-fg-muted">
+            <button
+              onClick={handleLogout}
+              disabled={loggingOut}
+              className="flex items-center gap-1.5 text-sm font-medium text-fg-muted disabled:opacity-60"
+            >
+              {loggingOut && <Spinner className="h-3.5 w-3.5" />}
               Log out
             </button>
           </div>

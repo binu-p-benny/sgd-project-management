@@ -17,6 +17,7 @@ export async function GET(
   const project = await prisma.project.findUnique({
     where: { id },
     include: {
+      client: true,
       phaseSteps: { orderBy: [{ createdAt: "asc" }, { stepCode: "asc" }] },
       procurementItems: true,
     },
@@ -38,9 +39,7 @@ const dateOrNull = z
 
 const updateProjectSchema = z.object({
   name: z.string().min(1).optional(),
-  clientName: z.string().min(1).optional(),
-  clientPhone: z.string().min(1).optional(),
-  clientAddress: z.string().min(1).optional(),
+  clientId: z.string().min(1).optional(),
   roughDesignCompletedAt: dateOrNull,
   paymentStatus: z.nativeEnum(PaymentStatus).optional(),
   amountReceived: z.number().min(0).optional(),
@@ -85,6 +84,13 @@ export async function PATCH(
   }
   if (touchesPayment && !isAdminEditor(session) && session.department !== "accounts") {
     return NextResponse.json({ error: "Forbidden — payment info is Accounts' domain" }, { status: 403 });
+  }
+
+  if (parsed.data.clientId) {
+    const client = await prisma.client.findUnique({ where: { id: parsed.data.clientId }, select: { id: true } });
+    if (!client) {
+      return NextResponse.json({ error: "Client not found" }, { status: 400 });
+    }
   }
 
   const project = await prisma.project.update({

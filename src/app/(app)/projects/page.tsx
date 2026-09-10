@@ -3,17 +3,26 @@ import { prisma } from "@/lib/prisma";
 import { getSession, isAdminEditor } from "@/lib/auth";
 import { ProjectFilters } from "@/components/projects/ProjectFilters";
 import { DeleteProjectButton } from "@/components/projects/DeleteProjectButton";
-import { getEffectiveOverallStatus, projectHasOverrun, type EffectiveOverallStatus } from "@/lib/overrun";
+import {
+  getEffectiveOverallStatus,
+  projectHasOverrun,
+  getProjectBlockedStep,
+  getProjectDelayReason,
+  getProjectQcFailureReason,
+  daysBlocked,
+  type EffectiveOverallStatus,
+} from "@/lib/overrun";
 import { buildAllStepCodes } from "@/lib/step-template";
-import { getProjectActiveDepartments } from "@/lib/project-filters";
+import { getProjectActiveDepartments, matchesPhaseProgressFilter, PHASE_PROGRESS_FILTER_OPTIONS } from "@/lib/project-filters";
 import {
   PHASE_LABELS,
   OVERALL_STATUS_LABELS,
   OVERALL_STATUS_COLORS,
   PAYMENT_STATUS_LABELS,
   DEPARTMENT_LABELS,
+  BLOCKED_REASON_LABELS,
 } from "@/lib/labels";
-import type { Department, PaymentStatus, ProjectPhase } from "@prisma/client";
+import type { BlockedReason, Department, PaymentStatus } from "@prisma/client";
 
 const STEP_NAME_BY_CODE = new Map(buildAllStepCodes().map((s) => [s.stepCode, s.stepName]));
 
@@ -79,8 +88,104 @@ function daysAgo(n: number): Date {
   return new Date(Date.now() - n * 24 * 60 * 60 * 1000);
 }
 
+/** How long a project has been on the books — createdAt rather than actualStartDate, since the
+ *  latter stays null until some step actually starts and every project has the former from the
+ *  moment it's created (same anchor the "Created in last N days" filter above already uses). */
+function formatDaysSince(date: Date): string {
+  const days = Math.floor((Date.now() - date.getTime()) / (24 * 60 * 60 * 1000));
+  if (days <= 0) return "Today";
+  if (days === 1) return "1 day ago";
+  return `${days} days ago`;
+}
+
+function formatShortDate(date: Date): string {
+  return new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short" }).format(date);
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** The one-line "why", shown under the Status badge — only ever set for the 3 statuses that
+ *  have a concrete cause to point at (on_track/completed don't). The underlying data comes
+ *  from getProjectBlockedStep / getProjectDelayReason / getProjectQcFailureReason in overrun.ts;
+ *  this is just where it gets worded for this screen. */
+function getStatusReasonText(
+  effectiveStatus: EffectiveOverallStatus,
+  steps: {
+    stepCode: string;
+    stepName: string;
+    status: "not_started" | "in_progress" | "blocked" | "completed";
+    plannedEndDate: Date | null;
+    blockedReason: BlockedReason | null;
+    blockedNote: string | null;
+    qcPassed: boolean | null;
+  }[],
+  procurementItems: {
+    itemType: string;
+    expectedArrivalDate: Date | null;
+    actualArrivalDate: Date | null;
+    qcPassed: boolean | null;
+  }[]
+): string | null {
+  if (effectiveStatus === "blocked") {
+    const step = getProjectBlockedStep(steps);
+    if (!step?.blockedReason) return null;
+    const label = BLOCKED_REASON_LABELS[step.blockedReason];
+    return `${step.stepCode} ${step.stepName} — ${label}${step.blockedNote ? `: ${step.blockedNote}` : ""}`;
+  }
+  if (effectiveStatus === "delayed") {
+    const reason = getProjectDelayReason(steps, procurementItems);
+    if (!reason) return null;
+    return reason.kind === "step"
+      ? `${reason.stepCode} ${reason.stepName} — overdue since ${formatShortDate(reason.plannedEndDate)}`
+      : `${capitalize(reason.itemType)} arrival — overdue since ${formatShortDate(reason.expectedArrivalDate)}`;
+  }
+  if (effectiveStatus === "qc_failed") {
+    const reason = getProjectQcFailureReason(steps, procurementItems);
+    if (!reason) return null;
+    return reason.kind === "item" ? `${capitalize(reason.itemType)} — QC failed` : `${reason.stepCode} ${reason.stepName} — QC failed`;
+  }
+  return null;
+}
+
+/** How many days a project has sat blocked/delayed — shown as a compact "· Nd" suffix right on
+ *  the Status badge itself (TaskCard/BlockedStepsWidget use the same "· Nd" wording for the same
+ *  idea). Blocked's clock starts at the step's own updatedAt (same anchor daysBlocked's other
+ *  callers use for "since it became blocked"); delayed's clock starts at whichever date
+ *  getStatusReasonText already points at — daysBlocked is generic despite the name, just "days
+ *  since this Date". qc_failed has no ongoing clock to show, same as on_track/completed. */
+function getStatusDays(
+  effectiveStatus: EffectiveOverallStatus,
+  steps: {
+    stepCode: string;
+    stepName: string;
+    status: "not_started" | "in_progress" | "blocked" | "completed";
+    plannedEndDate: Date | null;
+    updatedAt: Date;
+  }[],
+  procurementItems: { itemType: string; expectedArrivalDate: Date | null; actualArrivalDate: Date | null }[]
+): number | null {
+  if (effectiveStatus === "blocked") {
+    const step = getProjectBlockedStep(steps);
+    return step ? daysBlocked(step.updatedAt) : null;
+  }
+  if (effectiveStatus === "delayed") {
+    const reason = getProjectDelayReason(steps, procurementItems);
+    if (!reason) return null;
+    return daysBlocked(reason.kind === "step" ? reason.plannedEndDate : reason.expectedArrivalDate);
+  }
+  return null;
+}
+
+/** Status badge text — label plus a "· Nd" suffix once getStatusDays has something to show. */
+function formatStatusLabel(effectiveStatus: EffectiveOverallStatus, days: number | null): string {
+  const label = OVERALL_STATUS_LABELS[effectiveStatus];
+  return days !== null && days > 0 ? `${label} · ${days}d` : label;
+}
+
 const ACTIVE_FILTER_LABEL: Record<string, (value: string) => string> = {
-  phase: (v) => `Phase: ${PHASE_LABELS[v as ProjectPhase] ?? v}`,
+  phase: (v) => PHASE_PROGRESS_FILTER_OPTIONS.find((o) => o.value === v)?.label ?? v,
   status: (v) => `Status: ${OVERALL_STATUS_LABELS[v as EffectiveOverallStatus] ?? v}`,
   department: (v) => `Currently with ${DEPARTMENT_LABELS[v as Department] ?? v}`,
   paymentStatus: (v) => `Payment: ${PAYMENT_STATUS_LABELS[v as PaymentStatus] ?? v}`,
@@ -105,7 +210,10 @@ export default async function ProjectsPage({
   const params = await searchParams;
   const session = await getSession();
   const canDelete = !!session && isAdminEditor(session);
-  const phase = params.phase as ProjectPhase | undefined;
+  // Unlike the other filters below, this one isn't a stored-column match — "phase_1.completed"
+  // etc. describes a single phase's own step progress (see getPhaseProgress), not a project-level
+  // field — so it's applied in JS via matchesPhaseProgressFilter, same as status/overdue/department.
+  const phaseFilter = params.phase;
   const status = params.status as EffectiveOverallStatus | undefined;
   const department = params.department as Department | undefined;
   const paymentStatus = params.paymentStatus as PaymentStatus | undefined;
@@ -115,18 +223,23 @@ export default async function ProjectsPage({
 
   const rawProjects = await prisma.project.findMany({
     where: {
-      ...(phase ? { currentPhase: phase } : {}),
       ...(paymentStatus ? { paymentStatus } : {}),
     },
     include: {
+      client: true,
       phaseSteps: {
         select: {
+          phase: true,
           stepCode: true,
           stepName: true,
           plannedEndDate: true,
           status: true,
           owningDepartment: true,
           secondaryDepartment: true,
+          qcPassed: true,
+          blockedReason: true,
+          blockedNote: true,
+          updatedAt: true,
         },
       },
       procurementItems: {
@@ -159,13 +272,17 @@ export default async function ProjectsPage({
   const projects = rawProjects
     .map((p) => {
       const currentStep = getCurrentStep(p.phaseSteps);
+      const effectiveStatus = getEffectiveOverallStatus(
+        p.overallStatus,
+        projectHasOverrun(p.phaseSteps, p.procurementItems),
+        p.procurementItems.some((i) => i.qcPassed === false) ||
+          p.phaseSteps.some((s) => s.stepCode === "3E" && s.qcPassed === false)
+      );
       return {
         ...p,
-        effectiveStatus: getEffectiveOverallStatus(
-          p.overallStatus,
-          projectHasOverrun(p.phaseSteps, p.procurementItems),
-          p.procurementItems.some((i) => i.qcPassed === false)
-        ),
+        effectiveStatus,
+        statusReason: getStatusReasonText(effectiveStatus, p.phaseSteps, p.procurementItems),
+        statusDays: getStatusDays(effectiveStatus, p.phaseSteps, p.procurementItems),
         hasOverdue: projectHasOverrun(p.phaseSteps, p.procurementItems),
         currentStep,
         activeDepartments: getProjectActiveDepartments(
@@ -174,8 +291,16 @@ export default async function ProjectsPage({
           p.procurementItems,
           p.glassPurchaseOrder
         ),
+        // Once actually wrapped up, "Started" stops being the interesting date — how long ago
+        // it finished is. Falls back to Started if a completed project somehow has no
+        // actualEndDate recorded (shouldn't happen, but the timeline shouldn't disappear if it does).
+        startedLabel:
+          effectiveStatus === "completed" && p.actualEndDate
+            ? `Completed ${formatDaysSince(p.actualEndDate)}`
+            : `Started ${formatDaysSince(p.createdAt)}`,
       };
     })
+    .filter((p) => !phaseFilter || matchesPhaseProgressFilter(phaseFilter, p.phaseSteps))
     .filter((p) => !status || p.effectiveStatus === status)
     .filter((p) => !newSince || p.createdAt >= newSince)
     .filter((p) => !overdueOnly || p.hasOverdue)
@@ -240,14 +365,21 @@ export default async function ProjectsPage({
                 <Link href={`/projects/${project.id}`} className="flex flex-col gap-2">
                   <div className="flex items-start justify-between gap-2">
                     <span className="font-medium text-fg">{project.name}</span>
-                    <span
-                      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${OVERALL_STATUS_COLORS[project.effectiveStatus]}`}
-                    >
-                      {OVERALL_STATUS_LABELS[project.effectiveStatus]}
-                    </span>
+                    <div className="flex shrink-0 flex-col items-end gap-0.5">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${OVERALL_STATUS_COLORS[project.effectiveStatus]}`}
+                      >
+                        {formatStatusLabel(project.effectiveStatus, project.statusDays)}
+                      </span>
+                      {project.statusReason && (
+                        <span className="max-w-[10rem] text-right text-[11px] leading-snug text-fg-subtle">
+                          {project.statusReason}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  {project.clientName !== project.name && (
-                    <div className="text-sm text-fg-muted">{project.clientName}</div>
+                  {project.client.name !== project.name && (
+                    <div className="text-sm text-fg-muted">{project.client.name}</div>
                   )}
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-fg-muted">{PHASE_LABELS[project.currentPhase]}</span>
@@ -263,7 +395,10 @@ export default async function ProjectsPage({
                     )}
                   </div>
                   <DepartmentBadges departments={project.activeDepartments} />
-                  <div className="text-xs text-fg-subtle">Payment: {PAYMENT_STATUS_LABELS[project.paymentStatus]}</div>
+                  <div className="flex items-center justify-between text-xs text-fg-subtle">
+                    <span>Payment: {PAYMENT_STATUS_LABELS[project.paymentStatus]}</span>
+                    <span>{project.startedLabel}</span>
+                  </div>
                 </Link>
                 {canDelete && (
                   <div className="flex justify-end border-t border-edge pt-2">
@@ -280,13 +415,12 @@ export default async function ProjectsPage({
               <thead className="bg-surface text-[11px] uppercase tracking-wider text-fg-subtle">
                 <tr>
                   <th className="px-4 py-3 font-medium">Project</th>
+                  <th className="px-4 py-3 font-medium">Started</th>
                   <th className="px-4 py-3 font-medium">Phase</th>
                   <th className="w-56 px-4 py-3 font-medium">Current step</th>
                   <th className="px-4 py-3 font-medium">Department</th>
                   <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Payment</th>
-                  <th className="px-4 py-3 font-medium text-right">Final cost</th>
-                  {canDelete && <th className="px-4 py-3 font-medium text-right">Actions</th>}
+                  {canDelete && <th className="w-0 px-2 py-3 font-medium text-right">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-edge">
@@ -295,11 +429,12 @@ export default async function ProjectsPage({
                     <td className="px-4 py-3">
                       <Link href={`/projects/${project.id}`} className="flex flex-col gap-0.5">
                         <span className="font-medium text-fg hover:underline">{project.name}</span>
-                        {project.clientName !== project.name && (
-                          <span className="text-xs text-fg-muted">{project.clientName}</span>
+                        {project.client.name !== project.name && (
+                          <span className="text-xs text-fg-muted">{project.client.name}</span>
                         )}
                       </Link>
                     </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-fg-muted">{project.startedLabel}</td>
                     <td className="px-4 py-3 text-fg-muted">{PHASE_LABELS[project.currentPhase]}</td>
                     <td className="max-w-[14rem] px-4 py-3 text-fg-muted">
                       {project.currentStep ? (
@@ -314,19 +449,20 @@ export default async function ProjectsPage({
                     <td className="px-4 py-3">
                       <DepartmentBadges departments={project.activeDepartments} />
                     </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${OVERALL_STATUS_COLORS[project.effectiveStatus]}`}
-                      >
-                        {OVERALL_STATUS_LABELS[project.effectiveStatus]}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-fg-muted">{PAYMENT_STATUS_LABELS[project.paymentStatus]}</td>
-                    <td className="px-4 py-3 text-right font-mono tabular-nums text-fg-muted">
-                      {formatINR(Number(project.finalCost))}
+                    <td className="max-w-[12rem] px-4 py-3">
+                      <div className="flex flex-col items-start gap-1">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${OVERALL_STATUS_COLORS[project.effectiveStatus]}`}
+                        >
+                          {formatStatusLabel(project.effectiveStatus, project.statusDays)}
+                        </span>
+                        {project.statusReason && (
+                          <span className="text-[11px] leading-snug text-fg-subtle">{project.statusReason}</span>
+                        )}
+                      </div>
                     </td>
                     {canDelete && (
-                      <td className="px-4 py-3 text-right">
+                      <td className="w-0 px-2 py-3 text-right">
                         <DeleteProjectButton projectId={project.id} projectName={project.name} />
                       </td>
                     )}

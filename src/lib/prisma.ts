@@ -10,6 +10,14 @@ const PATH_TO_PROJECT: Record<string, object> = {
   PhaseStep: { project: { deletedAt: null } },
   ProcurementItem: { project: { deletedAt: null } },
   StepStatusLog: { phaseStep: { project: { deletedAt: null } } },
+  // Every other place these are read is a nested `include` off an already-filtered Project or
+  // PhaseStep query (the project detail page, TaskCard's own step), so a deleted project's rows
+  // never had a chance to leak — until a query reaches one of these directly at the top level
+  // (see unified-tasks.ts, the first place that does), which is exactly what these entries guard.
+  GlassPurchaseOrder: { project: { deletedAt: null } },
+  GlassActionItem: { glassPurchaseOrder: { project: { deletedAt: null } } },
+  ProcurementActionItem: { procurementItem: { project: { deletedAt: null } } },
+  PhaseStepActionItem: { phaseStep: { project: { deletedAt: null } } },
   // Service is its own soft-deletable root, not actually project-scoped — named PATH_TO_PROJECT
   // for the common case, but the mechanism is really "path to a deletedAt root", which a service
   // and its items satisfy just as well as a project and its children do.

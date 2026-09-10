@@ -464,6 +464,84 @@ export function computeProcurementPlannedDates(
   return result;
 }
 
+export interface ProcurementStagePlannedDates {
+  requirement: Date | null;
+  quote: Date | null;
+  payment: Date | null;
+  order: Date | null;
+  materialDespatch: Date | null; // section only, null otherwise
+  arrivedForPowderCoating: Date | null; // section only, null otherwise
+  arrival: Date | null;
+  qc: Date | null;
+}
+
+/**
+ * Every stage's Planned date for one item, resolved exactly the way ProcurementTracker's own
+ * columns compute them — section via computeSectionChainDates layered on computeProcurementPlannedDates'
+ * requirement/quote/payment/order, hardware/gasket via computeHardwareGasketChainDates. Consolidates
+ * what the project detail page (page.tsx) currently computes inline, stage by stage, into one call
+ * — pulled out so other consumers (the /my-tasks table's own aggregation) get the identical values
+ * without re-deriving this chain a second, possibly-drifting way.
+ *
+ * `sectionQCPlanned` is Section's own QC planned date (computeSectionQCPlanned on the project's
+ * section item) — hardware/gasket's own QC date *is* that value (all three item types get
+ * QC-checked together, in the same pass), so callers computing more than one item for the same
+ * project should compute it once and pass it to every item, same as page.tsx does. Irrelevant
+ * (and safe to pass null) when `item` itself is the section item.
+ */
+export function computeAllProcurementPlannedDates(
+  item: ProcurementItemArrivalInputs & { requirementPlannedOverride: Date | null },
+  phase2PlanAnchor: Date | null,
+  sectionQCPlanned: Date | null
+): ProcurementStagePlannedDates {
+  const itemPlanAnchor = item.planAnchorOverride ?? phase2PlanAnchor;
+  const planned = computeProcurementPlannedDates(item.itemType, itemPlanAnchor, {
+    requirement: item.requirementPlannedOverride,
+    quote: item.quotePlannedOverride,
+    payment: item.paymentPlannedOverride,
+    order: item.orderPlannedOverride,
+    arrival: item.itemType === "section" ? item.arrivalPlannedOverride : null,
+    qc: item.itemType === "section" ? item.qcPlannedOverride : null,
+  });
+
+  if (item.itemType === "section") {
+    const chain = computeSectionChainDates(planned.order, item.orderConfirmedAt, item.materialDespatchAt, item.arrivedForPowderCoatingAt, {
+      materialDespatch: item.materialDespatchPlannedOverride,
+      powderCoatingArrival: item.arrivedForPowderCoatingPlannedOverride,
+      arrival: item.arrivalPlannedOverride,
+      qc: item.qcPlannedOverride,
+    });
+    return {
+      requirement: planned.requirement,
+      quote: planned.quote,
+      payment: planned.payment,
+      order: planned.order,
+      materialDespatch: chain.materialDespatch,
+      arrivedForPowderCoating: chain.powderCoatingArrival,
+      arrival: chain.arrival,
+      qc: chain.qc,
+    };
+  }
+
+  const hwGasket = computeHardwareGasketChainDates(planned.requirement, sectionQCPlanned, {
+    quote: item.quotePlannedOverride,
+    payment: item.paymentPlannedOverride,
+    order: item.orderPlannedOverride,
+    arrival: item.arrivalPlannedOverride,
+    qc: item.qcPlannedOverride,
+  });
+  return {
+    requirement: planned.requirement,
+    quote: hwGasket.quote,
+    payment: hwGasket.payment,
+    order: hwGasket.order,
+    materialDespatch: null,
+    arrivedForPowderCoating: null,
+    arrival: hwGasket.arrival,
+    qc: hwGasket.qc,
+  };
+}
+
 /** 2A is derived: complete only when all 3 procurement_items rows have requirement_created_at set. */
 export async function getRequirementCreatedStatus(
   projectId: string

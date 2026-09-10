@@ -1,20 +1,16 @@
 /**
- * Shared spinning-circle indicator. Pass sizing/color via `className` (it's merged onto
- * the svg alongside `animate-spin stroke-current`, so e.g. "h-4 w-4 text-accent" both
- * sizes it and sets its color through currentColor). Matches the icon-only save-button
- * spinner already used in TaskCard.
+ * Shared loading indicator — the classic CSS spinner (a ring with one edge left transparent,
+ * spun via Tailwind's built-in `animate-spin`), the same shape as "The Classic CSS Loaders
+ * Collection"'s own rotating-ring loader rather than a hand-drawn SVG. Pass sizing/color via
+ * `className` — the ring's color follows `currentColor` (`border-current`), so dropping it into
+ * a colored button or colored text keeps it matching without any extra prop.
  */
 export function Spinner({ className = "h-4 w-4" }: { className?: string }) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      strokeWidth={2.5}
-      className={`animate-spin stroke-current ${className}`}
+    <span
       role="status"
       aria-label="Loading"
-    >
-      <circle cx="12" cy="12" r="8.5" strokeDasharray="30 100" strokeLinecap="round" />
-    </svg>
+      className={`inline-block shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent align-middle ${className}`}
+    />
   );
 }

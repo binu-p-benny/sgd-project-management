@@ -156,12 +156,14 @@ export async function seedProject(
 ) {
   const createdAt = addDays(new Date(), -seed.createdDaysAgo);
 
+  const client = await prisma.client.create({
+    data: { name: seed.clientName, phone: seed.clientPhone, address: seed.clientAddress },
+  });
+
   const project = await prisma.project.create({
     data: {
       name: seed.name,
-      clientName: seed.clientName,
-      clientPhone: seed.clientPhone,
-      clientAddress: seed.clientAddress,
+      clientId: client.id,
       finalCost: seed.finalCost,
       amountReceived: seed.amountReceived,
       paymentStatus: seed.paymentStatus,

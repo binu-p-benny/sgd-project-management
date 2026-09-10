@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Spinner } from "@/components/ui/Spinner";
 import { useSyncedDraft } from "@/hooks/useSyncedDraft";
 
 function toDateInputValue(iso: string | null): string {
@@ -172,7 +173,7 @@ export function PhaseReviewCard({
             disabled={submitting}
             className="flex h-9 items-center justify-center rounded-lg bg-fuchsia-600 px-4 text-xs font-medium text-white transition-colors hover:bg-fuchsia-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {submitting ? "Saving…" : "Save"}
+            {submitting ? <Spinner className="h-3.5 w-3.5" /> : "Save"}
           </button>
           {saved && <span className="text-xs text-emerald-600 dark:text-emerald-400">Saved</span>}
           {error && <span className="text-xs text-red-600 dark:text-red-400">{error}</span>}

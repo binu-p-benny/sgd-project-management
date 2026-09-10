@@ -89,7 +89,12 @@ const MANUAL_PLANNED_END_ONLY_STEP_CODES = new Set(["3E"]);
 // project moving through the normal flow never actually sees it sit at not_started. This only
 // matters for legacy data that reached 1D before that auto-start existed, where it's still
 // stuck at not_started: even there it should offer one click, not two.
-const SINGLE_COMPLETION_STEP_CODES = new Set(["1A", "1B", "1D"]);
+//
+// 2D2 is here for a different reason: a single on-site measurement visit has no meaningful
+// "started" moment worth a separate click, so it never gets a Start button at all — see the
+// per-step button label below, and displayStatus further down for how its badge still shows
+// "In progress" once overdue despite the stored status staying not_started throughout.
+const SINGLE_COMPLETION_STEP_CODES = new Set(["1A", "1B", "1D", "2D2"]);
 
 // Steps whose late completion asks for a client-side/in-house delay reason. Kept local rather
 // than imported — step-actions.ts (which owns the server-side copy of this same set, as
@@ -97,10 +102,19 @@ const SINGLE_COMPLETION_STEP_CODES = new Set(["1A", "1B", "1D"]);
 // — so this must be kept in sync with that set by hand.
 const DELAY_CATEGORY_STEP_CODES = new Set(["1A", "1B", "1C", "1D", "2D2"]);
 
+// 3E's completion is a QC outcome, not a plain "done" — Pass/Fail replace the usual single
+// Mark complete button, same idea as the fixed "qc" row's own button pair in
+// ProcurementTracker/GlassTracker. Unlike those trackers, a Fail here doesn't complete the step
+// at all (see handleQCOutcome) — 3E stays in_progress, and the action plan + custom follow-up
+// rows it unlocks live in a separate SiteQCTracker component below this card.
+const QC_STEP_CODES = new Set(["3E"]);
+
 const btnPrimary =
   "flex-1 flex h-11 items-center justify-center rounded-lg bg-accent px-3 text-sm font-medium text-white transition-colors hover:bg-accent-2 disabled:opacity-40";
 const btnSecondary =
   "flex-1 flex h-11 items-center justify-center rounded-lg border border-edge px-3 text-sm font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-overlay hover:text-fg disabled:opacity-40";
+const btnDanger =
+  "flex-1 flex h-11 items-center justify-center rounded-lg border border-red-300 px-3 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-500/10";
 const btnAdminSmall =
   "flex flex-1 h-9 items-center justify-center rounded-lg border border-edge px-3 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:text-fg";
 const selectClass =
@@ -334,6 +348,37 @@ export function TaskCard({
     });
   }
 
+  // 3E only. A Pass completes the step exactly like completeStep above, just with qcPassed
+  // riding along. A Fail is deliberately a plain field edit, not a status transition — see
+  // /api/phase-steps/[id] — so it goes through the plain submit() rather than submitWithDates,
+  // and needs its own note requirement rather than reusing needsLateReason/needsDelayCategory
+  // (a QC failure needs explaining unconditionally, whether or not it's also late).
+  function handleQCOutcome(passed: boolean) {
+    if (passed) {
+      if (!validateActualEnd()) return;
+      if (needsLateReason) {
+        setError("Actual end is after the planned finish — add a note explaining why before marking complete");
+        return;
+      }
+      if (needsDelayCategory) {
+        setError("Choose whether the delay was client side or in house before marking complete");
+        return;
+      }
+      submitWithDates({
+        status: "completed",
+        qcPassed: true,
+        notes: note || undefined,
+        delayCategory: delayCategory || undefined,
+      });
+      return;
+    }
+    if (!note.trim()) {
+      setError("A note is required when QC fails");
+      return;
+    }
+    submit({ qcPassed: false, notes: note });
+  }
+
   function confirmBlock() {
     if (!blockedReason) {
       setError("Choose a reason");
@@ -536,6 +581,13 @@ export function TaskCard({
   // Same condition as the "Overdue" pill below — blocked steps already get their own red
   // treatment via the blocked-reason banner, so this doesn't pile an amber highlight on top.
   const isOverdueCard = item.overrun && item.status !== "blocked";
+  // 2D2 has no Start action (see SINGLE_COMPLETION_STEP_CODES above), so its stored status can
+  // only ever be not_started or completed — nothing ever sets it to in_progress. Once its
+  // planned finish passes with nothing recorded yet, show the badge as "In progress" anyway
+  // rather than leaving it looking untouched; purely cosmetic, the stored value is unaffected
+  // and the single completion button below already works off item.status directly.
+  const displayStatus =
+    item.stepCode === "2D2" && item.status === "not_started" && item.overrun ? "in_progress" : item.status;
   // This step itself finished after its own planned finish — a stronger, more specific signal
   // than "was flagged overdue at some point" once it's actually done, so it takes over from the
   // history color rather than stacking. delay_category (the "In house delay"/"Client side
@@ -575,8 +627,8 @@ export function TaskCard({
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-start gap-2.5">
-          <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${STATUS_ICON_WRAP[item.status]}`}>
-            <StatusIcon status={item.status} className="h-5 w-5 stroke-current" />
+          <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${STATUS_ICON_WRAP[displayStatus]}`}>
+            <StatusIcon status={displayStatus} className="h-5 w-5 stroke-current" />
           </span>
           <div>
             <Link
@@ -597,8 +649,8 @@ export function TaskCard({
           </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STEP_STATUS_COLORS[item.status]}`}>
-            {STEP_STATUS_LABELS[item.status]}
+          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STEP_STATUS_COLORS[displayStatus]}`}>
+            {STEP_STATUS_LABELS[displayStatus]}
           </span>
           {item.overrun && item.status !== "blocked" && (
             <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-500/25 dark:text-amber-400">
@@ -645,6 +697,13 @@ export function TaskCard({
             {item.daysBlocked !== null && ` · blocked ${item.daysBlocked}d`}
           </div>
           {item.blockedNote && <div className="mt-0.5">{item.blockedNote}</div>}
+        </div>
+      )}
+
+      {QC_STEP_CODES.has(item.stepCode) && item.qcPassed === false && (
+        <div className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-600 ring-1 ring-inset ring-red-500/25 dark:text-red-400">
+          Failed QC — see the action plan below. Passing a recheck (Pass/Fail above) is what
+          completes this step.
         </div>
       )}
 
@@ -711,7 +770,7 @@ export function TaskCard({
               Cancel
             </button>
             <button className={btnPrimary} onClick={confirmBlock} disabled={submitting}>
-              {submitting ? "Saving…" : "Confirm block"}
+              {submitting ? <Spinner className="h-3.5 w-3.5" /> : "Confirm block"}
             </button>
           </div>
         </div>
@@ -771,7 +830,7 @@ export function TaskCard({
               onClick={confirmComplete1A}
               disabled={submitting || needsLateReason || needsDelayCategory}
             >
-              {submitting ? "Saving…" : "Confirm complete"}
+              {submitting ? <Spinner className="h-3.5 w-3.5" /> : "Confirm complete"}
             </button>
           </div>
         </div>
@@ -873,7 +932,7 @@ export function TaskCard({
                 onClick={confirmRevert}
                 disabled={submitting || (revertPlan.needsConsent && !clearProcurement)}
               >
-                {submitting ? "Reverting…" : "Confirm revert"}
+                {submitting ? <Spinner className="h-3.5 w-3.5" /> : "Confirm revert"}
               </button>
             )}
           </div>
@@ -927,7 +986,7 @@ export function TaskCard({
                   disabled={plannedDateSubmitting}
                   className={`${btnAdminSmall} disabled:opacity-40`}
                 >
-                  {plannedDateSubmitting ? "Saving…" : "Save planned dates"}
+                  {plannedDateSubmitting ? <Spinner className="h-3.5 w-3.5" /> : "Save planned dates"}
                 </button>
               </div>
               {plannedDateError && <p className="text-xs text-red-600 dark:text-red-400">{plannedDateError}</p>}
@@ -1047,7 +1106,13 @@ export function TaskCard({
           <textarea
             className={textareaClass}
             rows={2}
-            placeholder={needsLateReason ? "Note required — actual end is after planned finish" : "Note (optional)"}
+            placeholder={
+              needsLateReason
+                ? "Note required — actual end is after planned finish"
+                : QC_STEP_CODES.has(item.stepCode) && item.status === "in_progress"
+                  ? "Note (required to fail)"
+                  : "Note (optional)"
+            }
             value={note}
             onChange={(e) => setNote(e.target.value)}
           />
@@ -1076,7 +1141,7 @@ export function TaskCard({
                     (item.stepCode !== "1A" && (needsLateReason || needsDelayCategory))
                   }
                 >
-                  Completed
+                  {item.stepCode === "2D2" ? "Mark complete" : "Completed"}
                 </button>
               ) : (
                 <button
@@ -1095,19 +1160,52 @@ export function TaskCard({
           )}
           {item.status === "in_progress" && (
             <>
-              <button
-                className={btnPrimary}
-                onClick={completeStep}
-                disabled={
-                  submitting ||
-                  !canStartOrComplete ||
-                  blockedByUnsavedPlannedDates ||
-                  (item.stepCode !== "1A" && (needsLateReason || needsDelayCategory))
-                }
-                title={blockedByUnsavedPlannedDates ? "Save the planned dates above first" : undefined}
-              >
-                Mark complete
-              </button>
+              {QC_STEP_CODES.has(item.stepCode) ? (
+                <>
+                  <button
+                    className={btnPrimary}
+                    onClick={() => handleQCOutcome(true)}
+                    disabled={
+                      submitting ||
+                      !canStartOrComplete ||
+                      blockedByUnsavedPlannedDates ||
+                      needsLateReason ||
+                      needsDelayCategory
+                    }
+                    title={blockedByUnsavedPlannedDates ? "Save the planned dates above first" : undefined}
+                  >
+                    Pass
+                  </button>
+                  <button
+                    className={btnDanger}
+                    onClick={() => handleQCOutcome(false)}
+                    disabled={submitting || blockedByUnsavedPlannedDates || !note.trim()}
+                    title={
+                      blockedByUnsavedPlannedDates
+                        ? "Save the planned dates above first"
+                        : !note.trim()
+                          ? "Add a note explaining the failure first"
+                          : undefined
+                    }
+                  >
+                    Fail
+                  </button>
+                </>
+              ) : (
+                <button
+                  className={btnPrimary}
+                  onClick={completeStep}
+                  disabled={
+                    submitting ||
+                    !canStartOrComplete ||
+                    blockedByUnsavedPlannedDates ||
+                    (item.stepCode !== "1A" && (needsLateReason || needsDelayCategory))
+                  }
+                  title={blockedByUnsavedPlannedDates ? "Save the planned dates above first" : undefined}
+                >
+                  Mark complete
+                </button>
+              )}
               <button className={btnSecondary} onClick={() => setPanel("block")} disabled={submitting}>
                 Report blocked
               </button>

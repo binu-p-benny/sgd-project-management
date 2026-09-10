@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getSession, isAdminEditor } from "@/lib/auth";
 
@@ -15,7 +16,7 @@ export async function GET(
   const { id } = await params;
   const service = await prisma.service.findUnique({
     where: { id },
-    include: { items: { orderBy: { createdAt: "asc" } } },
+    include: { client: true, items: { orderBy: { createdAt: "asc" } } },
   });
 
   if (!service) {
@@ -25,13 +26,24 @@ export async function GET(
   return NextResponse.json(service);
 }
 
+const dateOrNull = z
+  .string()
+  .datetime()
+  .nullable()
+  .optional()
+  .transform((v) => (v === undefined ? undefined : v === null ? null : new Date(v)));
+
 const updateServiceSchema = z.object({
   title: z.string().min(1).optional(),
-  clientName: z.string().min(1).optional(),
-  clientPhone: z.string().min(1).optional(),
-  clientAddress: z.string().min(1).optional(),
+  clientId: z.string().min(1).optional(),
   description: z.string().nullable().optional(),
-  finalCost: z.number().positive().optional(),
+  // The only way completedAt is ever set or cleared — see the completion dropdown in the
+  // services list and getServiceStatus's "never inferred from items" rule.
+  completed: z.boolean().optional(),
+  // The customer review follow-up — see ServiceReviewCard and getServiceStatus's
+  // review_not_completed rule.
+  reviewCompletedAt: dateOrNull,
+  reviewNote: z.string().nullable().optional(),
 });
 
 /** General service/client info is an admin-only proxy edit, same as Project's own edit form. */
@@ -62,7 +74,26 @@ export async function PATCH(
     return NextResponse.json({ error: "Service not found" }, { status: 404 });
   }
 
-  const service = await prisma.service.update({ where: { id }, data: parsed.data });
+  if (parsed.data.clientId) {
+    const client = await prisma.client.findUnique({ where: { id: parsed.data.clientId }, select: { id: true } });
+    if (!client) {
+      return NextResponse.json({ error: "Client not found" }, { status: 400 });
+    }
+  }
+
+  const { completed, ...rest } = parsed.data;
+  const data: Prisma.ServiceUpdateInput = { ...rest };
+  if (completed !== undefined) {
+    data.completedAt = completed ? new Date() : null;
+    // Reopening clears any review recorded for the completion being undone — a later
+    // re-completion should get its own fresh review window, not inherit a stale one.
+    if (!completed) {
+      data.reviewCompletedAt = null;
+      data.reviewNote = null;
+    }
+  }
+
+  const service = await prisma.service.update({ where: { id }, data });
   return NextResponse.json(service);
 }
 

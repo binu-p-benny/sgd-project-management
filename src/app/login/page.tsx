@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { Spinner } from "@/components/ui/Spinner";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -97,9 +98,9 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="mt-2 h-12 w-full rounded-lg bg-accent text-base font-medium text-white shadow-[var(--shadow-accent)] transition-colors hover:bg-accent-2 disabled:opacity-50"
+            className="mt-2 flex h-12 w-full items-center justify-center rounded-lg bg-accent text-base font-medium text-white shadow-[var(--shadow-accent)] transition-colors hover:bg-accent-2 disabled:opacity-50"
           >
-            {loading ? "Signing in..." : "Sign in"}
+            {loading ? <Spinner className="h-4 w-4" /> : "Sign in"}
           </button>
         </form>
       </div>

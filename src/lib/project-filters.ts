@@ -1,12 +1,21 @@
-import type { Department, ItemType } from "@prisma/client";
+import type { Department, ItemType, StepPhase } from "@prisma/client";
 
-interface StageSpec<T> {
+export interface StageSpec<T> {
   field: keyof T;
   department: Department;
+  /** Purchase owns every other stage in this lifecycle and needs visibility on Payment too —
+   *  mirrors PhaseStep's owningDepartment + secondaryDepartment (see 1A). Only set on Payment. */
+  secondaryDepartment?: Department;
+}
+
+/** Exported for /my-tasks' unified task aggregator (unified-tasks.ts), which needs the *whole*
+ *  matched stage (not just its department) to build a task row — field name, both departments. */
+export function firstUnfilledStage<T>(record: T, stages: StageSpec<T>[]): StageSpec<T> | null {
+  return stages.find((s) => record[s.field] === null) ?? null;
 }
 
 function firstUnfilledDepartment<T>(record: T, stages: StageSpec<T>[]): Department | null {
-  return stages.find((s) => record[s.field] === null)?.department ?? null;
+  return firstUnfilledStage(record, stages)?.department ?? null;
 }
 
 export interface ProcurementItemFields {
@@ -23,11 +32,11 @@ export interface ProcurementItemFields {
 // Mirrors the fixed lifecycle order the Procurement tracker displays (see the department tags
 // added there) — section alone carries 2 extra stages (despatch, powder coating) between Order
 // confirmed and Actual arrival; hardware/gasket skip straight from Order confirmed to Arrival.
-const PROCUREMENT_STAGES: Record<ItemType, StageSpec<ProcurementItemFields>[]> = {
+export const PROCUREMENT_STAGES: Record<ItemType, StageSpec<ProcurementItemFields>[]> = {
   section: [
     { field: "requirementCreatedAt", department: "design_engineer" },
     { field: "quoteCreatedAt", department: "purchase" },
-    { field: "paymentSettledAt", department: "accounts" },
+    { field: "paymentSettledAt", department: "accounts", secondaryDepartment: "purchase" },
     { field: "orderConfirmedAt", department: "purchase" },
     { field: "materialDespatchAt", department: "purchase" },
     { field: "arrivedForPowderCoatingAt", department: "purchase" },
@@ -37,7 +46,7 @@ const PROCUREMENT_STAGES: Record<ItemType, StageSpec<ProcurementItemFields>[]> =
   hardware: [
     { field: "requirementCreatedAt", department: "design_engineer" },
     { field: "quoteCreatedAt", department: "purchase" },
-    { field: "paymentSettledAt", department: "accounts" },
+    { field: "paymentSettledAt", department: "accounts", secondaryDepartment: "purchase" },
     { field: "orderConfirmedAt", department: "purchase" },
     { field: "actualArrivalDate", department: "purchase" },
     { field: "qcCheckedAt", department: "purchase" },
@@ -45,7 +54,7 @@ const PROCUREMENT_STAGES: Record<ItemType, StageSpec<ProcurementItemFields>[]> =
   gasket: [
     { field: "requirementCreatedAt", department: "design_engineer" },
     { field: "quoteCreatedAt", department: "purchase" },
-    { field: "paymentSettledAt", department: "accounts" },
+    { field: "paymentSettledAt", department: "accounts", secondaryDepartment: "purchase" },
     { field: "orderConfirmedAt", department: "purchase" },
     { field: "actualArrivalDate", department: "purchase" },
     { field: "qcCheckedAt", department: "purchase" },
@@ -69,10 +78,10 @@ export interface GlassPurchaseOrderFields {
   orderConfirmedAt: Date | null;
 }
 
-const GLASS_PO_STAGES: StageSpec<GlassPurchaseOrderFields>[] = [
+export const GLASS_PO_STAGES: StageSpec<GlassPurchaseOrderFields>[] = [
   { field: "requirementCreatedAt", department: "design_engineer" },
   { field: "quoteCreatedAt", department: "purchase" },
-  { field: "paymentSettledAt", department: "accounts" },
+  { field: "paymentSettledAt", department: "accounts", secondaryDepartment: "purchase" },
   { field: "orderConfirmedAt", department: "purchase" },
 ];
 
@@ -127,11 +136,115 @@ export function getProjectActiveDepartments(
   const departments = new Set<Department>(currentStepDepartments(currentStep));
   if (hasReachedPhase2) {
     for (const item of procurementItems) {
-      const d = currentProcurementItemDepartment(item);
-      if (d) departments.add(d);
+      const stage = firstUnfilledStage(item, PROCUREMENT_STAGES[item.itemType]);
+      if (stage) {
+        departments.add(stage.department);
+        if (stage.secondaryDepartment) departments.add(stage.secondaryDepartment);
+      }
     }
   }
-  const glassDept = currentGlassPODepartment(glassPurchaseOrder);
-  if (glassDept) departments.add(glassDept);
+  if (glassPurchaseOrder) {
+    const glassStage = firstUnfilledStage(glassPurchaseOrder, GLASS_PO_STAGES);
+    if (glassStage) {
+      departments.add(glassStage.department);
+      if (glassStage.secondaryDepartment) departments.add(glassStage.secondaryDepartment);
+    }
+  }
   return departments;
+}
+
+export type PhaseProgress = "not_started" | "in_progress" | "completed";
+
+const PHASE_ORDER = ["phase_1", "phase_2", "phase_3"] as const satisfies readonly StepPhase[];
+
+function previousPhase(phase: StepPhase): StepPhase | null {
+  const index = PHASE_ORDER.indexOf(phase);
+  return index > 0 ? PHASE_ORDER[index - 1] : null;
+}
+
+/**
+ * Where a single phase's own steps stand — deliberately independent of project.current_phase,
+ * which only tracks the project's furthest-reached phase, not each phase's own state.
+ *
+ * "not_started" specifically means *reached but idle* — the phase before it is fully completed
+ * (phase_1 has none, so it's always eligible), yet nothing in this phase has been touched.
+ * A phase a project hasn't gotten anywhere near yet (e.g. Phase 3 on a project still on 1B) has
+ * no rows either and would otherwise look identical to that — returning null instead keeps such
+ * a project out of every one of this phase's 3 buckets, so "Phase 3 · Not started" only ever
+ * lists projects that just arrived at Phase 3 and haven't started it, per the /projects filter
+ * (see matchesPhaseProgressFilter) — not everyone who simply isn't there yet.
+ *
+ * The exception is maybeEarlyUnlockPhase3: Phase 3 rows can be seeded, and even worked on,
+ * before Phase 2's own gate step (2F) completes. Real touched work always counts as in_progress
+ * or completed regardless of the phase before it — the previous-phase check only ever applies
+ * while this phase itself still looks untouched.
+ */
+export function getPhaseProgress(
+  steps: { phase: StepPhase; status: "not_started" | "in_progress" | "blocked" | "completed" }[],
+  targetPhase: StepPhase
+): PhaseProgress | null {
+  const phaseSteps = steps.filter((s) => s.phase === targetPhase);
+  const isUntouched = phaseSteps.length === 0 || phaseSteps.every((s) => s.status === "not_started");
+
+  if (isUntouched) {
+    const prev = previousPhase(targetPhase);
+    if (prev) {
+      const prevSteps = steps.filter((s) => s.phase === prev);
+      const prevCompleted = prevSteps.length > 0 && prevSteps.every((s) => s.status === "completed");
+      if (!prevCompleted) return null;
+    }
+    return "not_started";
+  }
+
+  if (phaseSteps.every((s) => s.status === "completed")) return "completed";
+  return "in_progress";
+}
+
+const PHASE_PROGRESS_SHORT_LABEL: Record<StepPhase, string> = {
+  phase_1: "Phase 1",
+  phase_2: "Phase 2",
+  phase_3: "Phase 3",
+};
+
+const PROGRESS_LABEL: Record<PhaseProgress, string> = {
+  not_started: "Not started",
+  in_progress: "In progress",
+  completed: "Completed",
+};
+
+const PHASE_PROGRESS_PHASES = ["phase_1", "phase_2", "phase_3"] as const satisfies readonly StepPhase[];
+const PHASE_PROGRESS_STATES = ["not_started", "in_progress", "completed"] as const satisfies readonly PhaseProgress[];
+
+export interface PhaseProgressFilterOption {
+  /** Goes straight into the /projects `phase` query param and <option value>. */
+  value: string;
+  label: string;
+  phase: StepPhase;
+  progress: PhaseProgress;
+}
+
+/** The /projects phase filter's full option list — every (phase, progress) pair, in phase then
+ *  workflow order. "Phase 3 · Completed" and the project being fully `completed` are the same
+ *  moment in practice (3E is the last step in the last phase), so there's no separate "overall
+ *  completed" bucket here — it'd just be a second name for this one. */
+export const PHASE_PROGRESS_FILTER_OPTIONS: PhaseProgressFilterOption[] = PHASE_PROGRESS_PHASES.flatMap((phase) =>
+  PHASE_PROGRESS_STATES.map((progress) => ({
+    value: `${phase}.${progress}`,
+    label: `${PHASE_PROGRESS_SHORT_LABEL[phase]} · ${PROGRESS_LABEL[progress]}`,
+    phase,
+    progress,
+  }))
+);
+
+/** True when a project's steps match the given /projects phase-filter value (one of
+ *  PHASE_PROGRESS_FILTER_OPTIONS's own values). An unrecognized value matches nothing — same as
+ *  a stale/bogus currentStep code in page.tsx's own filter — since the UI itself only ever sets
+ *  one of the fixed option values. */
+export function matchesPhaseProgressFilter(
+  filterValue: string,
+  steps: { phase: StepPhase; status: "not_started" | "in_progress" | "blocked" | "completed" }[]
+): boolean {
+  const option = PHASE_PROGRESS_FILTER_OPTIONS.find((o) => o.value === filterValue);
+  if (!option) return false;
+  return getPhaseProgress(steps, option.phase) === option.progress;
 }

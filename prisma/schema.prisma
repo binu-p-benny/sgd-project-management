@@ -133,11 +133,11 @@ model User {
 }
 
 model Project {
-  id            String @id @default(cuid())
-  name          String
-  clientName    String @map("client_name")
-  clientPhone   String @map("client_phone")
-  clientAddress String @map("client_address")
+  id   String @id @default(cuid())
+  name String
+
+  clientId String @map("client_id")
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
 
   finalCost      Decimal       @map("final_cost") @db.Decimal(12, 2)
   amountReceived Decimal       @default(0) @map("amount_received") @db.Decimal(12, 2)
@@ -188,7 +188,31 @@ model Project {
   @@index([overallStatus])
   @@index([paymentStatus])
   @@index([deletedAt])
+  @@index([clientId])
   @@map("projects")
+}
+
+// A client can have several projects and/or services over time — pulled out into its own
+// table (rather than each Project/Service carrying its own name/phone/address, as they used
+// to) so a repeat client is picked from a search dropdown instead of retyping their details,
+// slightly differently, on every new project or service. Not soft-deletable like Project/
+// Service: a client with no projects or services attached has no history worth preserving, so
+// it's just removed outright (see DELETE /api/clients/[id]) — the FK from Project/Service is
+// left at its default RESTRICT, so the database itself refuses to delete one still in use.
+model Client {
+  id      String @id @default(cuid())
+  name    String
+  phone   String
+  address String
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  projects Project[]
+  services Service[]
+
+  @@index([name])
+  @@map("clients")
 }
 
 model PhaseStep {
@@ -229,17 +253,62 @@ model PhaseStep {
   // that slips further (or is corrected) is eligible to be (re-)notified.
   notifiedOverdueAt DateTime? @map("notified_overdue_at") @db.Timestamptz(3)
 
+  // 3E only — the final on-site QC check. null = not yet checked, true = passed (the *only*
+  // way this step's own status can reach "completed" — see updateStepStatus), false = failed.
+  // Same 3-state convention as ProcurementItem.qcPassed, but adapted for a step that gates the
+  // whole project rather than a downstream derived step: a failure here leaves status sitting
+  // at in_progress instead of completing anyway, so recomputeProjectPhase never calls the
+  // project done off a failed check. Re-submitting Pass/Fail (the same buttons TaskCard already
+  // shows) is how a recheck happens — no separate mechanism needed.
+  qcCheckedAt DateTime? @map("qc_checked_at") @db.Timestamptz(3)
+  qcPassed    Boolean?  @map("qc_passed")
+
+  // Only meaningful once qcPassed is false — the corrective plan for redoing 3E. Same "note
+  // mandatory unconditionally" convention as ProcurementItem/GlassPurchaseOrder's own action
+  // plan; planned 2 days after qcCheckedAt (see computeExpectedActionPlanDate, reused as-is).
+  actionPlanAt   DateTime? @map("action_plan_at") @db.Timestamptz(3)
+  actionPlanNote String?   @map("action_plan_note") @db.Text
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   statusLogs    StepStatusLog[]
   notifications Notification[]
+  actionItems   PhaseStepActionItem[]
 
   @@index([projectId])
   @@index([stepCode])
   @@index([owningDepartment])
   @@index([status])
   @@map("phase_steps")
+}
+
+// A user-defined follow-up task under 3E's action plan — mirrors ProcurementActionItem/
+// GlassActionItem exactly, just scoped to a PhaseStep (only ever 3E, in practice) instead. Only
+// ever created once 3E has actually failed QC and its action plan is marked (see the
+// /action-items route) — deleted alongside the rest of the step's lifecycle on a revert.
+model PhaseStepActionItem {
+  id          String    @id @default(cuid())
+  phaseStepId String    @map("phase_step_id")
+  phaseStep   PhaseStep @relation(fields: [phaseStepId], references: [id], onDelete: Cascade)
+
+  taskLabel String @map("task_label")
+  // Same "picked at creation, independent of the fixed stage's own owner" idea as
+  // ProcurementActionItem.department — see its comment for why this is defaulted.
+  department Department @default(project_engineer)
+  // Same "opt into Pass/Fail at creation" idea as ProcurementActionItem.isPassFail.
+  isPassFail  Boolean   @default(false) @map("is_pass_fail")
+  plannedDate DateTime  @map("planned_date") @db.Timestamptz(3)
+  actualDate  DateTime? @map("actual_date") @db.Timestamptz(3)
+  // Only meaningful when isPassFail is true — see ProcurementActionItem.qcPassed.
+  qcPassed Boolean? @map("qc_passed")
+  note     String?  @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([phaseStepId])
+  @@map("phase_step_action_items")
 }
 
 model Notification {
@@ -488,19 +557,33 @@ model PaymentSchedule {
 }
 
 // A standalone work order — deliberately outside the Project/PhaseStep graph: no phases, no
-// dependency chain, no derived statuses. Mirrors Project's own client-facing fields (name/
-// clientName/clientPhone/clientAddress/finalCost) under different labels, but that's where the
-// resemblance to a Project ends — a service's entire lifecycle is its own flat list of work
-// items (see ServiceItem), started empty and grown one row at a time.
+// dependency chain, and no payment tracking (that's a Project-only concern — see
+// PaymentSchedule). Shares only the client relation with Project; a service's entire lifecycle
+// is its own flat list of work items (see ServiceItem), seeded with one "Action plan" row (see
+// POST /api/services) and grown from there one row at a time.
 model Service {
-  id            String  @id @default(cuid())
-  title         String
-  clientName    String  @map("client_name")
-  clientPhone   String  @map("client_phone")
-  clientAddress String  @map("client_address")
-  description   String? @db.Text
+  id          String  @id @default(cuid())
+  title       String
+  description String? @db.Text
 
-  finalCost Decimal @map("final_cost") @db.Decimal(12, 2)
+  clientId String @map("client_id")
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
+
+  // Set only by an explicit "mark as completed" action (see the completion dropdown in the
+  // services list) — never inferred from item rows. Finishing every item still just reads
+  // in_progress (see getServiceStatus in lib/service.ts); this is the one and only path to a
+  // service reading as "completed", and clearing it back to null reopens it.
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(3)
+
+  // The post-completion "how did it go" follow-up — planned exactly 2 days after completedAt
+  // (computed live in getServiceStatus, never stored, same "date-driven" convention as the
+  // service's own delayed/review_not_completed statuses). No gate, blocks nothing on its own —
+  // same spirit as Project's phase1Review/phase3Review pair — but left unfilled past its planned
+  // date and the service's status flips to review_not_completed until reviewCompletedAt is set.
+  // Reopening a completed service (completedAt cleared) clears both, so a later re-completion
+  // starts a fresh review window instead of inheriting a stale one.
+  reviewCompletedAt DateTime? @map("review_completed_at") @db.Timestamptz(3)
+  reviewNote        String?   @map("review_note") @db.Text
 
   // Soft delete — same convention as Project (see lib/prisma.ts, which enforces the filter
   // centrally so every read path stays hidden without each query having to remember it).
@@ -512,6 +595,7 @@ model Service {
   items ServiceItem[]
 
   @@index([deletedAt])
+  @@index([clientId])
   @@map("services")
 }
 

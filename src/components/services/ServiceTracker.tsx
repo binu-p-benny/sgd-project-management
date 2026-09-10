@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSyncedDraft } from "@/hooks/useSyncedDraft";
+import { Spinner } from "@/components/ui/Spinner";
 import { DEPARTMENT_LABELS, ASSIGNABLE_DEPARTMENTS } from "@/lib/labels";
 import type { Department } from "@prisma/client";
 
@@ -236,7 +237,7 @@ function ItemRow({ item, editable, onSaved }: { item: ServiceItemData; editable:
                 title={needsReason ? "Add a reason before submitting" : undefined}
                 className="flex h-9 items-center justify-center rounded-lg bg-emerald-600 px-3 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {saving ? "Saving…" : "Pass"}
+                {saving ? <Spinner className="h-3.5 w-3.5" /> : "Pass"}
               </button>
               <button
                 type="button"
@@ -264,7 +265,7 @@ function ItemRow({ item, editable, onSaved }: { item: ServiceItemData; editable:
               title={needsReason ? "Add a reason before submitting" : undefined}
               className="flex h-9 items-center justify-center rounded-lg bg-accent px-3 text-xs font-medium text-white transition-colors hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {saving ? "Saving…" : "Mark complete"}
+              {saving ? <Spinner className="h-3.5 w-3.5" /> : "Mark complete"}
             </button>
             {needsReason && <span className="text-[11px] text-amber-600 dark:text-amber-400">Add a reason first</span>}
           </div>
@@ -429,7 +430,7 @@ function AddItemRow({ serviceId, onSaved }: { serviceId: string; onSaved: () => 
             disabled={submitting}
             className="flex h-9 items-center justify-center rounded-lg bg-accent px-3 text-xs font-medium text-white transition-colors hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {submitting ? "Adding…" : "Add"}
+            {submitting ? <Spinner className="h-3.5 w-3.5" /> : "Add"}
           </button>
         </div>
       </td>

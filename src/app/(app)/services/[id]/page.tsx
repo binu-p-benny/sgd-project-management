@@ -3,17 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { ServiceTracker } from "@/components/services/ServiceTracker";
 import { DeleteServiceButton } from "@/components/services/DeleteServiceButton";
+import { ServiceReviewCard } from "@/components/services/ServiceReviewCard";
 import { isProcurementStageOverrun } from "@/lib/overrun";
-import { getServiceStatus } from "@/lib/service";
+import { getServiceStatus, getServiceReviewPlannedDate } from "@/lib/service";
 import { SERVICE_STATUS_LABELS, SERVICE_STATUS_COLORS } from "@/lib/labels";
-
-function formatINR(amount: number): string {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(amount);
-}
 
 export default async function ServiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -21,16 +14,18 @@ export default async function ServiceDetailPage({ params }: { params: Promise<{ 
 
   const service = await prisma.service.findUnique({
     where: { id },
-    include: { items: { orderBy: { createdAt: "asc" } } },
+    include: { client: true, items: { orderBy: { createdAt: "asc" } } },
   });
   if (!service) notFound();
 
-  const status = getServiceStatus(service.items);
+  const status = getServiceStatus(service.items, service.completedAt, service.reviewCompletedAt);
   // Same "any signed-in user can add/complete a row" idea as ProcurementActionItem's own rows —
   // a service item's department is chosen per-row, not owned by a single team the way a
   // procurement item's fixed stages are, so there's no single department to gate editing behind.
   const canEdit = !!session;
   const canDelete = !!session && (session.department === "owner_admin" || session.department === "hr_admin");
+  // The customer review is an admin-only proxy edit, same as the Project's own phase reviews.
+  const canEditReview = canDelete;
 
   return (
     <div className="flex flex-col gap-6">
@@ -52,9 +47,9 @@ export default async function ServiceDetailPage({ params }: { params: Promise<{ 
             <div>
               <h1 className="text-xl font-semibold text-fg">{service.title}</h1>
               <p className="text-sm text-fg-muted">
-                {service.clientName} · {service.clientPhone}
+                {service.client.name} · {service.client.phone}
               </p>
-              <p className="text-sm text-fg-muted">{service.clientAddress}</p>
+              <p className="text-sm text-fg-muted">{service.client.address}</p>
               {service.description && <p className="mt-1 text-sm text-fg-muted">{service.description}</p>}
             </div>
           </div>
@@ -66,16 +61,10 @@ export default async function ServiceDetailPage({ params }: { params: Promise<{ 
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 border-t border-edge pt-4 text-sm sm:grid-cols-4">
-          <div>
-            <div className="text-fg-subtle">Final cost</div>
-            <div className="font-mono font-medium tabular-nums text-fg">{formatINR(Number(service.finalCost))}</div>
-          </div>
-          <div>
-            <div className="text-fg-subtle">Work items</div>
-            <div className="font-medium text-fg">
-              {service.items.filter((i) => i.actualDate !== null).length} / {service.items.length} done
-            </div>
+        <div className="border-t border-edge pt-4 text-sm">
+          <div className="text-fg-subtle">Work items</div>
+          <div className="font-medium text-fg">
+            {service.items.filter((i) => i.actualDate !== null).length} / {service.items.length} done
           </div>
         </div>
       </div>
@@ -95,6 +84,16 @@ export default async function ServiceDetailPage({ params }: { params: Promise<{ 
           overrun: isProcurementStageOverrun(item.plannedDate, item.actualDate),
         }))}
       />
+
+      {service.completedAt && (
+        <ServiceReviewCard
+          serviceId={service.id}
+          plannedDate={getServiceReviewPlannedDate(service.completedAt).toISOString()}
+          reviewCompletedAt={service.reviewCompletedAt?.toISOString() ?? null}
+          reviewNote={service.reviewNote}
+          canEdit={canEditReview}
+        />
+      )}
     </div>
   );
 }

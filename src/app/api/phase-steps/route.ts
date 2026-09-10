@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
         ? { OR: [{ owningDepartment: department }, { secondaryDepartment: department }] }
         : {}),
     },
-    include: { project: { select: { id: true, name: true, clientName: true } } },
+    include: { project: { select: { id: true, name: true, client: { select: { name: true } } } } },
     orderBy: [{ projectId: "asc" }, { createdAt: "asc" }, { stepCode: "asc" }],
   });
 

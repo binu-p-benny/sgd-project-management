@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Spinner } from "@/components/ui/Spinner";
 
 /**
  * Removes a service from the app. The row is kept in the database — this only stamps
@@ -78,7 +79,7 @@ export function DeleteServiceButton({
         disabled={deleting}
         className="rounded-lg bg-red-500/15 px-2.5 py-1 text-xs font-medium text-red-600 ring-1 ring-inset ring-red-500/30 transition-colors hover:bg-red-500/25 disabled:opacity-40 dark:text-red-400"
       >
-        {deleting ? "Removing…" : "Confirm"}
+        {deleting ? <Spinner className="h-3.5 w-3.5" /> : "Confirm"}
       </button>
     </span>
   );

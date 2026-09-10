@@ -55,6 +55,18 @@ export interface UpdateStepStatusOptions {
   notes?: string;
   visitUrgency?: VisitUrgency; // only meaningful when completing 1A
   delayCategory?: DelayCategory; // only meaningful when completing a DELAY_CATEGORY_STEP_CODES step after its planned finish
+  // Only meaningful when completing 3E, and must be true to do so — a Fail is recorded through
+  // the plain field-edit branch in /api/phase-steps/[id] instead, without a status transition
+  // (see that route), since 3E should only ever reach "completed" once QC has actually passed.
+  qcPassed?: boolean;
+  // Lets whoever's actually doing the work say when it happened, right from the same action that
+  // changes status — "I finished this yesterday", not "rewrite history after the fact" (that's
+  // what the separate, admin-only /api/phase-steps/[id]/dates escape hatch is for). Only applied
+  // the moment status first reaches in_progress/completed respectively; defaults to now when
+  // omitted, exactly as before this option existed. Authorized the same way the status change
+  // itself is — the step's own owning/secondary department, or an admin.
+  actualStartDate?: Date;
+  actualEndDate?: Date;
 }
 
 /** Recomputes 1B/1C/1D's planned dates after 1A completes and visit_urgency is known. */
@@ -264,12 +276,52 @@ async function seedNextPhaseIfNeeded(
   }
 
   if (completedStepCode === "2F") {
+    // seedPhaseSteps' own existing-rows guard makes this a no-op if maybeEarlyUnlockPhase3
+    // (below) already seeded phase 3 ahead of 2F actually completing — whichever of the two
+    // happens first is what unlocks it, and the other is then just confirming what's already
+    // there.
     await seedPhaseSteps(projectId, "phase_3", buildPhase3Steps(glassType), completedAt, "2F");
     // 3A's own TaskCard stays a plain manually-completed step (see DERIVED_STEP_CODES —
     // unlike 2A/2D1/2F, nothing derives its status). This just seeds the row the glass tracker
     // table sits on, so Requirement/Quote/Payment/Order have somewhere to be filled in by hand.
     await createEmptyGlassPurchaseOrderForProject(projectId);
   }
+}
+
+/**
+ * Phase 3 normally only appears once 2F ("Material QC") actually completes — but by the time
+ * every procurement item has physically arrived, there's often enough certainty to let
+ * installation prep (the glass PO, 3A onward) start in parallel with QC still being finished up.
+ * A 2-day grace period past the last arrival covers something turning up damaged on a closer
+ * look. Whichever of the two — this date-driven check, or 2F genuinely completing (see
+ * seedNextPhaseIfNeeded above) — happens first is what actually unlocks phase 3; the other is
+ * then just a no-op confirming what's already there, via seedPhaseSteps' own existing-rows guard.
+ *
+ * Checked opportunistically (on loading the project page) rather than on a cron — this can only
+ * ever become newly true by the calendar advancing, with no user action to hang a sync off of,
+ * and a page view is the one moment that already needs fresh data anyway.
+ */
+export async function maybeEarlyUnlockPhase3(projectId: string): Promise<void> {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: {
+      glassType: true,
+      procurementItems: { select: { actualArrivalDate: true } },
+      phaseSteps: { where: { phase: "phase_3" }, select: { id: true }, take: 1 },
+    },
+  });
+  // Already unlocked (early or via 2F), or phase 2 hasn't even been seeded yet.
+  if (!project || project.phaseSteps.length > 0 || project.procurementItems.length === 0) return;
+
+  const arrivalDates = project.procurementItems.map((i) => i.actualArrivalDate);
+  if (arrivalDates.some((d) => d === null)) return;
+
+  const lastArrival = new Date(Math.max(...arrivalDates.map((d) => d!.getTime())));
+  if (new Date() < addDays(lastArrival, 2)) return;
+
+  await seedPhaseSteps(projectId, "phase_3", buildPhase3Steps(project.glassType), lastArrival, "2F");
+  await createEmptyGlassPurchaseOrderForProject(projectId);
+  await recomputeProjectPhase(projectId);
 }
 
 /**
@@ -510,6 +562,10 @@ async function cascadeRevertLaterSteps(
           blockedNote: null,
           delayCategory: null,
           notes: null,
+          // 3E only — its QC outcome and action plan describe work being reset here, same as
+          // any other cleared field above; its action-item follow-up rows go separately below,
+          // since a field-clear on this row doesn't cascade the way deleting it would.
+          ...(s.stepCode === "3E" ? { qcCheckedAt: null, qcPassed: null, actionPlanAt: null, actionPlanNote: null } : {}),
         },
       })
     ),
@@ -527,6 +583,9 @@ async function cascadeRevertLaterSteps(
   ]);
 
   const revertedCodes = toRevert.map((s) => s.stepCode);
+  if (revertedCodes.includes("3E")) {
+    await prisma.phaseStepActionItem.deleteMany({ where: { phaseStep: { projectId, stepCode: "3E" } } });
+  }
   await clearProjectOutputs(projectId, revertedCodes);
   return revertedCodes;
 }
@@ -811,19 +870,30 @@ export async function updateStepStatus(
     throw new StepActionError(400, "visitUrgency is required to complete 1A");
   }
 
+  // 3E can only reach "completed" once QC has actually passed — a Fail is recorded without a
+  // status transition at all (see /api/phase-steps/[id]), so reaching this point with newStatus
+  // "completed" for 3E should always carry qcPassed: true. Guards against a stray direct call
+  // (or a future caller) completing 3E some other way and slipping past the check that keeps
+  // recomputeProjectPhase from ever calling the project done off a failed final QC.
+  if (step.stepCode === "3E" && newStatus === "completed" && options.qcPassed !== true) {
+    throw new StepActionError(400, "3E can only be completed once QC has passed");
+  }
+
   // A late completion of one of DELAY_CATEGORY_STEP_CODES needs to say whether the client or
   // the team caused the slip — reschedule.ts reads it, generically, to decide whether the next
   // step's planned finish should move with the late actual end (client_side) or stay put
-  // (in_house). Only reachable when the actual end was already set to a late date before this
+  // (in_house). Reachable two ways: the actual end was already set to a late date before this
   // call (the admin canEditDates flow bundles the dates PATCH first — see submitWithDates in
-  // TaskCard.tsx); the plain "defaults to now" completion path never has a pre-existing
-  // actualEndDate here, so it's never blocked by this.
+  // TaskCard.tsx), or this same call is supplying a late actualEndDate directly via options
+  // (the /my-tasks table's own date input, open to every department — see UpdateStepStatusOptions).
+  // The plain "defaults to now" completion path has neither, so it's never blocked by this.
+  const effectiveActualEndDate = step.actualEndDate ?? options.actualEndDate;
   const needsDelayCategory =
     DELAY_CATEGORY_STEP_CODES.has(step.stepCode) &&
     newStatus === "completed" &&
-    !!step.actualEndDate &&
+    !!effectiveActualEndDate &&
     !!step.plannedEndDate &&
-    step.actualEndDate.getTime() > step.plannedEndDate.getTime();
+    effectiveActualEndDate.getTime() > step.plannedEndDate.getTime();
   if (needsDelayCategory && !options.delayCategory) {
     throw new StepActionError(400, `delayCategory is required when ${step.stepCode} completes late`);
   }
@@ -839,11 +909,13 @@ export async function updateStepStatus(
       blockedNote: newStatus === "blocked" ? options.blockedNote ?? null : null,
       delayCategory: needsDelayCategory ? options.delayCategory : null,
       notes: options.notes !== undefined ? options.notes : undefined,
-      actualStartDate: newStatus === "in_progress" && !step.actualStartDate ? now : undefined,
+      actualStartDate: newStatus === "in_progress" && !step.actualStartDate ? (options.actualStartDate ?? now) : undefined,
       // Mirrors the actualStartDate guard just above: don't clobber an actual_end_date the
       // caller already set (e.g. via the dates PATCH bundled into the same "Mark complete"
       // click — see submitWithDates in TaskCard.tsx) by defaulting it to "now" a moment later.
-      actualEndDate: newStatus === "completed" && !step.actualEndDate ? now : undefined,
+      actualEndDate: newStatus === "completed" && !step.actualEndDate ? (options.actualEndDate ?? now) : undefined,
+      // Guarded above to always be true by the time newStatus is "completed" for 3E.
+      ...(step.stepCode === "3E" && newStatus === "completed" ? { qcPassed: true, qcCheckedAt: now } : {}),
     },
   });
 
@@ -1184,6 +1256,9 @@ export async function revertStep(
           notes: null,
           actualStartDate: toStatus === "not_started" ? null : undefined,
           actualEndDate: null,
+          ...(plan.step.stepCode === "3E"
+            ? { qcCheckedAt: null, qcPassed: null, actionPlanAt: null, actionPlanNote: null }
+            : {}),
         },
       }),
       prisma.stepStatusLog.create({
@@ -1196,6 +1271,9 @@ export async function revertStep(
         },
       }),
     ]);
+    if (plan.step.stepCode === "3E") {
+      await prisma.phaseStepActionItem.deleteMany({ where: { phaseStepId: stepId } });
+    }
   }
 
   const cascaded = await cascadeRevertLaterSteps(
