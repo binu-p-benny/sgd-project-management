@@ -1,0 +1,165 @@
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import type { Department } from "@prisma/client";
+import { getUnifiedMyTasks } from "@/lib/unified-tasks";
+import { updateStepStatus } from "@/lib/step-actions";
+import { createTestProjectDayOne, ensureTestUsers, cleanupTestProjects, prisma } from "../helpers/db";
+import { advanceThroughPhase1, patchProcurementItem } from "../helpers/scenarios";
+
+let users: Record<Department, string>;
+
+beforeAll(async () => {
+  users = await ensureTestUsers();
+});
+
+afterAll(async () => {
+  await cleanupTestProjects();
+});
+
+/** Finds this project's own row(s) in a getUnifiedMyTasks(...) result — every other test
+ *  project in the (shared, real) dev DB is noise these tests don't care about. */
+function tasksFor(all: Awaited<ReturnType<typeof getUnifiedMyTasks>>, projectId: string) {
+  return all.filter((t) => t.project.id === projectId);
+}
+
+describe("getUnifiedMyTasks — procurement/glass-PO stages surface as their own task rows", () => {
+  it("a day-one project (still phase_1) has no procurement_stage tasks yet — nobody can act on them before 1D", async () => {
+    const project = await createTestProjectDayOne();
+    const all = await getUnifiedMyTasks("purchase");
+    expect(tasksFor(all, project.id).filter((t) => t.kind === "procurement_stage")).toHaveLength(0);
+  });
+
+  it("once Phase 1 completes, each item's first unfilled stage (Requirement created) shows up", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+
+    const all = await getUnifiedMyTasks("design_engineer");
+    const mine = tasksFor(all, project.id).filter((t) => t.kind === "procurement_stage");
+    expect(mine).toHaveLength(3); // section, hardware, gasket
+    for (const t of mine) {
+      expect(t.taskLabel).toBe("Requirement created");
+      expect(t.department).toBe("design_engineer");
+      expect(t.status).toBe("not_started");
+    }
+  });
+
+  it("filling in a stage advances that item to the next one, not the whole item disappearing", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await patchProcurementItem(project.id, "hardware", users.design_engineer, { requirementCreatedAt: new Date() });
+
+    const all = await getUnifiedMyTasks("purchase");
+    const mine = tasksFor(all, project.id).filter((t) => t.kind === "procurement_stage");
+    const hardware = mine.find((t) => t.subTaskLabel === "Hardware");
+    expect(hardware?.taskLabel).toBe("Quote created");
+    expect(hardware?.department).toBe("purchase");
+  });
+
+  it("Payment done shows up for both Accounts and Purchase — see the secondary-department feature", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await patchProcurementItem(project.id, "gasket", users.design_engineer, { requirementCreatedAt: new Date() });
+    await patchProcurementItem(project.id, "gasket", users.purchase, { quoteCreatedAt: new Date() });
+
+    const forPurchase = tasksFor(await getUnifiedMyTasks("purchase"), project.id).filter(
+      (t) => t.subTaskLabel === "Gasket"
+    );
+    const forAccounts = tasksFor(await getUnifiedMyTasks("accounts"), project.id).filter(
+      (t) => t.subTaskLabel === "Gasket"
+    );
+    expect(forPurchase[0]?.taskLabel).toBe("Payment done");
+    expect(forAccounts[0]?.taskLabel).toBe("Payment done");
+    expect(forAccounts[0]?.secondaryDepartment).toBe("purchase");
+  });
+
+  it("a failed QC check produces an Action plan task, not the item just disappearing", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    const now = new Date();
+    // Hardware/gasket, not section — section carries 2 extra fixed stages (material despatch,
+    // arrived for powder coating) this test isn't filling in, which would otherwise become the
+    // "next unfilled stage" instead of the Action plan this test is actually checking for.
+    await patchProcurementItem(project.id, "hardware", users.design_engineer, { requirementCreatedAt: now });
+    await patchProcurementItem(project.id, "hardware", users.purchase, {
+      quoteCreatedAt: now,
+      paymentSettledAt: now,
+      orderConfirmedAt: now,
+      actualArrivalDate: now,
+    });
+    await patchProcurementItem(project.id, "hardware", users.purchase, { qcCheckedAt: now, qcPassed: false });
+
+    const all = tasksFor(await getUnifiedMyTasks("purchase"), project.id).filter((t) => t.subTaskLabel === "Hardware");
+    expect(all).toHaveLength(1);
+    expect(all[0].taskLabel).toBe("Action plan");
+    expect(all[0].kind).toBe("procurement_stage");
+  });
+
+  it("once every stage (including QC pass) is done, the item has no open task left at all", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    const now = new Date();
+    for (const itemType of ["section", "hardware", "gasket"] as const) {
+      await patchProcurementItem(project.id, itemType, users.design_engineer, { requirementCreatedAt: now });
+      await patchProcurementItem(project.id, itemType, users.purchase, {
+        quoteCreatedAt: now,
+        paymentSettledAt: now,
+        orderConfirmedAt: now,
+        // Section only — hardware/gasket never populate these two, same as ProcurementItem's own
+        // schema comment says, but harmless to always pass (see patchProcurementItem's ...rest spread).
+        materialDespatchAt: itemType === "section" ? now : undefined,
+        arrivedForPowderCoatingAt: itemType === "section" ? now : undefined,
+        actualArrivalDate: now,
+        qcCheckedAt: now,
+      });
+    }
+    const all = tasksFor(await getUnifiedMyTasks(null), project.id).filter((t) => t.kind === "procurement_stage");
+    expect(all).toHaveLength(0);
+  });
+});
+
+describe("getUnifiedMyTasks — excludes derived phase steps and soft-deleted projects", () => {
+  it("never includes 2A/2D1/2F — their own sub-parts already show up as procurement_stage rows", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    const all = tasksFor(await getUnifiedMyTasks(null), project.id);
+    expect(all.some((t) => t.kind === "phase_step" && ["2A", "2D1", "2F"].includes(t.stepCode ?? ""))).toBe(false);
+  });
+
+  it("a soft-deleted project contributes no tasks of any kind — regression for the prisma.ts soft-delete extension gap", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    const beforeCount = tasksFor(await getUnifiedMyTasks(null), project.id).length;
+    expect(beforeCount).toBeGreaterThan(0);
+
+    await prisma.project.update({ where: { id: project.id }, data: { deletedAt: new Date() } });
+    const afterCount = tasksFor(await getUnifiedMyTasks(null), project.id).length;
+    expect(afterCount).toBe(0);
+
+    // Restore it so cleanupTestProjects' own soft-delete (by name prefix) still finds it — a
+    // project already deleted here would otherwise be invisible to that cleanup query too.
+    await prisma.project.update({ where: { id: project.id }, data: { deletedAt: null } });
+  });
+});
+
+describe("getUnifiedMyTasks — sorting", () => {
+  it("returns tasks ascending by planned date, with no-date tasks last", async () => {
+    const all = await getUnifiedMyTasks(null);
+    const dated = all.filter((t) => t.plannedDate !== null).map((t) => t.plannedDate!);
+    const sorted = [...dated].sort();
+    expect(dated).toEqual(sorted);
+
+    const firstNoDateIndex = all.findIndex((t) => t.plannedDate === null);
+    if (firstNoDateIndex !== -1) {
+      expect(all.slice(firstNoDateIndex).every((t) => t.plannedDate === null)).toBe(true);
+    }
+  });
+
+  it("updateStepStatus's own actualEndDate option feeds straight through the same PhaseStep row unified-tasks reads", async () => {
+    const project = await createTestProjectDayOne();
+    const oneA = await prisma.phaseStep.findFirstOrThrow({ where: { projectId: project.id, stepCode: "1A" } });
+    const backdated = new Date("2020-06-01T00:00:00.000Z");
+    await updateStepStatus(oneA.id, "in_progress", users.hr_admin, { actualStartDate: backdated });
+
+    const step = await prisma.phaseStep.findUniqueOrThrow({ where: { id: oneA.id } });
+    expect(step.actualStartDate?.toISOString()).toBe(backdated.toISOString());
+  });
+});
