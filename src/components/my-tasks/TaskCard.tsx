@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { MyTaskItem } from "@/lib/my-tasks";
@@ -82,6 +82,13 @@ const MANUAL_PLANNED_DATE_STEP_CODES = new Set(["3C1", "3C2", "3E"]);
 // start to fill in separately (same reasoning as its Actual date being end-only, just above).
 // 3C1/3C2 keep the full start+end pair since those are genuinely multi-day spans of work.
 const MANUAL_PLANNED_END_ONLY_STEP_CODES = new Set(["3E"]);
+
+// 3C1 ("Aluminum framework") only, for now — which crew is fabricating it, chosen alongside that
+// step's own manual Planned start/end in the same Save CTA and locked in with them. A subset of
+// MANUAL_PLANNED_DATE_STEP_CODES, not every step in it: 3E is a QC check the project engineer
+// does themselves, not contracted-out work, so it has no contractor field. Kept local rather than
+// imported from step-actions.ts's own copy, for the same reason every other set here is.
+const MANUAL_CONTRACTOR_STEP_CODES = new Set(["3C1"]);
 
 // Steps that skip the Start->Mark complete two-click flow at not_started and jump straight to
 // a single completion button. Includes 1A/1B plus 1D, which — like 1B and 1C —
@@ -228,7 +235,8 @@ export function TaskCard({
   const [dateMessage, setDateMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   // 3C1's manual Planned start/end — a separate draft and save action from the Actual dates
   // above, since these are meant to be filled in and locked in *before* work (and its Actual
-  // dates) begins, not bundled into the same click.
+  // dates) begins, not bundled into the same click. Contractor is its own separate task now
+  // (see contractorDraft below) — a project engineer's own call, not bundled with these dates.
   const [plannedDateFields, setPlannedDateFields] = useSyncedDraft(
     `${item.plannedStartDate ?? ""}|${item.plannedEndDate ?? ""}`,
     () => ({
@@ -238,6 +246,12 @@ export function TaskCard({
   );
   const [plannedDateSubmitting, setPlannedDateSubmitting] = useState(false);
   const [plannedDateError, setPlannedDateError] = useState<string | null>(null);
+  // 3C1's own contractor pick — a separate draft/save action (POST /api/phase-steps/[id]/contractor)
+  // from the Planned dates above. See contractorPickerOpen further down.
+  const [contractorDraft, setContractorDraft] = useSyncedDraft(item.contractorId ?? "", (v) => v ?? "");
+  const [contractorSubmitting, setContractorSubmitting] = useState(false);
+  const [contractorError, setContractorError] = useState<string | null>(null);
+  const [contractors, setContractors] = useState<{ id: string; name: string }[]>([]);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -543,6 +557,33 @@ export function TaskCard({
     }
   }
 
+  async function saveContractor() {
+    if (!contractorDraft) {
+      setContractorError("Choose a contractor");
+      return;
+    }
+    setContractorSubmitting(true);
+    setContractorError(null);
+    try {
+      const res = await fetch(`/api/phase-steps/${item.id}/contractor`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contractorId: contractorDraft }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setContractorError(typeof data.error === "string" ? data.error : "Could not save contractor");
+        setContractorSubmitting(false);
+        return;
+      }
+      router.refresh();
+      setContractorSubmitting(false);
+    } catch {
+      setContractorError("Could not reach the server");
+      setContractorSubmitting(false);
+    }
+  }
+
   const canStartOrComplete = item.gateBlockedBy === null || item.gateBlockedBy.length === 0;
   // What actually gets saved as the actual-end value if a completion action is submitted
   // right now — the date field's current value, or today if it's empty (mirrors the server's
@@ -560,16 +601,41 @@ export function TaskCard({
   const needsDelayCategory = needsDelayCategoryChoice && !delayCategory;
   const isGlassPO = GLASS_PO_STEP_CODES.has(item.stepCode);
   const hasManualPlannedDates = MANUAL_PLANNED_DATE_STEP_CODES.has(item.stepCode);
+  const hasManualContractor = MANUAL_CONTRACTOR_STEP_CODES.has(item.stepCode);
   const plannedDatesEndOnly = MANUAL_PLANNED_END_ONLY_STEP_CODES.has(item.stepCode);
   // Once the relevant field(s) are saved they're locked in — no more casual re-editing through
   // this form. End-only steps (3E) only ever need their Planned end filled before locking.
-  const plannedDatesLocked = plannedDatesEndOnly
-    ? !!item.plannedEndDate
-    : !!item.plannedStartDate && !!item.plannedEndDate;
-  // Start/Mark complete are disabled until then — the whole point of a dedicated Save CTA for
-  // these steps' Planned dates is to make filling them in a deliberate first step, not something
-  // that can be skipped and back-filled after the fact.
-  const blockedByUnsavedPlannedDates = hasManualPlannedDates && !plannedDatesLocked;
+  const plannedDatesLocked = plannedDatesEndOnly ? !!item.plannedEndDate : !!item.plannedStartDate && !!item.plannedEndDate;
+  const contractorLocked = !!item.contractorId;
+  // Fetched once the picker is actually reachable — a locked-in row shows item.contractorName
+  // instead (see the select's own fallback option below), so there's nothing to fetch a live
+  // list for once this is no longer editable.
+  const contractorPickerOpen = canEditDates && hasManualContractor && !contractorLocked;
+  useEffect(() => {
+    if (!contractorPickerOpen) return;
+    let cancelled = false;
+    fetch("/api/contractors")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (!cancelled) setContractors(Array.isArray(data) ? data : []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [contractorPickerOpen]);
+  // Start/Mark complete are disabled until both the Planned dates *and* (for 3C1) the contractor
+  // are saved — two independent CTAs now (see saveContractor/savePlannedDates above), but the
+  // step itself still can't begin without either: you can't schedule installation without dates,
+  // and you can't schedule it with a contractor no one's confirmed yet.
+  const blockedByUnsavedPlannedDates =
+    hasManualPlannedDates && !(plannedDatesLocked && (!hasManualContractor || contractorLocked));
+  // Whichever of the two is still outstanding — checked in the order a project engineer would
+  // naturally tackle them (contractor first, per the section above the planned dates one).
+  const plannedDatesHint =
+    hasManualContractor && !contractorLocked
+      ? "Select a contractor above first"
+      : "Save the planned dates above first";
   const visibleDateFields = SINGLE_DATE_FIELD_STEP_CODES.has(item.stepCode)
     ? DATE_FIELDS.filter((f) => f.key !== "actualStartDate")
     : DATE_FIELDS;
@@ -670,6 +736,61 @@ export function TaskCard({
           )}
         </div>
       </div>
+
+      {hasManualContractor && (
+        <div
+          className={`flex flex-col gap-2 rounded-lg border p-3 ${
+            item.contractorOverdue
+              ? "border-amber-500/50 bg-amber-500/10 dark:border-amber-500/40 dark:bg-amber-500/[0.08]"
+              : "border-edge bg-overlay/40"
+          }`}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-fg-muted">Contractor</span>
+            {item.contractorPlannedDate && (
+              <span
+                className={`text-xs ${
+                  item.contractorOverdue ? "font-medium text-amber-700 dark:text-amber-400" : "text-fg-subtle"
+                }`}
+              >
+                Target: {formatDate(item.contractorPlannedDate)}
+                {item.contractorOverdue ? " — overdue" : ""}
+              </span>
+            )}
+          </div>
+          {contractorLocked ? (
+            <p className="text-sm text-fg">{item.contractorName}</p>
+          ) : canEditDates ? (
+            <>
+              <select
+                value={contractorDraft}
+                onChange={(e) => setContractorDraft(e.target.value)}
+                className="h-10 w-full rounded-lg border border-edge bg-bg px-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
+              >
+                <option value="">Select contractor…</option>
+                {contractors.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={saveContractor}
+                  disabled={contractorSubmitting}
+                  className={`${btnAdminSmall} disabled:opacity-40`}
+                >
+                  {contractorSubmitting ? <Spinner className="h-3.5 w-3.5" /> : "Save contractor"}
+                </button>
+              </div>
+              {contractorError && <p className="text-xs text-red-600 dark:text-red-400">{contractorError}</p>}
+            </>
+          ) : (
+            <p className="text-xs text-fg-subtle">Not selected yet.</p>
+          )}
+        </div>
+      )}
 
       <div className="text-xs text-fg-muted">Planned finish: {formatDate(item.plannedEndDate)}</div>
 
@@ -1148,7 +1269,7 @@ export function TaskCard({
                   className={btnPrimary}
                   onClick={startStep}
                   disabled={submitting || !canStartOrComplete || blockedByUnsavedPlannedDates}
-                  title={blockedByUnsavedPlannedDates ? "Save the planned dates above first" : undefined}
+                  title={blockedByUnsavedPlannedDates ? plannedDatesHint : undefined}
                 >
                   Start
                 </button>
@@ -1172,7 +1293,7 @@ export function TaskCard({
                       needsLateReason ||
                       needsDelayCategory
                     }
-                    title={blockedByUnsavedPlannedDates ? "Save the planned dates above first" : undefined}
+                    title={blockedByUnsavedPlannedDates ? plannedDatesHint : undefined}
                   >
                     Pass
                   </button>
@@ -1182,7 +1303,7 @@ export function TaskCard({
                     disabled={submitting || blockedByUnsavedPlannedDates || !note.trim()}
                     title={
                       blockedByUnsavedPlannedDates
-                        ? "Save the planned dates above first"
+                        ? plannedDatesHint
                         : !note.trim()
                           ? "Add a note explaining the failure first"
                           : undefined
@@ -1201,7 +1322,7 @@ export function TaskCard({
                     blockedByUnsavedPlannedDates ||
                     (item.stepCode !== "1A" && (needsLateReason || needsDelayCategory))
                   }
-                  title={blockedByUnsavedPlannedDates ? "Save the planned dates above first" : undefined}
+                  title={blockedByUnsavedPlannedDates ? plannedDatesHint : undefined}
                 >
                   Mark complete
                 </button>
@@ -1224,7 +1345,7 @@ export function TaskCard({
           gate above — where Start/Mark complete are long gone and there'd be nothing left to
           act on this hint. */}
       {panel === "none" && hasStatusAction && item.status !== "blocked" && blockedByUnsavedPlannedDates && (
-        <p className="text-xs text-amber-600 dark:text-amber-400">Save the planned dates above first</p>
+        <p className="text-xs text-amber-600 dark:text-amber-400">{plannedDatesHint}</p>
       )}
     </div>
   );

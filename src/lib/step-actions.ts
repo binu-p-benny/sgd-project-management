@@ -39,6 +39,14 @@ export const DELAY_CATEGORY_STEP_CODES = new Set(["1A", "1B", "1C", "1D", "2D2"]
 // fully system-computed and this route rejects writes to them, same as it always has.
 export const MANUAL_PLANNED_DATE_STEP_CODES = new Set(["3C1", "3C2", "3E"]);
 
+// 3C1 ("Aluminum framework") only, for now — which crew is fabricating it. Its own separate
+// task from that step's manual Planned start/end, with its own Save CTA (see
+// POST /api/phase-steps/[id]/contractor and TaskCard.tsx/TaskTable.tsx) — not bundled into the
+// same submit. A subset of MANUAL_PLANNED_DATE_STEP_CODES, not every step in it: 3E is a QC
+// check the project engineer does themselves, not contracted-out work, so it has no contractor
+// field to fill.
+export const MANUAL_CONTRACTOR_STEP_CODES = new Set(["3C1"]);
+
 export class StepActionError extends Error {
   status: number;
   detail?: unknown;

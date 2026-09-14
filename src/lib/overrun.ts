@@ -27,6 +27,14 @@ export function isProcurementItemOverrun(
   return isProcurementStageOverrun(expectedArrivalDate, actualArrivalDate);
 }
 
+/** True once a manual-contractor step's target date (see MANUAL_CONTRACTOR_STEP_CODES in
+ *  step-actions.ts) has passed with no contractor chosen yet — same "expected but not done"
+ *  shape as isProcurementStageOverrun, just keyed on the presence of an id rather than a date. */
+export function isContractorSelectionOverdue(plannedDate: Date | null, contractorId: string | null): boolean {
+  if (!plannedDate || contractorId) return false;
+  return new Date() > plannedDate;
+}
+
 export function daysBlocked(updatedAt: Date): number {
   const msPerDay = 1000 * 60 * 60 * 24;
   return Math.floor((Date.now() - updatedAt.getTime()) / msPerDay);

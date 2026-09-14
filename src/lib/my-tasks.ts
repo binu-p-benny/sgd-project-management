@@ -2,9 +2,9 @@ import type { Department } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { checkDependencyGate } from "@/lib/dependency-gate";
 import { getRequirementCreatedStatus, getMaterialsArrivedStatus, getMaterialQCStatus } from "@/lib/procurement";
-import { isStepOverrun, daysBlocked } from "@/lib/overrun";
+import { isStepOverrun, isContractorSelectionOverdue, daysBlocked } from "@/lib/overrun";
 import { findUpstreamDelay, type DelayGraphNode } from "@/lib/reschedule";
-import { DERIVED_STEP_CODES } from "@/lib/step-actions";
+import { DERIVED_STEP_CODES, MANUAL_CONTRACTOR_STEP_CODES } from "@/lib/step-actions";
 
 export interface MyTaskItem {
   id: string;
@@ -42,6 +42,18 @@ export interface MyTaskItem {
   isDerived: boolean;
   derivedSummary: { itemType: string; done: boolean }[] | null;
   gateBlockedBy: string[] | null;
+  // 3C1 only today (see MANUAL_CONTRACTOR_STEP_CODES) — null everywhere else, and until one's
+  // been chosen. Name is denormalized here purely for display; TaskCard writes back
+  // contractorId only, via its own dedicated route (POST /api/phase-steps/[id]/contractor).
+  contractorId: string | null;
+  contractorName: string | null;
+  // Also 3C1 only — the Section procurement item's own Requirement created date, i.e. once the
+  // aluminum material requirement is known, a contractor should already be lined up. Null until
+  // that's actually happened (which for most projects is well before 3C1 itself even exists —
+  // see maybeEarlyUnlockPhase3 in step-actions.ts — so this is usually already in the past the
+  // moment 3C1 shows up at all, and contractorOverdue below reads true immediately).
+  contractorPlannedDate: string | null;
+  contractorOverdue: boolean;
 }
 
 export interface GetMyTasksOptions {
@@ -71,7 +83,10 @@ export async function getMyTasks(
         ? { OR: [{ owningDepartment: department }, { secondaryDepartment: department }] }
         : {}),
     },
-    include: { project: { select: { id: true, name: true, client: { select: { name: true } } } } },
+    include: {
+      project: { select: { id: true, name: true, client: { select: { name: true } } } },
+      contractor: { select: { id: true, name: true } },
+    },
     orderBy: [{ updatedAt: "asc" }],
   });
 
@@ -147,6 +162,12 @@ export async function getMyTasks(
 
     const upstreamDelay = findUpstreamDelay(step.stepCode, graphNodesByProject.get(step.projectId) ?? []);
 
+    let contractorPlannedDate: Date | null = null;
+    if (MANUAL_CONTRACTOR_STEP_CODES.has(step.stepCode)) {
+      const s = await getRequirementCreatedStatus(step.projectId);
+      contractorPlannedDate = s.items.find((i) => i.itemType === "section")?.requirementCreatedAt ?? null;
+    }
+
     items.push({
       id: step.id,
       stepCode: step.stepCode,
@@ -173,6 +194,10 @@ export async function getMyTasks(
       isDerived,
       derivedSummary,
       gateBlockedBy,
+      contractorId: step.contractorId,
+      contractorName: step.contractor?.name ?? null,
+      contractorPlannedDate: contractorPlannedDate?.toISOString() ?? null,
+      contractorOverdue: isContractorSelectionOverdue(contractorPlannedDate, step.contractorId),
     });
   }
 

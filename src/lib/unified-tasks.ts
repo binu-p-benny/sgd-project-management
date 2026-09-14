@@ -1,9 +1,15 @@
 import type { BlockedReason, Department, StepStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { isStepOverrun, isProcurementStageOverrun } from "@/lib/overrun";
-import { computePhase2PlanAnchor, computeAllProcurementPlannedDates, computeSectionQCPlanned, computeExpectedActionPlanDate } from "@/lib/procurement";
+import { isStepOverrun, isProcurementStageOverrun, isContractorSelectionOverdue } from "@/lib/overrun";
+import {
+  computePhase2PlanAnchor,
+  computeAllProcurementPlannedDates,
+  computeSectionQCPlanned,
+  computeExpectedActionPlanDate,
+  getRequirementCreatedStatus,
+} from "@/lib/procurement";
 import { PROCUREMENT_STAGES, firstUnfilledStage, type StageSpec } from "@/lib/project-filters";
-import { DERIVED_STEP_CODES } from "@/lib/step-actions";
+import { DERIVED_STEP_CODES, MANUAL_CONTRACTOR_STEP_CODES } from "@/lib/step-actions";
 import { checkDependencyGate } from "@/lib/dependency-gate";
 
 export type TaskKind = "phase_step" | "procurement_stage" | "glass_po_stage" | "action_item" | "service_item";
@@ -67,6 +73,17 @@ export interface UnifiedTask {
   // kind === "action_item" only — which of the 3 action-item tables (and so which API route)
   // this row's refId belongs to. Null for every other kind.
   actionItemSource: "procurement" | "glass" | "phase_step" | null;
+  // 3C1's phase_step row only (see MANUAL_CONTRACTOR_STEP_CODES) — null/false for every other
+  // row. contractorPlannedDate is the Section item's own Requirement created date: once that
+  // material requirement is known, a contractor should already be lined up, so it's usually
+  // already in the past by the time 3C1 itself even exists (see maybeEarlyUnlockPhase3 in
+  // step-actions.ts) — contractorOverdue reads true immediately in that case. TaskTable PATCHes
+  // /api/phase-steps/[id]/contractor (refId) to set contractorId, separately from this row's own
+  // dateField-driven Start/Complete actions.
+  contractorId: string | null;
+  contractorName: string | null;
+  contractorPlannedDate: string | null;
+  contractorOverdue: boolean;
 }
 
 /** Builds one procurement-stage or glass-PO-stage task row — same shape either way, just a
@@ -107,6 +124,10 @@ function buildStageTask(args: {
     noteField: STAGE_NOTE_FIELD[fieldName] ?? null,
     stepCode: null,
     actionItemSource: null,
+    contractorId: null,
+    contractorName: null,
+    contractorPlannedDate: null,
+    contractorOverdue: false,
   };
 }
 
@@ -146,6 +167,10 @@ function buildActionPlanTask(args: {
     noteField: "actionPlanNote",
     stepCode: null,
     actionItemSource: null,
+    contractorId: null,
+    contractorName: null,
+    contractorPlannedDate: null,
+    contractorOverdue: false,
   };
 }
 
@@ -163,7 +188,10 @@ async function buildPhaseStepTasks(department: Department | null): Promise<Unifi
       stepCode: { notIn: [...DERIVED_STEP_CODES, "3A", "3B"] },
       ...(department ? { OR: [{ owningDepartment: department }, { secondaryDepartment: department }] } : {}),
     },
-    include: { project: { select: { id: true, name: true, client: { select: { name: true } } } } },
+    include: {
+      project: { select: { id: true, name: true, client: { select: { name: true } } } },
+      contractor: { select: { id: true, name: true } },
+    },
   });
 
   const tasks: UnifiedTask[] = [];
@@ -184,6 +212,13 @@ async function buildPhaseStepTasks(department: Department | null): Promise<Unifi
     if (step.status === "not_started" && gateBlockedBy && gateBlockedBy.length > 0) {
       continue;
     }
+
+    let contractorPlannedDate: Date | null = null;
+    if (MANUAL_CONTRACTOR_STEP_CODES.has(step.stepCode)) {
+      const s = await getRequirementCreatedStatus(step.projectId);
+      contractorPlannedDate = s.items.find((i) => i.itemType === "section")?.requirementCreatedAt ?? null;
+    }
+
     tasks.push({
       id: `phase_step:${step.id}`,
       kind: "phase_step",
@@ -210,6 +245,10 @@ async function buildPhaseStepTasks(department: Department | null): Promise<Unifi
       noteField: null,
       stepCode: step.stepCode,
       actionItemSource: null,
+      contractorId: step.contractorId,
+      contractorName: step.contractor?.name ?? null,
+      contractorPlannedDate: contractorPlannedDate?.toISOString() ?? null,
+      contractorOverdue: isContractorSelectionOverdue(contractorPlannedDate, step.contractorId),
     });
   }
   return tasks;
@@ -406,6 +445,10 @@ async function buildActionItemTasks(department: Department | null): Promise<Unif
       noteField: "note",
       stepCode: null,
       actionItemSource: "procurement",
+      contractorId: null,
+      contractorName: null,
+      contractorPlannedDate: null,
+      contractorOverdue: false,
     });
   }
 
@@ -434,6 +477,10 @@ async function buildActionItemTasks(department: Department | null): Promise<Unif
       noteField: "note",
       stepCode: null,
       actionItemSource: "glass",
+      contractorId: null,
+      contractorName: null,
+      contractorPlannedDate: null,
+      contractorOverdue: false,
     });
   }
 
@@ -462,6 +509,10 @@ async function buildActionItemTasks(department: Department | null): Promise<Unif
       noteField: "note",
       stepCode: null,
       actionItemSource: "phase_step",
+      contractorId: null,
+      contractorName: null,
+      contractorPlannedDate: null,
+      contractorOverdue: false,
     });
   }
 
@@ -510,6 +561,10 @@ async function buildServiceItemTasks(department: Department | null): Promise<Uni
     noteField: "note",
     stepCode: null,
     actionItemSource: null,
+    contractorId: null,
+    contractorName: null,
+    contractorPlannedDate: null,
+    contractorOverdue: false,
   }));
 }
 

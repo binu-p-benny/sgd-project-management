@@ -230,6 +230,8 @@ model Contractor {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
+  phaseSteps PhaseStep[]
+
   @@index([name])
   @@map("contractors")
 }
@@ -255,6 +257,13 @@ model PhaseStep {
   plannedEndDate   DateTime? @map("planned_end_date") @db.Timestamptz(3)
   actualStartDate  DateTime? @map("actual_start_date") @db.Timestamptz(3)
   actualEndDate    DateTime? @map("actual_end_date") @db.Timestamptz(3)
+
+  // 3C1 only today (see MANUAL_CONTRACTOR_STEP_CODES in TaskCard.tsx) — which crew is doing the
+  // aluminum framework, chosen alongside that step's own manual Planned start/end and saved by
+  // the same CTA. onDelete: SetNull, not the schema default Restrict: a contractor removed from
+  // the /contractors console should just leave this unassigned, never block the delete.
+  contractorId String?     @map("contractor_id")
+  contractor   Contractor? @relation(fields: [contractorId], references: [id], onDelete: SetNull)
 
   blockedReason BlockedReason? @map("blocked_reason")
   blockedNote   String?        @map("blocked_note") @db.Text

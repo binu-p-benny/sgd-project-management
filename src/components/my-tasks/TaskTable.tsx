@@ -19,6 +19,9 @@ import {
 const SINGLE_COMPLETION_STEP_CODES = new Set(["1A", "1B", "1D", "2D2"]);
 const DELAY_CATEGORY_STEP_CODES = new Set(["1A", "1B", "1C", "1D", "2D2"]);
 const MANUAL_PLANNED_DATE_STEP_CODES = new Set(["3C1", "3C2", "3E"]);
+// 3C1 only, for now — see MANUAL_CONTRACTOR_STEP_CODES in step-actions.ts (this file's own
+// mirrored copy, same reason every other set here is: that file pulls in the Prisma client).
+const MANUAL_CONTRACTOR_STEP_CODES = new Set(["3C1"]);
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
@@ -129,6 +132,15 @@ function useTaskActions(task: UnifiedTask) {
   const [error, setError] = useState<string | null>(null);
   const [rowPhase, setRowPhase] = useState<RowPhase>("idle");
   const rowTimeouts = useRef<ReturnType<typeof setTimeout>[]>([]);
+  // 3C1's own contractor pick — a separate action from everything else on this row (see
+  // saveContractor below), reachable straight from here since it's the owning department's own
+  // call, not an admin-only date edit (see POST /api/phase-steps/[id]/contractor).
+  const isManualContractorStep = !!task.stepCode && MANUAL_CONTRACTOR_STEP_CODES.has(task.stepCode);
+  const needsContractor = isManualContractorStep && !task.contractorId;
+  const [contractors, setContractors] = useState<{ id: string; name: string }[]>([]);
+  const [contractorDraft, setContractorDraft] = useState("");
+  const [contractorSubmitting, setContractorSubmitting] = useState(false);
+  const [contractorError, setContractorError] = useState<string | null>(null);
 
   useEffect(() => {
     const timeouts = rowTimeouts.current;
@@ -136,6 +148,46 @@ function useTaskActions(task: UnifiedTask) {
       timeouts.forEach(clearTimeout);
     };
   }, []);
+
+  useEffect(() => {
+    if (!needsContractor) return;
+    let cancelled = false;
+    fetch("/api/contractors")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (!cancelled) setContractors(Array.isArray(data) ? data : []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [needsContractor]);
+
+  async function saveContractor() {
+    if (!contractorDraft) {
+      setContractorError("Choose a contractor");
+      return;
+    }
+    setContractorSubmitting(true);
+    setContractorError(null);
+    try {
+      const res = await fetch(`/api/phase-steps/${task.refId}/contractor`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contractorId: contractorDraft }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setContractorError(typeof data.error === "string" ? data.error : "Could not save contractor");
+        setContractorSubmitting(false);
+        return;
+      }
+      router.refresh();
+    } catch {
+      setContractorError("Could not reach the server");
+      setContractorSubmitting(false);
+    }
+  }
 
   const isLate = !!task.plannedDate && actualDate > toDateInputValue(task.plannedDate);
   const needsDelayCategory = !!(
@@ -145,12 +197,15 @@ function useTaskActions(task: UnifiedTask) {
     isLate
   );
   const needsLateReason = isLate && !note.trim();
+  // Start/Mark complete stay disabled until both the Planned dates *and* (for 3C1) the
+  // contractor are set — same "still can't begin without either" logic as TaskCard.tsx.
   const blockedByUnsavedPlannedDates = !!(
     task.kind === "phase_step" &&
     task.stepCode &&
     MANUAL_PLANNED_DATE_STEP_CODES.has(task.stepCode) &&
-    !task.plannedDate
+    (!task.plannedDate || needsContractor)
   );
+  const blockedByUnsavedPlannedDatesReason = needsContractor ? "contractor" : !task.plannedDate ? "dates" : null;
   // Mirrors ProcurementTracker's own needsReason, which requires a note for ANY late
   // completion, not just a QC failure — Glass PO's version (and SiteQCTracker's) deliberately
   // excludes lateness (see GlassTracker.tsx/SiteQCTracker.tsx's own needsReason, "no lateness
@@ -325,6 +380,15 @@ function useTaskActions(task: UnifiedTask) {
     needsDelayCategory,
     needsLateReason,
     blockedByUnsavedPlannedDates,
+    blockedByUnsavedPlannedDatesReason,
+    isManualContractorStep,
+    needsContractor,
+    contractors,
+    contractorDraft,
+    setContractorDraft,
+    contractorSubmitting,
+    contractorError,
+    saveContractor,
     needsLateReasonSimple,
     canStartOrComplete,
     isPhaseStep,
@@ -404,6 +468,58 @@ function ReasonField({
       {(s.blockedByMissingLateReason || s.needsLateReasonSimple) && (
         <p className="text-[11px] text-amber-600 dark:text-amber-400">Add a note before marking this late</p>
       )}
+    </div>
+  );
+}
+
+// 3C1's own separate "select contractor" task — see needsContractor/saveContractor in
+// useTaskActions. Only ever rendered when task.stepCode === "3C1" and no contractor is set yet;
+// once saved, the row just shows task.contractorName as plain text (see TaskRow/TaskAccordionItem).
+function ContractorField({ task, s, size }: { task: UnifiedTask; s: TaskActions; size: Size }) {
+  return (
+    <div
+      className={`flex flex-col gap-1.5 rounded-lg border p-2 ${
+        task.contractorOverdue
+          ? "border-amber-500/50 bg-amber-500/10 dark:border-amber-500/40 dark:bg-amber-500/[0.08]"
+          : "border-edge bg-overlay/40"
+      }`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-1">
+        <span className="text-[11px] font-medium text-fg-muted">Select contractor</span>
+        {task.contractorPlannedDate && (
+          <span
+            className={`text-[11px] ${
+              task.contractorOverdue ? "font-medium text-amber-700 dark:text-amber-400" : "text-fg-subtle"
+            }`}
+          >
+            Target {formatDate(task.contractorPlannedDate)}
+            {task.contractorOverdue && ` · overdue ${daysOverdue(task.contractorPlannedDate)}d`}
+          </span>
+        )}
+      </div>
+      <select
+        className={fieldCls(size)}
+        value={s.contractorDraft}
+        onChange={(e) => s.setContractorDraft(e.target.value)}
+      >
+        <option value="">Select contractor…</option>
+        {s.contractors.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </select>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          className={btnCls("secondary", size)}
+          onClick={s.saveContractor}
+          disabled={s.contractorSubmitting}
+        >
+          {s.contractorSubmitting ? <Spinner className={spinnerCls(size)} /> : "Save contractor"}
+        </button>
+      </div>
+      {s.contractorError && <p className="text-[11px] text-red-600 dark:text-red-400">{s.contractorError}</p>}
     </div>
   );
 }
@@ -550,13 +666,19 @@ function TaskActionCluster({
         s.blockedByUnsavedPlannedDates &&
         (task.status === "not_started" || task.status === "in_progress") && (
           <div className={`${noticeW} text-[11px] text-amber-600 dark:text-amber-400`}>
-            Planned dates not set yet —{" "}
-            {isAdmin ? (
-              <Link href={`/projects/${task.project.id}`} className="underline">
-                set them on the project page
-              </Link>
+            {s.blockedByUnsavedPlannedDatesReason === "contractor" ? (
+              "Select a contractor for this step first"
             ) : (
-              "ask an admin to set them"
+              <>
+                Planned dates not set yet —{" "}
+                {isAdmin ? (
+                  <Link href={`/projects/${task.project.id}`} className="underline">
+                    set them on the project page
+                  </Link>
+                ) : (
+                  "ask an admin to set them"
+                )}
+              </>
             )}
           </div>
         )}
@@ -698,6 +820,14 @@ function TaskRow({ task, isAdmin }: { task: UnifiedTask; isAdmin: boolean }) {
           {!s.canStartOrComplete && task.gateBlockedBy && (
             <div className="mt-1 text-xs text-fg-subtle">Waiting on: {task.gateBlockedBy.join(", ")}</div>
           )}
+          {s.isManualContractorStep &&
+            (s.needsContractor ? (
+              <div className="mt-1.5 w-56">
+                <ContractorField task={task} s={s} size="sm" />
+              </div>
+            ) : (
+              <div className="mt-1 text-xs text-fg-muted">Contractor: {task.contractorName}</div>
+            ))}
         </td>
         <td className="px-3 py-2.5">
           <ActualDateField s={s} size="sm" />
@@ -775,6 +905,15 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
           {!open && s.isPhaseStep && task.status === "blocked" && (
             <div className="text-xs font-medium text-red-600 dark:text-red-400">Blocked</div>
           )}
+          {!open && s.needsContractor && (
+            <div
+              className={`text-xs font-medium ${
+                task.contractorOverdue ? "text-amber-700 dark:text-amber-400" : "text-fg-muted"
+              }`}
+            >
+              Contractor not selected{task.contractorOverdue ? " — overdue" : ""}
+            </div>
+          )}
         </div>
         <svg
           viewBox="0 0 24 24"
@@ -799,6 +938,12 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
           {!s.canStartOrComplete && task.gateBlockedBy && (
             <div className="text-xs text-fg-subtle">Waiting on: {task.gateBlockedBy.join(", ")}</div>
           )}
+          {s.isManualContractorStep &&
+            (s.needsContractor ? (
+              <ContractorField task={task} s={s} size="md" />
+            ) : (
+              <div className="text-xs text-fg-muted">Contractor: {task.contractorName}</div>
+            ))}
           {isAdmin && (
             <Link
               href={task.kind === "service_item" ? `/services/${task.project.id}` : `/projects/${task.project.id}`}

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   isStepOverrun,
   isProcurementItemOverrun,
+  isContractorSelectionOverdue,
   daysBlocked,
   projectHasOverrun,
   getEffectiveOverallStatus,
@@ -12,6 +13,21 @@ import {
 
 const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
 const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+describe("isContractorSelectionOverdue", () => {
+  it("true once the target date has passed with no contractor chosen yet", () => {
+    expect(isContractorSelectionOverdue(yesterday, null)).toBe(true);
+  });
+  it("false once a contractor is set, regardless of date", () => {
+    expect(isContractorSelectionOverdue(yesterday, "contractor-1")).toBe(false);
+  });
+  it("false when the target date hasn't passed yet", () => {
+    expect(isContractorSelectionOverdue(tomorrow, null)).toBe(false);
+  });
+  it("false when there's no target date at all", () => {
+    expect(isContractorSelectionOverdue(null, null)).toBe(false);
+  });
+});
 
 describe("isStepOverrun", () => {
   it("true when today is past planned_end_date and step is incomplete", () => {

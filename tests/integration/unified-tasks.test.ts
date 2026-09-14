@@ -2,8 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { Department } from "@prisma/client";
 import { getUnifiedMyTasks } from "@/lib/unified-tasks";
 import { updateStepStatus } from "@/lib/step-actions";
-import { createTestProjectDayOne, ensureTestUsers, cleanupTestProjects, prisma } from "../helpers/db";
-import { advanceThroughPhase1, patchProcurementItem } from "../helpers/scenarios";
+import { createTestProjectDayOne, ensureTestUsers, cleanupTestProjects, getStep, prisma } from "../helpers/db";
+import { advanceThroughPhase1, advanceThroughPhase2, patchProcurementItem } from "../helpers/scenarios";
 
 let users: Record<Department, string>;
 
@@ -137,6 +137,58 @@ describe("getUnifiedMyTasks — excludes derived phase steps and soft-deleted pr
     // Restore it so cleanupTestProjects' own soft-delete (by name prefix) still finds it — a
     // project already deleted here would otherwise be invisible to that cleanup query too.
     await prisma.project.update({ where: { id: project.id }, data: { deletedAt: null } });
+  });
+});
+
+describe("getUnifiedMyTasks — 3C1's own contractor-selection sub-task", () => {
+  it("surfaces the Section item's requirement-created date as contractorPlannedDate, already overdue by the time 3C1 exists", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users); // drives 2F to completed, seeding Phase 3 (3C1)
+
+    const all = tasksFor(await getUnifiedMyTasks("project_engineer"), project.id);
+    const threeC1 = all.find((t) => t.stepCode === "3C1");
+    expect(threeC1).toBeDefined();
+    expect(threeC1!.contractorId).toBeNull();
+    expect(threeC1!.contractorPlannedDate).not.toBeNull();
+    // Section's requirement was created moments ago (advanceThroughPhase2's own doing) — already
+    // in the past, so this reads overdue the instant 3C1 shows up at all. See MyTaskItem's own
+    // contractorOverdue for the same rule on the project-detail page.
+    expect(threeC1!.contractorOverdue).toBe(true);
+  });
+
+  it("not overdue while the Section requirement's date is still in the future", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users);
+    const future = new Date(Date.now() + 1000 * 60 * 60 * 24 * 5);
+    await patchProcurementItem(project.id, "section", users.design_engineer, { requirementCreatedAt: future });
+
+    const all = tasksFor(await getUnifiedMyTasks(null), project.id);
+    const threeC1 = all.find((t) => t.stepCode === "3C1");
+    expect(threeC1!.contractorPlannedDate).toBe(future.toISOString());
+    expect(threeC1!.contractorOverdue).toBe(false);
+  });
+
+  it("clears once a contractor is set directly on the step — no longer overdue either", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users);
+    const threeC1Step = await getStep(project.id, "3C1");
+    const contractor = await prisma.contractor.create({
+      data: { name: "__TEST__ Contractor Co", phone: "9999999999", address: "Test address" },
+    });
+    try {
+      await prisma.phaseStep.update({ where: { id: threeC1Step.id }, data: { contractorId: contractor.id } });
+
+      const all = tasksFor(await getUnifiedMyTasks(null), project.id);
+      const threeC1 = all.find((t) => t.stepCode === "3C1");
+      expect(threeC1!.contractorId).toBe(contractor.id);
+      expect(threeC1!.contractorName).toBe("__TEST__ Contractor Co");
+      expect(threeC1!.contractorOverdue).toBe(false);
+    } finally {
+      await prisma.contractor.delete({ where: { id: contractor.id } });
+    }
   });
 });
 

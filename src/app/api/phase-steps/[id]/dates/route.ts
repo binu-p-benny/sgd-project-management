@@ -31,7 +31,8 @@ const updateDatesSchema = z.object({
  * never gets one) stay consistent with the new actual end date. 2A/2D1/2F (DERIVED_STEP_CODES)
  * are rejected outright — their actual dates come only from procurement_items via
  * syncDerivedStepStatus, so a manual date here would just be a stray value nothing else reads,
- * sitting inconsistently alongside the real derivation.
+ * sitting inconsistently alongside the real derivation. 3C1's contractor is a separate, non-admin
+ * action now — see POST /api/phase-steps/[id]/contractor — not part of this route at all.
  */
 export async function PATCH(
   request: NextRequest,
@@ -72,7 +73,6 @@ export async function PATCH(
       { status: 400 }
     );
   }
-
   const { note, ...dateFields } = parsed.data;
   if (Object.keys(dateFields).length === 0) {
     return NextResponse.json({ error: "No date fields provided" }, { status: 400 });
