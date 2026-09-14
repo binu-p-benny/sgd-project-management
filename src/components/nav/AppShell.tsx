@@ -46,6 +46,13 @@ const CLIENTS_ICON = (
   </svg>
 );
 
+const CONTRACTORS_ICON = (
+  <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-full w-full stroke-current">
+    <rect x="3.5" y="9" width="17" height="10" rx="1.5" />
+    <path d="M8.5 9V6a1.5 1.5 0 0 1 1.5-1.5h4A1.5 1.5 0 0 1 15.5 6v3M3.5 13.5h17" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 const DASHBOARD_ICON = (
   <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-full w-full stroke-current">
     <rect x="4" y="4" width="7" height="9" rx="1" />
@@ -103,12 +110,13 @@ function navItemsFor(department: Department): NavItem[] {
   const items: NavItem[] = [primary];
 
   // HR & Admin proxy-edits any department's steps/procurement/payment on their behalf — same
-  // pairing /clients', /projects' and /services' own layout.tsx gate on, so these links only
-  // ever appear for someone who can actually get past them.
+  // pairing /clients', /contractors', /projects' and /services' own layout.tsx gate on, so
+  // these links only ever appear for someone who can actually get past them.
   const isAdmin = department === "owner_admin" || department === "hr_admin";
   if (isAdmin) {
     items.push(
       { href: "/clients", label: "Clients", icon: CLIENTS_ICON },
+      { href: "/contractors", label: "Contractors", icon: CONTRACTORS_ICON },
       { href: "/projects", label: "Projects", icon: PROJECTS_ICON },
       { href: "/services", label: "Services", icon: SERVICES_ICON },
       { href: "/admin", label: "Admin", icon: ADMIN_ICON }

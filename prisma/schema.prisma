@@ -215,6 +215,25 @@ model Client {
   @@map("clients")
 }
 
+// The vendor/crew side of a job — installation labor, transport, powder coating, etc. — kept as
+// its own list-and-add console, same shape as Client. First linked into Project via 3C1's own
+// Planned-dates Save CTA (see MANUAL_CONTRACTOR_STEP_CODES in TaskCard.tsx); onDelete: SetNull
+// on that relation rather than the default Restrict, so removing a contractor from the console
+// never blocks on — or 500s over, per Client's own lesson about Postgres SQLSTATE 23001 — a step
+// that once pointed at it. It just clears back to unassigned.
+model Contractor {
+  id      String @id @default(cuid())
+  name    String
+  phone   String
+  address String
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([name])
+  @@map("contractors")
+}
+
 model PhaseStep {
   id        String  @id @default(cuid())
   projectId String  @map("project_id")
