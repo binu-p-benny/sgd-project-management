@@ -2,7 +2,8 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { getSession, isAdminEditor } from "@/lib/auth";
+import { getSession, isAdminEditor, isOwnerAdmin } from "@/lib/auth";
+import { SkipPhaseButton } from "@/components/projects/SkipPhaseButton";
 import { ProcurementTracker } from "@/components/procurement/ProcurementTracker";
 import { GlassTracker, type GlassStageData } from "@/components/glass/GlassTracker";
 import { SiteQCTracker } from "@/components/projects/SiteQCTracker";
@@ -841,6 +842,9 @@ export default async function ProjectDetailPage({
               >
                 Edit project
               </Link>
+            )}
+            {!!session && isOwnerAdmin(session) && (
+              <SkipPhaseButton projectId={project.id} currentPhase={project.currentPhase} />
             )}
           </div>
         </div>

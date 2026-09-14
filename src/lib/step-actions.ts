@@ -21,6 +21,7 @@ import {
 } from "@/lib/procurement";
 import { rescheduleProjectDates } from "@/lib/reschedule";
 import { createEmptyGlassPurchaseOrderForProject } from "@/lib/glass";
+import { PROCUREMENT_STAGES } from "@/lib/project-filters";
 
 // 2A, 2D1 and 2F are derived from procurement_items — never manually settable.
 export const DERIVED_STEP_CODES = new Set(["2A", "2D1", "2F"]);
@@ -360,6 +361,116 @@ async function recomputeProjectPhase(projectId: string) {
       ...(phase === "completed" ? {} : { actualEndDate: null }),
     },
   });
+}
+
+const PHASE_ORDER: Record<ProjectPhase, number> = { phase_1: 0, phase_2: 1, phase_3: 2, completed: 3 };
+export type SkipTargetPhase = "phase_2" | "phase_3";
+
+/**
+ * Owner-only shortcut for a project that's already live in the real world past Phase 1 (or
+ * Phase 2) by the time it's entered here — bulk-marks every step before `targetPhase` completed,
+ * all dated `asOfDate`, instead of walking each one by hand for history nobody needs day-to-day
+ * tracking on. Phase 3's own steps (3A onward) are left untouched either way — the whole point is
+ * resuming *live* tracking from wherever the project actually is, not backfilling that too.
+ *
+ * Note 2D2 ("Final tight measurement at site") is a Phase 2 step but isn't in DERIVED_STEP_CODES
+ * and nothing downstream gates on it (see buildPhase2Steps) — so it needs its own explicit
+ * completion when skipping to phase_3, same as 1A-1D: a project that's really already at Phase 3
+ * necessarily already had its final site measurement done, even though the dependency graph
+ * itself doesn't enforce that.
+ *
+ * Deliberately bypasses updateStepStatus's normal validation (dependency gates, the
+ * visitUrgency/delayCategory prompts, late-reason requirements) — those exist to keep a *live*
+ * completion honest, which doesn't apply to backfilling something that already happened. Reuses
+ * the same seeding/derivation the rest of the app already trusts (seedNextPhaseIfNeeded,
+ * syncDerivedStepStatus, recomputeProjectPhase) rather than a parallel "fake complete" path, so
+ * nothing here can later get self-corrected back out from under the owner the next time real
+ * procurement data changes.
+ */
+export async function skipToPhase(
+  projectId: string,
+  targetPhase: SkipTargetPhase,
+  asOfDate: Date,
+  actorId: string
+): Promise<void> {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    include: { phaseSteps: { where: { stepCode: { in: ["1A", "1B", "1C", "1D"] } } } },
+  });
+  if (!project) throw new StepActionError(404, "Project not found");
+  if (PHASE_ORDER[project.currentPhase] >= PHASE_ORDER[targetPhase]) {
+    throw new StepActionError(
+      400,
+      `Project is already at or past ${targetPhase === "phase_2" ? "Phase 2" : "Phase 3"}`
+    );
+  }
+
+  const completeStepBackfilled = async (step: { id: string; status: StepStatus; actualStartDate: Date | null }) => {
+    await prisma.phaseStep.update({
+      where: { id: step.id },
+      data: {
+        status: "completed",
+        actualStartDate: step.actualStartDate ?? asOfDate,
+        actualEndDate: asOfDate,
+        blockedReason: null,
+        blockedNote: null,
+      },
+    });
+    await prisma.stepStatusLog.create({
+      data: {
+        phaseStepId: step.id,
+        changedByUserId: actorId,
+        oldStatus: step.status,
+        newStatus: "completed",
+        reason: `Phase skipped by owner — backfilled as of ${asOfDate.toDateString()}`,
+      },
+    });
+  };
+
+  if (project.currentPhase === "phase_1") {
+    for (const code of ["1A", "1B", "1C", "1D"] as const) {
+      const step = project.phaseSteps.find((s) => s.stepCode === code);
+      if (!step || step.status === "completed") continue;
+      await completeStepBackfilled(step);
+    }
+    // 1A's visitUrgency only exists to size 1B's own planned window (see step-template.ts) —
+    // moot here since every date above was just set directly, but the column still needs
+    // *something* valid in it.
+    await prisma.project.update({ where: { id: projectId }, data: { visitUrgency: "hot" } });
+    await seedNextPhaseIfNeeded(projectId, "1D", asOfDate, project.glassType);
+  }
+
+  if (targetPhase === "phase_3") {
+    const items = await prisma.procurementItem.findMany({ where: { projectId } });
+    for (const item of items) {
+      const data: Record<string, unknown> = { qcChecked: true, qcPassed: true };
+      for (const stage of PROCUREMENT_STAGES[item.itemType]) {
+        data[stage.field as string] = asOfDate;
+      }
+      await prisma.procurementItem.update({ where: { id: item.id }, data });
+    }
+    for (const code of ["2A", "2D1", "2F"] as const) {
+      await syncDerivedStepStatus(projectId, code, actorId);
+    }
+    // syncDerivedStepStatus stamps 2F's own actual_end_date as "now" — only 2A/2D1 derive a
+    // completedAt from the procurement dates that drove them (see its own comment) — corrected
+    // here so every backfilled step reads asOfDate, not the moment this skip happened to run.
+    await prisma.phaseStep.updateMany({
+      where: { projectId, stepCode: "2F" },
+      data: { actualEndDate: asOfDate },
+    });
+
+    // 2D2 isn't derived and nothing gates on it (see this function's own doc comment above), so
+    // the loops above never touch it — complete it explicitly, same as 1A-1D.
+    const step2D2 = await prisma.phaseStep.findFirst({ where: { projectId, stepCode: "2D2" } });
+    if (step2D2 && step2D2.status !== "completed") {
+      await completeStepBackfilled(step2D2);
+    }
+  }
+
+  await recomputeProjectPhase(projectId);
+  await rescheduleProjectDates(projectId);
+  await refreshProjectOverallStatus(projectId);
 }
 
 /**
