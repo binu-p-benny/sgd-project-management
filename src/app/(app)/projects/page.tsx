@@ -13,7 +13,12 @@ import {
   type EffectiveOverallStatus,
 } from "@/lib/overrun";
 import { buildAllStepCodes } from "@/lib/step-template";
-import { getProjectActiveDepartments, matchesPhaseProgressFilter, PHASE_PROGRESS_FILTER_OPTIONS } from "@/lib/project-filters";
+import {
+  getProjectActiveDepartments,
+  matchesPhaseProgressFilter,
+  matchesInstallationWindowFilter,
+  PHASE_PROGRESS_FILTER_OPTIONS,
+} from "@/lib/project-filters";
 import {
   PHASE_LABELS,
   OVERALL_STATUS_LABELS,
@@ -192,6 +197,8 @@ const ACTIVE_FILTER_LABEL: Record<string, (value: string) => string> = {
   newDays: (v) => `Created in last ${v} days`,
   overdue: () => `Has an overdue step`,
   currentStep: (v) => `Current step: ${v}${STEP_NAME_BY_CODE.has(v) ? ` · ${STEP_NAME_BY_CODE.get(v)}` : ""}`,
+  installFrom: (v) => `Installing from ${formatShortDate(new Date(v))}`,
+  installTo: (v) => `Installing until ${formatShortDate(new Date(v))}`,
 };
 
 export default async function ProjectsPage({
@@ -205,6 +212,8 @@ export default async function ProjectsPage({
     newDays?: string;
     overdue?: string;
     currentStep?: string;
+    installFrom?: string;
+    installTo?: string;
   }>;
 }) {
   const params = await searchParams;
@@ -220,6 +229,10 @@ export default async function ProjectsPage({
   const newDays = params.newDays ? Number(params.newDays) : undefined;
   const overdueOnly = params.overdue === "1";
   const currentStepFilter = params.currentStep;
+  // "to" is normalized to the end of that calendar day so a project whose 3C2 window falls
+  // anywhere within the selected end date still matches, not just up to midnight.
+  const installFrom = params.installFrom ? new Date(params.installFrom) : null;
+  const installTo = params.installTo ? new Date(`${params.installTo}T23:59:59.999`) : null;
 
   const rawProjects = await prisma.project.findMany({
     where: {
@@ -232,6 +245,7 @@ export default async function ProjectsPage({
           phase: true,
           stepCode: true,
           stepName: true,
+          plannedStartDate: true,
           plannedEndDate: true,
           status: true,
           owningDepartment: true,
@@ -305,7 +319,8 @@ export default async function ProjectsPage({
     .filter((p) => !newSince || p.createdAt >= newSince)
     .filter((p) => !overdueOnly || p.hasOverdue)
     .filter((p) => !currentStepFilter || p.currentStep?.stepCode === currentStepFilter)
-    .filter((p) => !department || p.activeDepartments.has(department));
+    .filter((p) => !department || p.activeDepartments.has(department))
+    .filter((p) => !(installFrom || installTo) || matchesInstallationWindowFilter(p.phaseSteps, installFrom, installTo));
 
   const activeFilters = Object.entries(params).filter(([, v]) => v);
 

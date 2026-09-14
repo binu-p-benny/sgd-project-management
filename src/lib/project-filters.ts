@@ -248,3 +248,25 @@ export function matchesPhaseProgressFilter(
   if (!option) return false;
   return getPhaseProgress(steps, option.phase) === option.progress;
 }
+
+/**
+ * True when 3C2 (Installation)'s own planned start/end window overlaps the given [from, to]
+ * range — either bound may be null to leave that side open. Overlap rather than "starts within":
+ * a project whose install window spans the whole range should still surface even if it actually
+ * started before `from`, since it's still installing somewhere inside the chosen window.
+ *
+ * False for a project that hasn't reached 3C2 yet, or has it but with no planned dates recorded
+ * (shouldn't happen in practice — every Phase 3 step gets planned dates on creation — but a
+ * missing bound can't overlap anything, so treating it as a non-match is the safe default).
+ */
+export function matchesInstallationWindowFilter(
+  steps: { stepCode: string; plannedStartDate: Date | null; plannedEndDate: Date | null }[],
+  from: Date | null,
+  to: Date | null
+): boolean {
+  const step = steps.find((s) => s.stepCode === "3C2");
+  if (!step || !step.plannedStartDate || !step.plannedEndDate) return false;
+  if (from && step.plannedEndDate < from) return false;
+  if (to && step.plannedStartDate > to) return false;
+  return true;
+}

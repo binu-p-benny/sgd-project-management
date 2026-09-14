@@ -6,6 +6,7 @@ import {
   getProjectActiveDepartments,
   getPhaseProgress,
   matchesPhaseProgressFilter,
+  matchesInstallationWindowFilter,
   PHASE_PROGRESS_FILTER_OPTIONS,
   type ProcurementItemFields,
   type GlassPurchaseOrderFields,
@@ -354,5 +355,51 @@ describe("matchesPhaseProgressFilter", () => {
   });
   it("false for an unrecognized filter value, same as a bogus currentStep code", () => {
     expect(matchesPhaseProgressFilter("not_a_real_value", steps)).toBe(false);
+  });
+});
+
+describe("matchesInstallationWindowFilter: /projects' 3C2 planned-window date-range filter", () => {
+  const withInstallWindow = (start: string, end: string) => [
+    { stepCode: "3A", plannedStartDate: null, plannedEndDate: null },
+    { stepCode: "3C2", plannedStartDate: new Date(start), plannedEndDate: new Date(end) },
+  ];
+
+  it("false when the project hasn't reached 3C2 yet (no row at all)", () => {
+    const steps = [{ stepCode: "1A", plannedStartDate: new Date("2026-01-01"), plannedEndDate: new Date("2026-01-02") }];
+    expect(matchesInstallationWindowFilter(steps, new Date("2026-01-01"), new Date("2026-01-31"))).toBe(false);
+  });
+
+  it("false when 3C2 exists but has no planned dates recorded", () => {
+    const steps = [{ stepCode: "3C2", plannedStartDate: null, plannedEndDate: null }];
+    expect(matchesInstallationWindowFilter(steps, null, null)).toBe(false);
+  });
+
+  it("true when the range fully contains the install window", () => {
+    const steps = withInstallWindow("2026-06-10", "2026-06-15");
+    expect(matchesInstallationWindowFilter(steps, new Date("2026-06-01"), new Date("2026-06-30"))).toBe(true);
+  });
+
+  it("true on partial overlap at either edge of the range", () => {
+    const steps = withInstallWindow("2026-06-10", "2026-06-15");
+    expect(matchesInstallationWindowFilter(steps, new Date("2026-06-14"), new Date("2026-06-20"))).toBe(true);
+    expect(matchesInstallationWindowFilter(steps, new Date("2026-06-01"), new Date("2026-06-11"))).toBe(true);
+  });
+
+  it("false when the range is entirely before or entirely after the install window", () => {
+    const steps = withInstallWindow("2026-06-10", "2026-06-15");
+    expect(matchesInstallationWindowFilter(steps, new Date("2026-05-01"), new Date("2026-06-09"))).toBe(false);
+    expect(matchesInstallationWindowFilter(steps, new Date("2026-06-16"), new Date("2026-06-30"))).toBe(false);
+  });
+
+  it("an open-ended range (only `from`) matches a window that ends on or after it", () => {
+    const steps = withInstallWindow("2026-06-10", "2026-06-15");
+    expect(matchesInstallationWindowFilter(steps, new Date("2026-06-15"), null)).toBe(true);
+    expect(matchesInstallationWindowFilter(steps, new Date("2026-06-16"), null)).toBe(false);
+  });
+
+  it("an open-ended range (only `to`) matches a window that starts on or before it", () => {
+    const steps = withInstallWindow("2026-06-10", "2026-06-15");
+    expect(matchesInstallationWindowFilter(steps, null, new Date("2026-06-10"))).toBe(true);
+    expect(matchesInstallationWindowFilter(steps, null, new Date("2026-06-09"))).toBe(false);
   });
 });
