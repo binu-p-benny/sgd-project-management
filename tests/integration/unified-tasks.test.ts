@@ -147,7 +147,7 @@ describe("getUnifiedMyTasks — 3C1's own contractor-selection sub-task", () => 
     await advanceThroughPhase2(project.id, users); // drives 2F to completed, seeding Phase 3 (3C1)
 
     const all = tasksFor(await getUnifiedMyTasks("project_engineer"), project.id);
-    const threeC1 = all.find((t) => t.stepCode === "3C1");
+    const threeC1 = all.find((t) => t.kind === "phase_step" && t.stepCode === "3C1");
     expect(threeC1).toBeDefined();
     expect(threeC1!.contractorId).toBeNull();
     expect(threeC1!.contractorPlannedDate).not.toBeNull();
@@ -165,7 +165,7 @@ describe("getUnifiedMyTasks — 3C1's own contractor-selection sub-task", () => 
     await patchProcurementItem(project.id, "section", users.design_engineer, { requirementCreatedAt: future });
 
     const all = tasksFor(await getUnifiedMyTasks(null), project.id);
-    const threeC1 = all.find((t) => t.stepCode === "3C1");
+    const threeC1 = all.find((t) => t.kind === "phase_step" && t.stepCode === "3C1");
     expect(threeC1!.contractorPlannedDate).toBe(future.toISOString());
     expect(threeC1!.contractorOverdue).toBe(false);
   });
@@ -182,10 +182,51 @@ describe("getUnifiedMyTasks — 3C1's own contractor-selection sub-task", () => 
       await prisma.phaseStep.update({ where: { id: threeC1Step.id }, data: { contractorId: contractor.id } });
 
       const all = tasksFor(await getUnifiedMyTasks(null), project.id);
-      const threeC1 = all.find((t) => t.stepCode === "3C1");
+      const threeC1 = all.find((t) => t.kind === "phase_step" && t.stepCode === "3C1");
       expect(threeC1!.contractorId).toBe(contractor.id);
       expect(threeC1!.contractorName).toBe("__TEST__ Contractor Co");
       expect(threeC1!.contractorOverdue).toBe(false);
+    } finally {
+      await prisma.contractor.delete({ where: { id: contractor.id } });
+    }
+  });
+
+  it("is its own task row — separate from 3C1's own 'Aluminum framework' row, with its own due date — while unset", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users);
+
+    const all = tasksFor(await getUnifiedMyTasks("project_engineer"), project.id);
+    const contractorTasks = all.filter((t) => t.kind === "contractor_selection");
+    const threeC1 = all.find((t) => t.kind === "phase_step" && t.stepCode === "3C1");
+    expect(contractorTasks).toHaveLength(1);
+    expect(threeC1).toBeDefined();
+
+    const contractorTask = contractorTasks[0];
+    // Its own row's plannedDate/overrun are the contractor due date, not 3C1's own planned dates —
+    // that's the whole point of splitting it out (they're due on different schedules).
+    expect(contractorTask.taskLabel).toBe("Select contractor");
+    expect(contractorTask.subTaskLabel).toBe(threeC1!.taskLabel);
+    expect(contractorTask.refId).toBe(threeC1!.refId);
+    expect(contractorTask.plannedDate).toBe(contractorTask.contractorPlannedDate);
+    expect(contractorTask.overrun).toBe(contractorTask.contractorOverdue);
+    expect(contractorTask.plannedDate).not.toBe(threeC1!.plannedDate);
+  });
+
+  it("the separate contractor_selection row disappears once a contractor is set — only the phase_step row remains", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users);
+    const threeC1Step = await getStep(project.id, "3C1");
+    const contractor = await prisma.contractor.create({
+      data: { name: "__TEST__ Contractor Co 2", phone: "9999999998", address: "Test address" },
+    });
+    try {
+      await prisma.phaseStep.update({ where: { id: threeC1Step.id }, data: { contractorId: contractor.id } });
+
+      const all = tasksFor(await getUnifiedMyTasks(null), project.id);
+      expect(all.some((t) => t.kind === "contractor_selection")).toBe(false);
+      expect(all.filter((t) => t.stepCode === "3C1")).toHaveLength(1);
     } finally {
       await prisma.contractor.delete({ where: { id: contractor.id } });
     }

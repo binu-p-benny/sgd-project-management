@@ -12,7 +12,13 @@ import { PROCUREMENT_STAGES, firstUnfilledStage, type StageSpec } from "@/lib/pr
 import { DERIVED_STEP_CODES, MANUAL_CONTRACTOR_STEP_CODES } from "@/lib/step-actions";
 import { checkDependencyGate } from "@/lib/dependency-gate";
 
-export type TaskKind = "phase_step" | "procurement_stage" | "glass_po_stage" | "action_item" | "service_item";
+export type TaskKind =
+  | "phase_step"
+  | "procurement_stage"
+  | "glass_po_stage"
+  | "action_item"
+  | "service_item"
+  | "contractor_selection";
 
 // Field -> human label/note-field, shared by procurement items and the glass PO tracker (which
 // reuse the exact same stage names) — see the fixed stage arrays built inline in the project
@@ -73,13 +79,16 @@ export interface UnifiedTask {
   // kind === "action_item" only — which of the 3 action-item tables (and so which API route)
   // this row's refId belongs to. Null for every other kind.
   actionItemSource: "procurement" | "glass" | "phase_step" | null;
-  // 3C1's phase_step row only (see MANUAL_CONTRACTOR_STEP_CODES) — null/false for every other
-  // row. contractorPlannedDate is the Section item's own Requirement created date: once that
-  // material requirement is known, a contractor should already be lined up, so it's usually
-  // already in the past by the time 3C1 itself even exists (see maybeEarlyUnlockPhase3 in
-  // step-actions.ts) — contractorOverdue reads true immediately in that case. TaskTable PATCHes
-  // /api/phase-steps/[id]/contractor (refId) to set contractorId, separately from this row's own
-  // dateField-driven Start/Complete actions.
+  // 3C1's phase_step row, and its own kind === "contractor_selection" row (see
+  // MANUAL_CONTRACTOR_STEP_CODES) — null/false for every other row. contractorPlannedDate is the
+  // Section item's own Requirement created date: once that material requirement is known, a
+  // contractor should already be lined up, so it's usually already in the past by the time 3C1
+  // itself even exists (see maybeEarlyUnlockPhase3 in step-actions.ts) — contractorOverdue reads
+  // true immediately in that case. While contractorId is still unset, buildPhaseStepTasks emits a
+  // *separate* contractor_selection task alongside the phase_step one — its own plannedDate/
+  // overrun are this contractorPlannedDate/contractorOverdue pair, so it sorts and displays as due
+  // on its own schedule rather than borrowing 3C1's. TaskTable PATCHes
+  // /api/phase-steps/[id]/contractor (refId, same as the phase_step row's) to set contractorId.
   contractorId: string | null;
   contractorName: string | null;
   contractorPlannedDate: string | null;
@@ -217,6 +226,42 @@ async function buildPhaseStepTasks(department: Department | null): Promise<Unifi
     if (MANUAL_CONTRACTOR_STEP_CODES.has(step.stepCode)) {
       const s = await getRequirementCreatedStatus(step.projectId);
       contractorPlannedDate = s.items.find((i) => i.itemType === "section")?.requirementCreatedAt ?? null;
+
+      // Selecting the contractor is due on a different schedule than the framework step itself
+      // (see the doc comment on UnifiedTask.contractorPlannedDate) — surfaced as its own task row
+      // rather than folded into 3C1's, so it sorts/reads by its own due date instead of 3C1's.
+      // Only while contractorId is still unset: once it's picked, there's nothing left to do here.
+      if (!step.contractorId) {
+        tasks.push({
+          id: `contractor_selection:${step.id}`,
+          kind: "contractor_selection",
+          phase: step.phase,
+          taskLabel: "Select contractor",
+          subTaskLabel: step.stepName,
+          project: step.project,
+          department: step.owningDepartment,
+          secondaryDepartment: step.secondaryDepartment,
+          status: "not_started",
+          plannedDate: contractorPlannedDate?.toISOString() ?? null,
+          actualDate: null,
+          overrun: isContractorSelectionOverdue(contractorPlannedDate, step.contractorId),
+          qcPassed: null,
+          notes: null,
+          blockedReason: null,
+          blockedNote: null,
+          gateBlockedBy: null,
+          isPassFail: false,
+          refId: step.id,
+          dateField: null,
+          noteField: null,
+          stepCode: step.stepCode,
+          actionItemSource: null,
+          contractorId: step.contractorId,
+          contractorName: null,
+          contractorPlannedDate: contractorPlannedDate?.toISOString() ?? null,
+          contractorOverdue: isContractorSelectionOverdue(contractorPlannedDate, step.contractorId),
+        });
+      }
     }
 
     tasks.push({

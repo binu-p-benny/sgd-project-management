@@ -472,31 +472,14 @@ function ReasonField({
   );
 }
 
-// 3C1's own separate "select contractor" task — see needsContractor/saveContractor in
-// useTaskActions. Only ever rendered when task.stepCode === "3C1" and no contractor is set yet;
-// once saved, the row just shows task.contractorName as plain text (see TaskRow/TaskAccordionItem).
-function ContractorField({ task, s, size }: { task: UnifiedTask; s: TaskActions; size: Size }) {
+// The action side of a kind === "contractor_selection" row (see that kind in unified-tasks.ts) —
+// just the picker + save button. No bordered box or "Target …/overdue" header of its own: unlike
+// the old embedded widget this replaces, this task now has its own row, so its due date already
+// shows through the row's normal Planned-date column/badge (task.plannedDate/task.overrun, set to
+// contractorPlannedDate/contractorOverdue by buildPhaseStepTasks) the same as any other task.
+function ContractorActionField({ s, size }: { s: TaskActions; size: Size }) {
   return (
-    <div
-      className={`flex flex-col gap-1.5 rounded-lg border p-2 ${
-        task.contractorOverdue
-          ? "border-amber-500/50 bg-amber-500/10 dark:border-amber-500/40 dark:bg-amber-500/[0.08]"
-          : "border-edge bg-overlay/40"
-      }`}
-    >
-      <div className="flex flex-wrap items-center justify-between gap-1">
-        <span className="text-[11px] font-medium text-fg-muted">Select contractor</span>
-        {task.contractorPlannedDate && (
-          <span
-            className={`text-[11px] ${
-              task.contractorOverdue ? "font-medium text-amber-700 dark:text-amber-400" : "text-fg-subtle"
-            }`}
-          >
-            Target {formatDate(task.contractorPlannedDate)}
-            {task.contractorOverdue && ` · overdue ${daysOverdue(task.contractorPlannedDate)}d`}
-          </span>
-        )}
-      </div>
+    <div className="flex flex-col gap-1.5">
       <select
         className={fieldCls(size)}
         value={s.contractorDraft}
@@ -509,16 +492,14 @@ function ContractorField({ task, s, size }: { task: UnifiedTask; s: TaskActions;
           </option>
         ))}
       </select>
-      <div className="flex gap-2">
-        <button
-          type="button"
-          className={btnCls("secondary", size)}
-          onClick={s.saveContractor}
-          disabled={s.contractorSubmitting}
-        >
-          {s.contractorSubmitting ? <Spinner className={spinnerCls(size)} /> : "Save contractor"}
-        </button>
-      </div>
+      <button
+        type="button"
+        className={btnCls("primary", size)}
+        onClick={s.saveContractor}
+        disabled={s.contractorSubmitting}
+      >
+        {s.contractorSubmitting ? <Spinner className={spinnerCls(size)} /> : "Save contractor"}
+      </button>
       {s.contractorError && <p className="text-[11px] text-red-600 dark:text-red-400">{s.contractorError}</p>}
     </div>
   );
@@ -820,23 +801,30 @@ function TaskRow({ task, isAdmin }: { task: UnifiedTask; isAdmin: boolean }) {
           {!s.canStartOrComplete && task.gateBlockedBy && (
             <div className="mt-1 text-xs text-fg-subtle">Waiting on: {task.gateBlockedBy.join(", ")}</div>
           )}
-          {s.isManualContractorStep &&
-            (s.needsContractor ? (
-              <div className="mt-1.5 w-56">
-                <ContractorField task={task} s={s} size="sm" />
-              </div>
-            ) : (
-              <div className="mt-1 text-xs text-fg-muted">Contractor: {task.contractorName}</div>
-            ))}
+          {task.kind !== "contractor_selection" && s.isManualContractorStep && !s.needsContractor && (
+            <div className="mt-1 text-xs text-fg-muted">Contractor: {task.contractorName}</div>
+          )}
         </td>
         <td className="px-3 py-2.5">
-          <ActualDateField s={s} size="sm" />
+          {task.kind === "contractor_selection" ? (
+            <span className="text-xs text-fg-subtle">—</span>
+          ) : (
+            <ActualDateField s={s} size="sm" />
+          )}
         </td>
         <td className="px-3 py-2.5">
-          <ReasonField task={task} s={s} size="sm" />
+          {task.kind === "contractor_selection" ? (
+            <span className="text-xs text-fg-subtle">—</span>
+          ) : (
+            <ReasonField task={task} s={s} size="sm" />
+          )}
         </td>
         <td className="px-3 py-2.5">
-          <TaskActionCluster task={task} s={s} isAdmin={isAdmin} size="sm" />
+          {task.kind === "contractor_selection" ? (
+            <ContractorActionField s={s} size="sm" />
+          ) : (
+            <TaskActionCluster task={task} s={s} isAdmin={isAdmin} size="sm" />
+          )}
         </td>
       </tr>
 
@@ -905,15 +893,6 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
           {!open && s.isPhaseStep && task.status === "blocked" && (
             <div className="text-xs font-medium text-red-600 dark:text-red-400">Blocked</div>
           )}
-          {!open && s.needsContractor && (
-            <div
-              className={`text-xs font-medium ${
-                task.contractorOverdue ? "text-amber-700 dark:text-amber-400" : "text-fg-muted"
-              }`}
-            >
-              Contractor not selected{task.contractorOverdue ? " — overdue" : ""}
-            </div>
-          )}
         </div>
         <svg
           viewBox="0 0 24 24"
@@ -938,12 +917,9 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
           {!s.canStartOrComplete && task.gateBlockedBy && (
             <div className="text-xs text-fg-subtle">Waiting on: {task.gateBlockedBy.join(", ")}</div>
           )}
-          {s.isManualContractorStep &&
-            (s.needsContractor ? (
-              <ContractorField task={task} s={s} size="md" />
-            ) : (
-              <div className="text-xs text-fg-muted">Contractor: {task.contractorName}</div>
-            ))}
+          {task.kind !== "contractor_selection" && s.isManualContractorStep && !s.needsContractor && (
+            <div className="text-xs text-fg-muted">Contractor: {task.contractorName}</div>
+          )}
           {isAdmin && (
             <Link
               href={task.kind === "service_item" ? `/services/${task.project.id}` : `/projects/${task.project.id}`}
@@ -955,9 +931,15 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
               </svg>
             </Link>
           )}
-          <ActualDateField s={s} size="md" label="Actual date" />
-          <ReasonField task={task} s={s} size="md" label="Reason / note" />
-          <TaskActionCluster task={task} s={s} isAdmin={isAdmin} size="md" />
+          {task.kind === "contractor_selection" ? (
+            <ContractorActionField s={s} size="md" />
+          ) : (
+            <>
+              <ActualDateField s={s} size="md" label="Actual date" />
+              <ReasonField task={task} s={s} size="md" label="Reason / note" />
+              <TaskActionCluster task={task} s={s} isAdmin={isAdmin} size="md" />
+            </>
+          )}
           {s.panel === "block" && (
             <div className="rounded-lg bg-overlay/40 p-3">
               <BlockPanelBody s={s} size="md" />
