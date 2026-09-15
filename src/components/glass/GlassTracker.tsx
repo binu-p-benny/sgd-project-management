@@ -71,6 +71,13 @@ export interface GlassStageData {
    *  qc_checked_at, and for custom rows, fixed at creation — same as the procurement tracker. */
   plannedDate: string | null;
   plannedDateField: string | null;
+  /** Past its own planned date with no actual date recorded yet — same "expected vs actual"
+   *  overrun check the procurement tracker's own stages use (see isProcurementStageOverrun),
+   *  even though this Planned column is a plain manual field rather than a computed forecast:
+   *  a date someone wrote down and then passed is still worth flagging as overdue. False (never
+   *  overdue) for the Action plan row and custom action-item rows before they're checked below —
+   *  see the map() calls that build these in page.tsx. */
+  overrun: boolean;
   /** Which department owns this row — shown as a tag, same label set the step cards use. */
   department: Department;
   /** Purchase owns every other row in this lifecycle and needs visibility on Payment too —
@@ -100,6 +107,7 @@ interface GlassActionItemData {
   plannedDate: string;
   actualDate: string | null;
   note: string | null;
+  overrun: boolean;
 }
 
 function StageRow({
@@ -129,13 +137,24 @@ function StageRow({
 
   // Editing an already-done row's date to a *different*, non-empty value is a correction, not a
   // live edit — brings back the completion button and always needs a reason, same rule as the
-  // procurement tracker's stages. There's no "late" concept here (Planned is a plain manual
-  // field, not a forecast to compare against), so a correction is the only thing that ever
-  // requires a note on the fixed stages — the action plan and QC fail are the exceptions below.
+  // procurement tracker's stages.
   const isCorrection = isDone && dateDraft !== "" && dateDraft !== toDateInputValue(stage.actualDate);
   const showsCompletionAction = !isDone || isCorrection;
   const isActionPlan = stage.id === "actionPlan";
-  const needsReason = (isCorrection || isActionPlan) && !noteDraft.trim();
+  // What actually gets saved as the actual date if a completion is submitted right now — the
+  // chosen date, or today if none was picked (see handleMarkComplete/handleQCOutcome). Comparing
+  // against that, rather than just today's date, is what lets a deliberately-backdated late
+  // entry still require a reason even though the field wasn't left empty. Planned here is still
+  // a plain manual field, not a computed forecast — but a date someone already wrote down and
+  // then completes past is late all the same, same "expected vs actual" idea the procurement
+  // tracker's own isLate applies to its (computed) Planned column.
+  const effectiveActualDate = dateDraft || toDateInputValue(new Date().toISOString());
+  const plannedDateValue = toDateInputValue(stage.plannedDate);
+  const isLate = plannedDateValue !== "" && effectiveActualDate > plannedDateValue;
+  // Row-level highlight, deliberately based on the saved actual date rather than isLate's live
+  // draft — so the whole row doesn't flash rose mid-edit before anything's submitted.
+  const isSavedLate = stage.actualDate !== null && stage.plannedDate !== null && stage.actualDate > stage.plannedDate;
+  const needsReason = (isCorrection || isLate || isActionPlan) && !noteDraft.trim();
   // The fixed qc stage, or a custom row opted into the same Pass/Fail treatment at creation.
   const isQC = stage.id === "qc" || !!stage.isPassFail;
   // A QC failure always needs a note explaining it, whether or not it's a correction.
@@ -226,7 +245,7 @@ function StageRow({
   }
 
   return (
-    <tr className="border-t border-edge">
+    <tr className={`border-t border-edge ${isSavedLate ? "bg-rose-500/10 dark:bg-rose-500/[0.08]" : ""}`}>
       <td className="whitespace-nowrap px-3 py-2.5">
         <div className="flex items-center gap-2">
           <span
@@ -235,7 +254,7 @@ function StageRow({
                 ? stage.qcPassed === false
                   ? "bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400"
                   : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
-                : isCorrection
+                : isCorrection || stage.overrun
                   ? "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
                   : "bg-overlay text-fg-subtle"
             }`}
@@ -259,19 +278,26 @@ function StageRow({
       </td>
 
       <td className="whitespace-nowrap px-3 py-2.5">
-        <input
-          type="date"
-          value={plannedDraft}
-          disabled={!editable || !stage.plannedDateField || savingPlanned}
-          onChange={(e) => handlePlannedChange(e.target.value)}
-          onClick={openPicker}
-          title={stage.plannedDateField ? "Filled in by hand — nothing computes this" : "Planned — not editable"}
-          className={`h-9 w-[9.5rem] rounded-lg border px-2 text-sm outline-none disabled:opacity-80 ${
-            editable && stage.plannedDateField
-              ? "border-edge bg-bg text-fg focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-50"
-              : "border-edge bg-overlay text-fg-muted"
-          }`}
-        />
+        <div className="flex items-center gap-1.5">
+          <input
+            type="date"
+            value={plannedDraft}
+            disabled={!editable || !stage.plannedDateField || savingPlanned}
+            onChange={(e) => handlePlannedChange(e.target.value)}
+            onClick={openPicker}
+            title={stage.plannedDateField ? "Filled in by hand — nothing computes this" : "Planned — not editable"}
+            className={`h-9 w-[9.5rem] rounded-lg border px-2 text-sm outline-none disabled:opacity-80 ${
+              editable && stage.plannedDateField
+                ? "border-edge bg-bg text-fg focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-50"
+                : "border-edge bg-overlay text-fg-muted"
+            }`}
+          />
+          {!isDone && stage.overrun && (
+            <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-inset ring-amber-500/25 dark:text-amber-400">
+              Overdue
+            </span>
+          )}
+        </div>
         {plannedError && <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">{plannedError}</p>}
       </td>
 
@@ -301,7 +327,9 @@ function StageRow({
                   ? "Note (required if it fails)"
                   : isActionPlan
                     ? "Note (required)"
-                    : "Note (optional)"
+                    : needsReason
+                      ? "Reason required — this date is after planned"
+                      : "Note (optional)"
             }
             value={noteDraft}
             disabled={saving === "note"}
@@ -640,6 +668,7 @@ export function GlassTracker({
                       requirementGated: false,
                       paymentGated: false,
                       qcPassed: actionItem.qcPassed,
+                      overrun: actionItem.overrun,
                     }}
                     editable={canEdit}
                     // Custom follow-up rows are a flat todo list, not part of the fixed

@@ -797,6 +797,7 @@ export default async function ProjectDetailPage({
         ...stage,
         actualDate: stage.actualDate?.toISOString() ?? null,
         plannedDate: stage.plannedDate?.toISOString() ?? null,
+        overrun: isProcurementStageOverrun(stage.plannedDate, stage.actualDate),
       }))}
       actionItems={glassPO.actionItems.map((a) => ({
         id: a.id,
@@ -807,6 +808,7 @@ export default async function ProjectDetailPage({
         plannedDate: a.plannedDate.toISOString(),
         actualDate: a.actualDate?.toISOString() ?? null,
         note: a.note,
+        overrun: isProcurementStageOverrun(a.plannedDate, a.actualDate),
       }))}
     />
   ) : null;
