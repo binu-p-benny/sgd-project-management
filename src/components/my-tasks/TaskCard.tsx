@@ -247,6 +247,7 @@ export function TaskCard({
   );
   const [plannedDateSubmitting, setPlannedDateSubmitting] = useState(false);
   const [plannedDateError, setPlannedDateError] = useState<string | null>(null);
+  const [plannedDateSaved, setPlannedDateSaved] = useState(false);
   // Admin-only: which department (if any) this step's own manual Planned start/end has been
   // delegated to — see plannedDateEditDepartment and savePlannedDatePermission below. A separate
   // draft/save from the dates themselves, same "who may vs. what's saved" split as the contractor
@@ -257,11 +258,13 @@ export function TaskCard({
   );
   const [plannedDatePermissionSubmitting, setPlannedDatePermissionSubmitting] = useState(false);
   const [plannedDatePermissionError, setPlannedDatePermissionError] = useState<string | null>(null);
+  const [plannedDatePermissionSaved, setPlannedDatePermissionSaved] = useState(false);
   // 3C1's own contractor pick — a separate draft/save action (POST /api/phase-steps/[id]/contractor)
   // from the Planned dates above. See contractorPickerOpen further down.
   const [contractorDraft, setContractorDraft] = useSyncedDraft(item.contractorId ?? "", (v) => v ?? "");
   const [contractorSubmitting, setContractorSubmitting] = useState(false);
   const [contractorError, setContractorError] = useState<string | null>(null);
+  const [contractorSaved, setContractorSaved] = useState(false);
   const [contractors, setContractors] = useState<{ id: string; name: string }[]>([]);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -497,6 +500,19 @@ export function TaskCard({
     setTimeout(() => setDateMessage((prev) => (prev ? null : prev)), ms);
   }
 
+  // Shared by savePlannedDates/savePlannedDatePermission/saveContractor below — none of them
+  // remove this card the way a completed task's row disappears elsewhere (my-tasks/TaskTable.tsx),
+  // so "done" here means a brief "Saved" flash rather than a fade-out. Delayed past the refresh
+  // (same reasoning as saveDates' own dateMessage above) so it's actually visible before this
+  // card's fields update out from under it.
+  function flashSavedThenRefresh(setSaved: (v: boolean) => void) {
+    setSaved(true);
+    setTimeout(() => {
+      setSaved(false);
+      router.refresh();
+    }, 1200);
+  }
+
   async function saveDates() {
     setDateSubmitting(true);
     setDateMessage(null);
@@ -534,6 +550,7 @@ export function TaskCard({
   async function savePlannedDates() {
     setPlannedDateSubmitting(true);
     setPlannedDateError(null);
+    setPlannedDateSaved(false);
     const plannedDatesEndOnly = MANUAL_PLANNED_END_ONLY_STEP_CODES.has(item.stepCode);
     try {
       const res = await fetch(`/api/phase-steps/${item.id}/dates`, {
@@ -560,8 +577,8 @@ export function TaskCard({
         setPlannedDateSubmitting(false);
         return;
       }
-      router.refresh();
       setPlannedDateSubmitting(false);
+      flashSavedThenRefresh(setPlannedDateSaved);
     } catch {
       setPlannedDateError("Could not reach the server");
       setPlannedDateSubmitting(false);
@@ -571,6 +588,7 @@ export function TaskCard({
   async function savePlannedDatePermission() {
     setPlannedDatePermissionSubmitting(true);
     setPlannedDatePermissionError(null);
+    setPlannedDatePermissionSaved(false);
     try {
       const res = await fetch(`/api/phase-steps/${item.id}/planned-date-permission`, {
         method: "PATCH",
@@ -583,8 +601,8 @@ export function TaskCard({
         setPlannedDatePermissionSubmitting(false);
         return;
       }
-      router.refresh();
       setPlannedDatePermissionSubmitting(false);
+      flashSavedThenRefresh(setPlannedDatePermissionSaved);
     } catch {
       setPlannedDatePermissionError("Could not reach the server");
       setPlannedDatePermissionSubmitting(false);
@@ -598,6 +616,7 @@ export function TaskCard({
     }
     setContractorSubmitting(true);
     setContractorError(null);
+    setContractorSaved(false);
     try {
       const res = await fetch(`/api/phase-steps/${item.id}/contractor`, {
         method: "PATCH",
@@ -610,8 +629,8 @@ export function TaskCard({
         setContractorSubmitting(false);
         return;
       }
-      router.refresh();
       setContractorSubmitting(false);
+      flashSavedThenRefresh(setContractorSaved);
     } catch {
       setContractorError("Could not reach the server");
       setContractorSubmitting(false);
@@ -818,6 +837,7 @@ export function TaskCard({
                   {contractorSubmitting ? <Spinner className="h-3.5 w-3.5" /> : "Save contractor"}
                 </button>
               </div>
+              {contractorSaved && <p className="text-xs text-emerald-600 dark:text-emerald-400">Saved</p>}
               {contractorError && <p className="text-xs text-red-600 dark:text-red-400">{contractorError}</p>}
             </>
           ) : (
@@ -1144,6 +1164,7 @@ export function TaskCard({
                   {plannedDateSubmitting ? <Spinner className="h-3.5 w-3.5" /> : "Save planned dates"}
                 </button>
               </div>
+              {plannedDateSaved && <p className="text-xs text-emerald-600 dark:text-emerald-400">Saved</p>}
               {plannedDateError && <p className="text-xs text-red-600 dark:text-red-400">{plannedDateError}</p>}
 
               <div className="flex flex-col gap-1.5 rounded-lg border border-edge bg-overlay/40 p-2">
@@ -1172,6 +1193,9 @@ export function TaskCard({
                     {plannedDatePermissionSubmitting ? <Spinner className="h-3.5 w-3.5" /> : "Save permission"}
                   </button>
                 </div>
+                {plannedDatePermissionSaved && (
+                  <p className="text-xs text-emerald-600 dark:text-emerald-400">Saved</p>
+                )}
                 {plannedDatePermissionError && (
                   <p className="text-xs text-red-600 dark:text-red-400">{plannedDatePermissionError}</p>
                 )}

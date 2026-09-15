@@ -182,6 +182,35 @@ function useTaskActions(task: UnifiedTask) {
     };
   }, [needsContractor]);
 
+  // Shared by patch() below and by saveContractor/savePlannedDateEdit, which hit their own
+  // endpoints rather than patch()'s — the same flash-then-fade-then-refresh dance either way, so
+  // completing any of these reads as "done!" rather than the row just glitching away. When the
+  // row isn't actually leaving (a partial planned-date save, say), it flashes green and settles
+  // back to idle instead, then still refreshes so the newly-saved value shows — onSettle resets
+  // that action's own submitting flag at the same point, since the row (and its button) is still
+  // here afterward and needs to be clickable again; the removesRow branch skips it on purpose
+  // (see the comment below) since there's no row left for it to matter on.
+  function flashRowSuccess(opts: { removesRow: boolean; onSettle?: () => void }) {
+    setRowPhase("success");
+    if (opts.removesRow) {
+      // Keep the triggering action's own `submitting` flag true throughout — the row's on its
+      // way out, nothing on it should be clickable in the meantime — and let the flash-then-fade
+      // play out before the refresh below actually drops it from the list.
+      rowTimeouts.current.push(
+        setTimeout(() => setRowPhase("leaving"), ROW_SUCCESS_MS),
+        setTimeout(() => router.refresh(), ROW_SUCCESS_MS + ROW_LEAVE_MS)
+      );
+    } else {
+      rowTimeouts.current.push(
+        setTimeout(() => {
+          setRowPhase("idle");
+          opts.onSettle?.();
+          router.refresh();
+        }, ROW_SUCCESS_MS)
+      );
+    }
+  }
+
   async function saveContractor() {
     if (!contractorDraft) {
       setContractorError("Choose a contractor");
@@ -201,7 +230,9 @@ function useTaskActions(task: UnifiedTask) {
         setContractorSubmitting(false);
         return;
       }
-      router.refresh();
+      // Picking a contractor always fully resolves this task — it never sticks around partially
+      // filled, unlike the planned dates below — so this always removes the row.
+      flashRowSuccess({ removesRow: true });
     } catch {
       setContractorError("Could not reach the server");
       setContractorSubmitting(false);
@@ -212,6 +243,10 @@ function useTaskActions(task: UnifiedTask) {
     setPlannedDateEditSubmitting(true);
     setPlannedDateEditError(null);
     const endOnly = !!task.stepCode && MANUAL_PLANNED_END_ONLY_STEP_CODES.has(task.stepCode);
+    // Whether this save is the one that actually locks the step in (see buildPlannedDateEditTasks
+    // in unified-tasks.ts) — a start-only save on 3C1/3C2 still leaves the task open, so that case
+    // flashes success without removing the row.
+    const willLock = endOnly ? !!plannedDateEditEnd : !!plannedDateEditStart && !!plannedDateEditEnd;
     try {
       const res = await fetch(`/api/phase-steps/${task.refId}/planned-dates`, {
         method: "PATCH",
@@ -227,7 +262,7 @@ function useTaskActions(task: UnifiedTask) {
         setPlannedDateEditSubmitting(false);
         return;
       }
-      router.refresh();
+      flashRowSuccess({ removesRow: willLock, onSettle: () => setPlannedDateEditSubmitting(false) });
     } catch {
       setPlannedDateEditError("Could not reach the server");
       setPlannedDateEditSubmitting(false);
@@ -286,11 +321,7 @@ function useTaskActions(task: UnifiedTask) {
         // Keep `submitting` true throughout — the row's on its way out, nothing on it should
         // be clickable in the meantime — and let the flash-then-fade play out before the
         // refresh below actually drops it from the list.
-        setRowPhase("success");
-        rowTimeouts.current.push(
-          setTimeout(() => setRowPhase("leaving"), ROW_SUCCESS_MS),
-          setTimeout(() => router.refresh(), ROW_SUCCESS_MS + ROW_LEAVE_MS)
-        );
+        flashRowSuccess({ removesRow: true });
       } else {
         setSubmitting(false);
         router.refresh();
