@@ -42,6 +42,13 @@ export default async function ServicesPage() {
       ...s,
       status,
       statusDays: status === "delayed" ? getServiceDelayDays(s.items) : null,
+      // "in_progress" with every item's actual date filled in — status itself deliberately stays
+      // in_progress either way (see getServiceStatus's own "never inferred from items" rule: an
+      // admin still has to explicitly close the service out), but the list reads clearer showing
+      // "No pending task" here than a plain "In progress" once there's genuinely nothing left to
+      // do. Only ever true alongside "in_progress" — never true for not_started (no items to have
+      // finished) or delayed (an overdue item is, by definition, not done).
+      allItemsDone: s.items.length > 0 && s.items.every((i) => i.actualDate !== null),
       // Once completed (whether or not the customer review is still outstanding — see
       // review_not_completed in lib/service.ts), "Started" stops being the interesting date; how
       // long ago it was closed out is.

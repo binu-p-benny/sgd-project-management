@@ -15,6 +15,7 @@ export interface ServiceListRow {
   items: { actualDate: Date | null }[];
   status: ServiceStatus;
   statusDays: number | null;
+  allItemsDone: boolean;
   startedLabel: string;
 }
 
@@ -35,8 +36,13 @@ const clearBtnCls =
   "flex h-10 items-center justify-center rounded-lg border border-edge px-2.5 text-sm font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-overlay hover:text-fg sm:h-8 sm:text-xs";
 
 /** Status badge text — label plus the same "· Nd" suffix convention the Projects list's Status
- *  badge uses (TaskCard/BlockedStepsWidget too), once a service has a delay to show. */
-function formatServiceStatusLabel(status: ServiceStatus, days: number | null): string {
+ *  badge uses (TaskCard/BlockedStepsWidget too), once a service has a delay to show. A plain
+ *  "in_progress" with every item done reads as "No pending task" instead — the underlying status
+ *  (and its badge color) stays in_progress either way, since finishing every item still isn't the
+ *  same as an admin actually closing the service out (see getServiceStatus) — this only changes
+ *  what the badge says, not what it means. */
+function formatServiceStatusLabel(status: ServiceStatus, days: number | null, allItemsDone: boolean): string {
+  if (status === "in_progress" && allItemsDone) return "No pending task";
   const label = SERVICE_STATUS_LABELS[status];
   return days !== null && days > 0 ? `${label} · ${days}d` : label;
 }
@@ -114,7 +120,7 @@ export function ServicesList({ services, canDelete }: { services: ServiceListRow
                     <span
                       className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${SERVICE_STATUS_COLORS[service.status]}`}
                     >
-                      {formatServiceStatusLabel(service.status, service.statusDays)}
+                      {formatServiceStatusLabel(service.status, service.statusDays, service.allItemsDone)}
                     </span>
                   </div>
                   <div className="text-sm text-fg-muted">{service.client.name}</div>
@@ -166,7 +172,7 @@ export function ServicesList({ services, canDelete }: { services: ServiceListRow
                       <span
                         className={`rounded-full px-2 py-0.5 text-xs font-medium ${SERVICE_STATUS_COLORS[service.status]}`}
                       >
-                        {formatServiceStatusLabel(service.status, service.statusDays)}
+                        {formatServiceStatusLabel(service.status, service.statusDays, service.allItemsDone)}
                       </span>
                     </td>
                     {canDelete && (
