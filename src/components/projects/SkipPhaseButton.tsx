@@ -10,7 +10,8 @@ type TargetPhase = "phase_2" | "phase_3";
 const TARGET_LABEL: Record<TargetPhase, string> = { phase_2: "Phase 2 · Procurement", phase_3: "Phase 3 · Installation" };
 const TARGET_SUMMARY: Record<TargetPhase, string> = {
   phase_2: "Marks 1A–1D (Onboarding) completed.",
-  phase_3: "Marks 1A–1D, the final site measurement, and every procurement item's stages (requirement, quote, payment, order, arrival, QC) completed.",
+  phase_3:
+    "Marks 1A–1D and every procurement item's stages (requirement, quote, payment, order, arrival, QC) completed. The final site measurement (2D2) is left open — that visit still needs to happen for real.",
 };
 
 function todayInputValue(): string {

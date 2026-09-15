@@ -374,10 +374,10 @@ export type SkipTargetPhase = "phase_2" | "phase_3";
  * resuming *live* tracking from wherever the project actually is, not backfilling that too.
  *
  * Note 2D2 ("Final tight measurement at site") is a Phase 2 step but isn't in DERIVED_STEP_CODES
- * and nothing downstream gates on it (see buildPhase2Steps) — so it needs its own explicit
- * completion when skipping to phase_3, same as 1A-1D: a project that's really already at Phase 3
- * necessarily already had its final site measurement done, even though the dependency graph
- * itself doesn't enforce that.
+ * and nothing downstream gates on it (see buildPhase2Steps) — so it's deliberately left untouched
+ * here even when skipping to phase_3. Unlike 1A-1D and the procurement stages, it's a real site
+ * visit the project engineer still has to make; reaching Phase 3 administratively doesn't mean
+ * that visit already happened.
  *
  * Deliberately bypasses updateStepStatus's normal validation (dependency gates, the
  * visitUrgency/delayCategory prompts, late-reason requirements) — those exist to keep a *live*
@@ -459,13 +459,6 @@ export async function skipToPhase(
       where: { projectId, stepCode: "2F" },
       data: { actualEndDate: asOfDate },
     });
-
-    // 2D2 isn't derived and nothing gates on it (see this function's own doc comment above), so
-    // the loops above never touch it — complete it explicitly, same as 1A-1D.
-    const step2D2 = await prisma.phaseStep.findFirst({ where: { projectId, stepCode: "2D2" } });
-    if (step2D2 && step2D2.status !== "completed") {
-      await completeStepBackfilled(step2D2);
-    }
   }
 
   await recomputeProjectPhase(projectId);

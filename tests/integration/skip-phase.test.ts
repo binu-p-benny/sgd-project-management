@@ -42,11 +42,17 @@ describe("skipToPhase", () => {
 
     await skipToPhase(project.id, "phase_3", asOfDate, users.owner_admin);
 
-    for (const code of ["1A", "1B", "1C", "1D", "2A", "2D1", "2D2", "2F"]) {
+    for (const code of ["1A", "1B", "1C", "1D", "2A", "2D1", "2F"]) {
       const step = await getStep(project.id, code);
       expect(step.status).toBe("completed");
       expect(step.actualEndDate?.toISOString()).toBe(asOfDate.toISOString());
     }
+
+    // 2D2 is a real site visit, not something a project reaching Phase 3 administratively implies
+    // already happened — left open for the project engineer to actually do.
+    const step2D2 = await getStep(project.id, "2D2");
+    expect(step2D2.status).not.toBe("completed");
+    expect(step2D2.actualEndDate).toBeNull();
 
     const items = await getProcurementItems(project.id);
     expect(items).toHaveLength(3);
