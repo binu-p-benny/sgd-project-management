@@ -258,6 +258,17 @@ model PhaseStep {
   actualStartDate  DateTime? @map("actual_start_date") @db.Timestamptz(3)
   actualEndDate    DateTime? @map("actual_end_date") @db.Timestamptz(3)
 
+  // 3C1/3C2/3E only (see MANUAL_PLANNED_DATE_STEP_CODES) — normally only an admin can fill in
+  // this step's own manual Planned start/end (see /api/phase-steps/[id]/dates). An admin can
+  // delegate that to one department instead by setting this field (see
+  // /api/phase-steps/[id]/planned-date-permission) — once set, that department gets a "Set
+  // planned dates" task of its own in /my-tasks (see MANUAL_PLANNED_DATE_STEP_CODES in
+  // unified-tasks.ts), reachable via the separate /api/phase-steps/[id]/planned-dates route
+  // rather than the admin-only one. Left set after use (not cleared once the dates are filled
+  // in) purely as a record of who was delegated — the task itself disappears on its own once
+  // the dates are locked in, same as contractorId below.
+  plannedDateEditDepartment Department? @map("planned_date_edit_department")
+
   // 3C1 only today (see MANUAL_CONTRACTOR_STEP_CODES in TaskCard.tsx) — which crew is doing the
   // aluminum framework, chosen alongside that step's own manual Planned start/end and saved by
   // the same CTA. onDelete: SetNull, not the schema default Restrict: a contractor removed from

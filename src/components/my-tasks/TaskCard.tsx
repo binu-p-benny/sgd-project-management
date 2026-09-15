@@ -14,6 +14,7 @@ import {
   DELAY_CATEGORY_LABELS,
   DELAY_CATEGORY_OPTIONS,
   DEPARTMENT_LABELS,
+  ASSIGNABLE_DEPARTMENTS,
   PHASE_LABELS,
 } from "@/lib/labels";
 
@@ -246,6 +247,16 @@ export function TaskCard({
   );
   const [plannedDateSubmitting, setPlannedDateSubmitting] = useState(false);
   const [plannedDateError, setPlannedDateError] = useState<string | null>(null);
+  // Admin-only: which department (if any) this step's own manual Planned start/end has been
+  // delegated to — see plannedDateEditDepartment and savePlannedDatePermission below. A separate
+  // draft/save from the dates themselves, same "who may vs. what's saved" split as the contractor
+  // picker above is from its own dates.
+  const [plannedDateEditDeptDraft, setPlannedDateEditDeptDraft] = useSyncedDraft(
+    item.plannedDateEditDepartment ?? "",
+    (v) => v ?? ""
+  );
+  const [plannedDatePermissionSubmitting, setPlannedDatePermissionSubmitting] = useState(false);
+  const [plannedDatePermissionError, setPlannedDatePermissionError] = useState<string | null>(null);
   // 3C1's own contractor pick — a separate draft/save action (POST /api/phase-steps/[id]/contractor)
   // from the Planned dates above. See contractorPickerOpen further down.
   const [contractorDraft, setContractorDraft] = useSyncedDraft(item.contractorId ?? "", (v) => v ?? "");
@@ -554,6 +565,29 @@ export function TaskCard({
     } catch {
       setPlannedDateError("Could not reach the server");
       setPlannedDateSubmitting(false);
+    }
+  }
+
+  async function savePlannedDatePermission() {
+    setPlannedDatePermissionSubmitting(true);
+    setPlannedDatePermissionError(null);
+    try {
+      const res = await fetch(`/api/phase-steps/${item.id}/planned-date-permission`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ department: plannedDateEditDeptDraft || null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setPlannedDatePermissionError(typeof data.error === "string" ? data.error : "Could not save");
+        setPlannedDatePermissionSubmitting(false);
+        return;
+      }
+      router.refresh();
+      setPlannedDatePermissionSubmitting(false);
+    } catch {
+      setPlannedDatePermissionError("Could not reach the server");
+      setPlannedDatePermissionSubmitting(false);
     }
   }
 
@@ -1111,6 +1145,37 @@ export function TaskCard({
                 </button>
               </div>
               {plannedDateError && <p className="text-xs text-red-600 dark:text-red-400">{plannedDateError}</p>}
+
+              <div className="flex flex-col gap-1.5 rounded-lg border border-edge bg-overlay/40 p-2">
+                <span className="text-xs font-medium text-fg-muted">
+                  Let a department fill these in themselves
+                </span>
+                <select
+                  value={plannedDateEditDeptDraft}
+                  onChange={(e) => setPlannedDateEditDeptDraft(e.target.value)}
+                  className="h-10 w-full rounded-lg border border-edge bg-bg px-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
+                >
+                  <option value="">No one — admin only</option>
+                  {ASSIGNABLE_DEPARTMENTS.map((dept) => (
+                    <option key={dept} value={dept}>
+                      {DEPARTMENT_LABELS[dept]}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={savePlannedDatePermission}
+                    disabled={plannedDatePermissionSubmitting}
+                    className={`${btnAdminSmall} disabled:opacity-40`}
+                  >
+                    {plannedDatePermissionSubmitting ? <Spinner className="h-3.5 w-3.5" /> : "Save permission"}
+                  </button>
+                </div>
+                {plannedDatePermissionError && (
+                  <p className="text-xs text-red-600 dark:text-red-400">{plannedDatePermissionError}</p>
+                )}
+              </div>
             </>
           )}
         </div>

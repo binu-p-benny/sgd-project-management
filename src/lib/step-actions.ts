@@ -34,11 +34,18 @@ export const DELAY_CATEGORY_STEP_CODES = new Set(["1A", "1B", "1C", "1D", "2D2"]
 
 // Phase 3 never gets a computed planned date (rescheduleProjectDates excludes the whole phase),
 // but 3C1 and 3C2 still get a manual planned start+end each, and 3E a manual planned end only
-// (see MANUAL_PLANNED_END_ONLY_STEP_CODES in TaskCard.tsx — a single on-site QC check has no
-// planned start worth tracking), each filled in by hand via their own small Save CTA — see
-// /api/phase-steps/[id]/dates. Every other step's planned_start_date/planned_end_date stays
-// fully system-computed and this route rejects writes to them, same as it always has.
+// (see MANUAL_PLANNED_END_ONLY_STEP_CODES below — a single on-site QC check has no planned start
+// worth tracking), each filled in by hand via their own small Save CTA — normally admin-only (see
+// /api/phase-steps/[id]/dates), or by one delegated department once granted (see
+// plannedDateEditDepartment, /api/phase-steps/[id]/planned-date(s|-permission), and
+// buildPlannedDateEditTasks in unified-tasks.ts). Every other step's planned_start_date/
+// planned_end_date stays fully system-computed and /dates rejects writes to them, same as always.
 export const MANUAL_PLANNED_DATE_STEP_CODES = new Set(["3C1", "3C2", "3E"]);
+
+// Of those, 3E only ever gets a Planned *end* — see the comment above. Mirrored locally as its own
+// copy in TaskCard.tsx/TaskTable.tsx for the usual reason ("use client" files can't import this
+// Prisma-touching module) — keep both in sync with this one by hand.
+export const MANUAL_PLANNED_END_ONLY_STEP_CODES = new Set(["3E"]);
 
 // 3C1 ("Aluminum framework") only, for now — which crew is fabricating it. Its own separate
 // task from that step's manual Planned start/end, with its own Save CTA (see

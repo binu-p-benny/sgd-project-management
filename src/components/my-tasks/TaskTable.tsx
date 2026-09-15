@@ -19,6 +19,9 @@ import {
 const SINGLE_COMPLETION_STEP_CODES = new Set(["1A", "1B", "1D", "2D2"]);
 const DELAY_CATEGORY_STEP_CODES = new Set(["1A", "1B", "1C", "1D", "2D2"]);
 const MANUAL_PLANNED_DATE_STEP_CODES = new Set(["3C1", "3C2", "3E"]);
+// 3E only — a single on-site QC check has no planned start worth tracking, see
+// MANUAL_PLANNED_END_ONLY_STEP_CODES in step-actions.ts (this file's own mirrored copy).
+const MANUAL_PLANNED_END_ONLY_STEP_CODES = new Set(["3E"]);
 // 3C1 only, for now — see MANUAL_CONTRACTOR_STEP_CODES in step-actions.ts (this file's own
 // mirrored copy, same reason every other set here is: that file pulls in the Prisma client).
 const MANUAL_CONTRACTOR_STEP_CODES = new Set(["3C1"]);
@@ -30,6 +33,12 @@ function formatDate(iso: string | null): string {
 function toDateInputValue(iso: string | null): string {
   if (!iso) return new Date().toISOString().slice(0, 10);
   return iso.slice(0, 10);
+}
+// Unlike toDateInputValue above (defaults an empty actual date to today, since that's almost
+// always what's meant), a blank Planned date should stay blank — defaulting it to today would
+// mean silently submitting today's date as a "planned" one if the field's left untouched.
+function toPlannedDateInputValue(iso: string | null): string {
+  return iso ? iso.slice(0, 10) : "";
 }
 function daysOverdue(plannedIso: string): number {
   return Math.max(0, Math.floor((Date.now() - new Date(plannedIso).getTime()) / (1000 * 60 * 60 * 24)));
@@ -141,6 +150,16 @@ function useTaskActions(task: UnifiedTask) {
   const [contractorDraft, setContractorDraft] = useState("");
   const [contractorSubmitting, setContractorSubmitting] = useState(false);
   const [contractorError, setContractorError] = useState<string | null>(null);
+  // kind === "planned_date_edit" only — this department's own delegated pick at filling in a
+  // MANUAL_PLANNED_DATE_STEP_CODES step's Planned start/end (see plannedDateEditDepartment,
+  // savePlannedDateEdit below). Seeded from whatever's already there (e.g. a start saved earlier
+  // with no end yet), same partial-draft idea as PlannedDatesField in TaskCard.tsx.
+  const [plannedDateEditStart, setPlannedDateEditStart] = useState(
+    toPlannedDateInputValue(task.manualPlannedStartDate)
+  );
+  const [plannedDateEditEnd, setPlannedDateEditEnd] = useState(toPlannedDateInputValue(task.manualPlannedEndDate));
+  const [plannedDateEditSubmitting, setPlannedDateEditSubmitting] = useState(false);
+  const [plannedDateEditError, setPlannedDateEditError] = useState<string | null>(null);
 
   useEffect(() => {
     const timeouts = rowTimeouts.current;
@@ -186,6 +205,32 @@ function useTaskActions(task: UnifiedTask) {
     } catch {
       setContractorError("Could not reach the server");
       setContractorSubmitting(false);
+    }
+  }
+
+  async function savePlannedDateEdit() {
+    setPlannedDateEditSubmitting(true);
+    setPlannedDateEditError(null);
+    const endOnly = !!task.stepCode && MANUAL_PLANNED_END_ONLY_STEP_CODES.has(task.stepCode);
+    try {
+      const res = await fetch(`/api/phase-steps/${task.refId}/planned-dates`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(endOnly ? {} : { plannedStartDate: plannedDateEditStart ? new Date(plannedDateEditStart).toISOString() : null }),
+          plannedEndDate: plannedDateEditEnd ? new Date(plannedDateEditEnd).toISOString() : null,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setPlannedDateEditError(typeof data.error === "string" ? data.error : "Could not save planned dates");
+        setPlannedDateEditSubmitting(false);
+        return;
+      }
+      router.refresh();
+    } catch {
+      setPlannedDateEditError("Could not reach the server");
+      setPlannedDateEditSubmitting(false);
     }
   }
 
@@ -389,6 +434,13 @@ function useTaskActions(task: UnifiedTask) {
     contractorSubmitting,
     contractorError,
     saveContractor,
+    plannedDateEditStart,
+    setPlannedDateEditStart,
+    plannedDateEditEnd,
+    setPlannedDateEditEnd,
+    plannedDateEditSubmitting,
+    plannedDateEditError,
+    savePlannedDateEdit,
     needsLateReasonSimple,
     canStartOrComplete,
     isPhaseStep,
@@ -501,6 +553,47 @@ function ContractorActionField({ s, size }: { s: TaskActions; size: Size }) {
         {s.contractorSubmitting ? <Spinner className={spinnerCls(size)} /> : "Save contractor"}
       </button>
       {s.contractorError && <p className="text-[11px] text-red-600 dark:text-red-400">{s.contractorError}</p>}
+    </div>
+  );
+}
+
+// The action side of a kind === "planned_date_edit" row (see that kind in unified-tasks.ts) —
+// only reachable once an admin has delegated this MANUAL_PLANNED_DATE_STEP_CODES step's own
+// Planned start/end to this department (see plannedDateEditDepartment). 3E's row skips the start
+// input, same "end-only" carve-out TaskCard.tsx's admin-side PlannedDatesField already applies.
+function PlannedDateEditField({ task, s, size }: { task: UnifiedTask; s: TaskActions; size: Size }) {
+  const endOnly = !!task.stepCode && MANUAL_PLANNED_END_ONLY_STEP_CODES.has(task.stepCode);
+  return (
+    <div className="flex flex-col gap-1.5">
+      {!endOnly && (
+        <div className="flex flex-col gap-1">
+          <span className="text-[11px] font-medium text-fg-muted">Planned start</span>
+          <input
+            type="date"
+            value={s.plannedDateEditStart}
+            onChange={(e) => s.setPlannedDateEditStart(e.target.value)}
+            className={fieldCls(size)}
+          />
+        </div>
+      )}
+      <div className="flex flex-col gap-1">
+        <span className="text-[11px] font-medium text-fg-muted">Planned end</span>
+        <input
+          type="date"
+          value={s.plannedDateEditEnd}
+          onChange={(e) => s.setPlannedDateEditEnd(e.target.value)}
+          className={fieldCls(size)}
+        />
+      </div>
+      <button
+        type="button"
+        className={btnCls("primary", size)}
+        onClick={s.savePlannedDateEdit}
+        disabled={s.plannedDateEditSubmitting}
+      >
+        {s.plannedDateEditSubmitting ? <Spinner className={spinnerCls(size)} /> : "Save planned dates"}
+      </button>
+      {s.plannedDateEditError && <p className="text-[11px] text-red-600 dark:text-red-400">{s.plannedDateEditError}</p>}
     </div>
   );
 }
@@ -806,14 +899,14 @@ function TaskRow({ task, isAdmin }: { task: UnifiedTask; isAdmin: boolean }) {
           )}
         </td>
         <td className="px-3 py-2.5">
-          {task.kind === "contractor_selection" ? (
+          {task.kind === "contractor_selection" || task.kind === "planned_date_edit" ? (
             <span className="text-xs text-fg-subtle">—</span>
           ) : (
             <ActualDateField s={s} size="sm" />
           )}
         </td>
         <td className="px-3 py-2.5">
-          {task.kind === "contractor_selection" ? (
+          {task.kind === "contractor_selection" || task.kind === "planned_date_edit" ? (
             <span className="text-xs text-fg-subtle">—</span>
           ) : (
             <ReasonField task={task} s={s} size="sm" />
@@ -822,6 +915,8 @@ function TaskRow({ task, isAdmin }: { task: UnifiedTask; isAdmin: boolean }) {
         <td className="px-3 py-2.5">
           {task.kind === "contractor_selection" ? (
             <ContractorActionField s={s} size="sm" />
+          ) : task.kind === "planned_date_edit" ? (
+            <PlannedDateEditField task={task} s={s} size="sm" />
           ) : (
             <TaskActionCluster task={task} s={s} isAdmin={isAdmin} size="sm" />
           )}
@@ -933,6 +1028,8 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
           )}
           {task.kind === "contractor_selection" ? (
             <ContractorActionField s={s} size="md" />
+          ) : task.kind === "planned_date_edit" ? (
+            <PlannedDateEditField task={task} s={s} size="md" />
           ) : (
             <>
               <ActualDateField s={s} size="md" label="Actual date" />

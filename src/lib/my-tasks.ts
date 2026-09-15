@@ -54,6 +54,11 @@ export interface MyTaskItem {
   // moment 3C1 shows up at all, and contractorOverdue below reads true immediately).
   contractorPlannedDate: string | null;
   contractorOverdue: boolean;
+  // MANUAL_PLANNED_DATE_STEP_CODES steps only (3C1/3C2/3E) — null everywhere else, and until an
+  // admin delegates this step's own Planned start/end to one department (see
+  // /api/phase-steps/[id]/planned-date-permission). Once set, that department can fill the dates
+  // in themselves from /my-tasks, via /api/phase-steps/[id]/planned-dates.
+  plannedDateEditDepartment: Department | null;
 }
 
 export interface GetMyTasksOptions {
@@ -198,6 +203,7 @@ export async function getMyTasks(
       contractorName: step.contractor?.name ?? null,
       contractorPlannedDate: contractorPlannedDate?.toISOString() ?? null,
       contractorOverdue: isContractorSelectionOverdue(contractorPlannedDate, step.contractorId),
+      plannedDateEditDepartment: step.plannedDateEditDepartment,
     });
   }
 

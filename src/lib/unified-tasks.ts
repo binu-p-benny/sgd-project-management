@@ -9,7 +9,12 @@ import {
   getRequirementCreatedStatus,
 } from "@/lib/procurement";
 import { PROCUREMENT_STAGES, firstUnfilledStage, type StageSpec } from "@/lib/project-filters";
-import { DERIVED_STEP_CODES, MANUAL_CONTRACTOR_STEP_CODES } from "@/lib/step-actions";
+import {
+  DERIVED_STEP_CODES,
+  MANUAL_CONTRACTOR_STEP_CODES,
+  MANUAL_PLANNED_DATE_STEP_CODES,
+  MANUAL_PLANNED_END_ONLY_STEP_CODES,
+} from "@/lib/step-actions";
 import { checkDependencyGate } from "@/lib/dependency-gate";
 
 export type TaskKind =
@@ -18,7 +23,8 @@ export type TaskKind =
   | "glass_po_stage"
   | "action_item"
   | "service_item"
-  | "contractor_selection";
+  | "contractor_selection"
+  | "planned_date_edit";
 
 // Field -> human label/note-field, shared by procurement items and the glass PO tracker (which
 // reuse the exact same stage names) — see the fixed stage arrays built inline in the project
@@ -93,6 +99,12 @@ export interface UnifiedTask {
   contractorName: string | null;
   contractorPlannedDate: string | null;
   contractorOverdue: boolean;
+  // kind === "planned_date_edit" only (see buildPlannedDateEditTasks) — the step's own current
+  // (possibly partial — a start with no end yet, say) manual Planned start/end, seeding the
+  // draft form; null/unused on every other kind. Saved via /api/phase-steps/[id]/planned-dates,
+  // not the admin-only /dates route this row's own viewer wasn't granted access to.
+  manualPlannedStartDate: string | null;
+  manualPlannedEndDate: string | null;
 }
 
 /** Builds one procurement-stage or glass-PO-stage task row — same shape either way, just a
@@ -137,6 +149,8 @@ function buildStageTask(args: {
     contractorName: null,
     contractorPlannedDate: null,
     contractorOverdue: false,
+    manualPlannedStartDate: null,
+    manualPlannedEndDate: null,
   };
 }
 
@@ -180,6 +194,8 @@ function buildActionPlanTask(args: {
     contractorName: null,
     contractorPlannedDate: null,
     contractorOverdue: false,
+    manualPlannedStartDate: null,
+    manualPlannedEndDate: null,
   };
 }
 
@@ -260,6 +276,8 @@ async function buildPhaseStepTasks(department: Department | null): Promise<Unifi
           contractorName: null,
           contractorPlannedDate: contractorPlannedDate?.toISOString() ?? null,
           contractorOverdue: isContractorSelectionOverdue(contractorPlannedDate, step.contractorId),
+          manualPlannedStartDate: null,
+          manualPlannedEndDate: null,
         });
       }
     }
@@ -294,6 +312,72 @@ async function buildPhaseStepTasks(department: Department | null): Promise<Unifi
       contractorName: step.contractor?.name ?? null,
       contractorPlannedDate: contractorPlannedDate?.toISOString() ?? null,
       contractorOverdue: isContractorSelectionOverdue(contractorPlannedDate, step.contractorId),
+      manualPlannedStartDate: null,
+      manualPlannedEndDate: null,
+    });
+  }
+  return tasks;
+}
+
+/**
+ * A MANUAL_PLANNED_DATE_STEP_CODES step (3C1/3C2/3E) an admin has delegated to one department
+ * (see plannedDateEditDepartment) shows up here as its own task for that department — separate
+ * from the step's own phase_step row above, which stays gated by owningDepartment/
+ * secondaryDepartment as always; delegating *who may plan the dates* doesn't hand over the rest
+ * of the step (Start/Complete etc.) too. Deliberately its own query rather than folded into
+ * buildPhaseStepTasks' loop: that loop skips a not_started step still behind an unmet dependency
+ * gate — real work nobody can act on yet — but planning ahead is exactly the point of delegating
+ * this, so a still-gated 3C2 or 3E should show up here even before 3C1/3B finish. Disappears once
+ * the dates are filled in and locked, same as contractor_selection vanishing once a contractor's
+ * picked — see the lock check below, mirroring TaskCard.tsx's own plannedDatesLocked.
+ */
+async function buildPlannedDateEditTasks(department: Department | null): Promise<UnifiedTask[]> {
+  const steps = await prisma.phaseStep.findMany({
+    where: {
+      status: { not: "completed" },
+      stepCode: { in: [...MANUAL_PLANNED_DATE_STEP_CODES] },
+      plannedDateEditDepartment: department ? department : { not: null },
+    },
+    include: { project: { select: { id: true, name: true, client: { select: { name: true } } } } },
+  });
+
+  const tasks: UnifiedTask[] = [];
+  for (const step of steps) {
+    const locked = MANUAL_PLANNED_END_ONLY_STEP_CODES.has(step.stepCode)
+      ? !!step.plannedEndDate
+      : !!step.plannedStartDate && !!step.plannedEndDate;
+    if (locked) continue;
+
+    tasks.push({
+      id: `planned_date_edit:${step.id}`,
+      kind: "planned_date_edit",
+      phase: step.phase,
+      taskLabel: "Set planned dates",
+      subTaskLabel: step.stepName,
+      project: step.project,
+      department: step.plannedDateEditDepartment!,
+      secondaryDepartment: null,
+      status: "not_started",
+      plannedDate: null,
+      actualDate: null,
+      overrun: false,
+      qcPassed: null,
+      notes: null,
+      blockedReason: null,
+      blockedNote: null,
+      gateBlockedBy: null,
+      isPassFail: false,
+      refId: step.id,
+      dateField: null,
+      noteField: null,
+      stepCode: step.stepCode,
+      actionItemSource: null,
+      contractorId: null,
+      contractorName: null,
+      contractorPlannedDate: null,
+      contractorOverdue: false,
+      manualPlannedStartDate: step.plannedStartDate?.toISOString() ?? null,
+      manualPlannedEndDate: step.plannedEndDate?.toISOString() ?? null,
     });
   }
   return tasks;
@@ -494,6 +578,8 @@ async function buildActionItemTasks(department: Department | null): Promise<Unif
       contractorName: null,
       contractorPlannedDate: null,
       contractorOverdue: false,
+      manualPlannedStartDate: null,
+      manualPlannedEndDate: null,
     });
   }
 
@@ -526,6 +612,8 @@ async function buildActionItemTasks(department: Department | null): Promise<Unif
       contractorName: null,
       contractorPlannedDate: null,
       contractorOverdue: false,
+      manualPlannedStartDate: null,
+      manualPlannedEndDate: null,
     });
   }
 
@@ -558,6 +646,8 @@ async function buildActionItemTasks(department: Department | null): Promise<Unif
       contractorName: null,
       contractorPlannedDate: null,
       contractorOverdue: false,
+      manualPlannedStartDate: null,
+      manualPlannedEndDate: null,
     });
   }
 
@@ -610,6 +700,8 @@ async function buildServiceItemTasks(department: Department | null): Promise<Uni
     contractorName: null,
     contractorPlannedDate: null,
     contractorOverdue: false,
+    manualPlannedStartDate: null,
+    manualPlannedEndDate: null,
   }));
 }
 
@@ -627,15 +719,24 @@ async function buildServiceItemTasks(department: Department | null): Promise<Uni
  * overdue) always sorts first, with no separate "overdue" tier needed on top of that.
  */
 export async function getUnifiedMyTasks(department: Department | null): Promise<UnifiedTask[]> {
-  const [phaseSteps, procurementStages, glassPOStages, actionItems, serviceItems] = await Promise.all([
-    buildPhaseStepTasks(department),
-    buildProcurementStageTasks(department),
-    buildGlassPOStageTasks(department),
-    buildActionItemTasks(department),
-    buildServiceItemTasks(department),
-  ]);
+  const [phaseSteps, plannedDateEdits, procurementStages, glassPOStages, actionItems, serviceItems] =
+    await Promise.all([
+      buildPhaseStepTasks(department),
+      buildPlannedDateEditTasks(department),
+      buildProcurementStageTasks(department),
+      buildGlassPOStageTasks(department),
+      buildActionItemTasks(department),
+      buildServiceItemTasks(department),
+    ]);
 
-  const all = [...phaseSteps, ...procurementStages, ...glassPOStages, ...actionItems, ...serviceItems];
+  const all = [
+    ...phaseSteps,
+    ...plannedDateEdits,
+    ...procurementStages,
+    ...glassPOStages,
+    ...actionItems,
+    ...serviceItems,
+  ];
   return all.sort((a, b) => {
     if (a.plannedDate === null && b.plannedDate === null) return 0;
     if (a.plannedDate === null) return 1;

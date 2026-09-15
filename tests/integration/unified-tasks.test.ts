@@ -233,6 +233,114 @@ describe("getUnifiedMyTasks — 3C1's own contractor-selection sub-task", () => 
   });
 });
 
+describe("getUnifiedMyTasks — admin-delegated planned-date editing (plannedDateEditDepartment)", () => {
+  it("doesn't appear for anyone until an admin delegates it", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users); // seeds 3C1
+
+    const all = tasksFor(await getUnifiedMyTasks("design_engineer"), project.id);
+    expect(all.some((t) => t.kind === "planned_date_edit")).toBe(false);
+  });
+
+  it("appears only for the delegated department, as its own task — not the owning department's, which keeps its normal phase_step row", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users);
+    const threeC1 = await getStep(project.id, "3C1");
+    await prisma.phaseStep.update({
+      where: { id: threeC1.id },
+      data: { plannedDateEditDepartment: "design_engineer" },
+    });
+
+    const delegated = tasksFor(await getUnifiedMyTasks("design_engineer"), project.id);
+    const editTask = delegated.find((t) => t.kind === "planned_date_edit");
+    expect(editTask).toBeDefined();
+    expect(editTask!.taskLabel).toBe("Set planned dates");
+    expect(editTask!.subTaskLabel).toBe(threeC1.stepName);
+    expect(editTask!.refId).toBe(threeC1.id);
+    expect(editTask!.department).toBe("design_engineer");
+
+    // project_engineer (3C1's actual owning department) wasn't delegated this — no edit task for
+    // them, but their own phase_step row for 3C1 is untouched.
+    const owning = tasksFor(await getUnifiedMyTasks("project_engineer"), project.id);
+    expect(owning.some((t) => t.kind === "planned_date_edit")).toBe(false);
+    expect(owning.some((t) => t.kind === "phase_step" && t.stepCode === "3C1")).toBe(true);
+  });
+
+  it("admin (department=null) sees every delegated task regardless of which department it went to", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users);
+    const threeC1 = await getStep(project.id, "3C1");
+    await prisma.phaseStep.update({
+      where: { id: threeC1.id },
+      data: { plannedDateEditDepartment: "purchase" },
+    });
+
+    const all = tasksFor(await getUnifiedMyTasks(null), project.id);
+    expect(all.some((t) => t.kind === "planned_date_edit" && t.refId === threeC1.id)).toBe(true);
+  });
+
+  it("shows up even while the step is still gated behind an unmet dependency — planning ahead is the point", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users); // 3C1 seeded, not yet complete — 3C2 still gated on it
+    const threeC2 = await getStep(project.id, "3C2");
+    await prisma.phaseStep.update({
+      where: { id: threeC2.id },
+      data: { plannedDateEditDepartment: "design_engineer" },
+    });
+
+    const all = tasksFor(await getUnifiedMyTasks("design_engineer"), project.id);
+    const editTask = all.find((t) => t.kind === "planned_date_edit" && t.refId === threeC2.id);
+    expect(editTask).toBeDefined();
+    // Its sibling phase_step row for 3C2 is correctly absent for this department (design_engineer
+    // isn't 3C2's owning department, and it's gated besides) — only the edit task shows.
+    expect(all.some((t) => t.kind === "phase_step" && t.stepCode === "3C2")).toBe(false);
+  });
+
+  it("disappears once both planned dates are filled in and locked", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users);
+    const threeC1 = await getStep(project.id, "3C1");
+    await prisma.phaseStep.update({
+      where: { id: threeC1.id },
+      data: {
+        plannedDateEditDepartment: "design_engineer",
+        plannedStartDate: new Date(),
+        plannedEndDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7),
+      },
+    });
+
+    const all = tasksFor(await getUnifiedMyTasks("design_engineer"), project.id);
+    expect(all.some((t) => t.kind === "planned_date_edit")).toBe(false);
+  });
+
+  it("3E (end-only) locks with just a Planned end — no start ever required", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users);
+    const threeE = await getStep(project.id, "3E");
+    await prisma.phaseStep.update({
+      where: { id: threeE.id },
+      data: { plannedDateEditDepartment: "hr_admin" },
+    });
+
+    const beforeEnd = tasksFor(await getUnifiedMyTasks("hr_admin"), project.id);
+    expect(beforeEnd.some((t) => t.kind === "planned_date_edit" && t.refId === threeE.id)).toBe(true);
+
+    await prisma.phaseStep.update({
+      where: { id: threeE.id },
+      data: { plannedEndDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 20) },
+    });
+
+    const afterEnd = tasksFor(await getUnifiedMyTasks("hr_admin"), project.id);
+    expect(afterEnd.some((t) => t.kind === "planned_date_edit" && t.refId === threeE.id)).toBe(false);
+  });
+});
+
 describe("getUnifiedMyTasks — sorting", () => {
   it("returns tasks ascending by planned date, with no-date tasks last", async () => {
     const all = await getUnifiedMyTasks(null);
