@@ -342,16 +342,41 @@ describe("getUnifiedMyTasks — admin-delegated planned-date editing (plannedDat
 });
 
 describe("getUnifiedMyTasks — sorting", () => {
-  it("returns tasks ascending by planned date, with no-date tasks last", async () => {
+  it("returns tasks ascending by planned date, with no-date tasks last — after any planned_date_edit rows, which jump ahead of everything (see the dedicated test below)", async () => {
     const all = await getUnifiedMyTasks(null);
-    const dated = all.filter((t) => t.plannedDate !== null).map((t) => t.plannedDate!);
+    const firstOrdinary = all.findIndex((t) => t.kind !== "planned_date_edit");
+    const rest = firstOrdinary === -1 ? [] : all.slice(firstOrdinary);
+    expect(all.slice(0, firstOrdinary === -1 ? all.length : firstOrdinary).every((t) => t.kind === "planned_date_edit")).toBe(
+      true
+    );
+
+    const dated = rest.filter((t) => t.plannedDate !== null).map((t) => t.plannedDate!);
     const sorted = [...dated].sort();
     expect(dated).toEqual(sorted);
 
-    const firstNoDateIndex = all.findIndex((t) => t.plannedDate === null);
+    const firstNoDateIndex = rest.findIndex((t) => t.plannedDate === null);
     if (firstNoDateIndex !== -1) {
-      expect(all.slice(firstNoDateIndex).every((t) => t.plannedDate === null)).toBe(true);
+      expect(rest.slice(firstNoDateIndex).every((t) => t.plannedDate === null)).toBe(true);
     }
+  });
+
+  it("puts a planned_date_edit task ahead of every other row, even ones already overdue", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users);
+    const threeC1 = await getStep(project.id, "3C1");
+    await prisma.phaseStep.update({
+      where: { id: threeC1.id },
+      data: { plannedDateEditDepartment: "design_engineer" },
+    });
+
+    const all = await getUnifiedMyTasks(null);
+    const editIndex = all.findIndex((t) => t.kind === "planned_date_edit" && t.refId === threeC1.id);
+    expect(editIndex).toBeGreaterThanOrEqual(0);
+    // Not asserting index 0 outright — another planned_date_edit row elsewhere in the (shared)
+    // dev DB could legitimately sort before this one too. What matters is that nothing *else*
+    // (dated or not) ever precedes it.
+    expect(all.slice(0, editIndex).every((t) => t.kind === "planned_date_edit")).toBe(true);
   });
 
   it("updateStepStatus's own actualEndDate option feeds straight through the same PhaseStep row unified-tasks reads", async () => {

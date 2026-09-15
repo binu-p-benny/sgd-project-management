@@ -717,6 +717,10 @@ async function buildServiceItemTasks(department: Department | null): Promise<Uni
  *
  * Sorted by planned date ascending, nulls last — the earliest-due (including anything already
  * overdue) always sorts first, with no separate "overdue" tier needed on top of that.
+ * planned_date_edit rows jump the queue ahead of everything else regardless of date: they have
+ * no due date of their own to sort by (see buildPlannedDateEditTasks), and burying a "someone
+ * needs to set these dates" task under a page of already-dated work defeats its own purpose —
+ * every downstream planned date on that step depends on it existing at all.
  */
 export async function getUnifiedMyTasks(department: Department | null): Promise<UnifiedTask[]> {
   const [phaseSteps, plannedDateEdits, procurementStages, glassPOStages, actionItems, serviceItems] =
@@ -738,6 +742,9 @@ export async function getUnifiedMyTasks(department: Department | null): Promise<
     ...serviceItems,
   ];
   return all.sort((a, b) => {
+    const aIsPlannedDateEdit = a.kind === "planned_date_edit";
+    const bIsPlannedDateEdit = b.kind === "planned_date_edit";
+    if (aIsPlannedDateEdit !== bIsPlannedDateEdit) return aIsPlannedDateEdit ? -1 : 1;
     if (a.plannedDate === null && b.plannedDate === null) return 0;
     if (a.plannedDate === null) return 1;
     if (b.plannedDate === null) return -1;
