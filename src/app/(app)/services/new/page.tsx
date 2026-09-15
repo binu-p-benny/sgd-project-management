@@ -4,7 +4,6 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { ClientCombobox, type SelectedClient } from "@/components/clients/ClientCombobox";
 import { Spinner } from "@/components/ui/Spinner";
-import { ASSIGNABLE_DEPARTMENTS, DEPARTMENT_LABELS } from "@/lib/labels";
 
 const inputClass =
   "h-12 w-full rounded-lg border border-edge bg-bg px-3 text-base text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30";
@@ -18,9 +17,6 @@ export default function NewServicePage() {
   const [form, setForm] = useState({
     title: "",
     description: "",
-    // Matches the field's own DB default (see the ServiceItem schema) — picking anything else
-    // here is opt-in, not a change to today's behavior.
-    actionPlanDepartment: "purchase",
   });
 
   function update<K extends keyof typeof form>(key: K, value: string) {
@@ -99,27 +95,6 @@ export default function NewServicePage() {
             onChange={(e) => update("description", e.target.value)}
             className="w-full rounded-lg border border-edge bg-bg px-3 py-2.5 text-base text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
           />
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="actionPlanDepartment" className={labelClass}>
-            Action plan department
-          </label>
-          <select
-            id="actionPlanDepartment"
-            value={form.actionPlanDepartment}
-            onChange={(e) => update("actionPlanDepartment", e.target.value)}
-            className={inputClass}
-          >
-            {ASSIGNABLE_DEPARTMENTS.map((dept) => (
-              <option key={dept} value={dept}>
-                {DEPARTMENT_LABELS[dept]}
-              </option>
-            ))}
-          </select>
-          <p className="text-xs text-fg-subtle">
-            Who the service&apos;s first work item — &ldquo;Action plan&rdquo; — starts assigned to.
-          </p>
         </div>
 
         <button

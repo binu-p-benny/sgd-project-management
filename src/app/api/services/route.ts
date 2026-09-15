@@ -3,22 +3,18 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { addDays } from "@/lib/step-template";
-import { ASSIGNABLE_DEPARTMENTS } from "@/lib/labels";
 
 const createServiceSchema = z.object({
   title: z.string().min(1),
   clientId: z.string().min(1),
   description: z.string().nullable().optional(),
-  // Which department the seeded "Action plan" row starts assigned to — optional so a caller
-  // that doesn't send one still gets the column's own default (purchase), same as before this
-  // existed.
-  actionPlanDepartment: z.enum(ASSIGNABLE_DEPARTMENTS).optional(),
 });
 
 /**
  * Creates a standalone service — no phase steps, no procurement rows. Seeded with one work item,
- * "Action plan", planned for a day after creation — a service otherwise starts completely open-
- * ended (see ServiceTracker.tsx / POST /api/services/[id]/items for every row after this one).
+ * "Action plan", planned for a day after creation and always assigned to Project Engineer — a
+ * service otherwise starts completely open-ended (see ServiceTracker.tsx / POST
+ * /api/services/[id]/items for every row after this one, which do each pick their own department).
  */
 export async function POST(request: NextRequest) {
   const session = await getSession();
@@ -52,8 +48,8 @@ export async function POST(request: NextRequest) {
       data: {
         serviceId: created.id,
         taskLabel: "Action plan",
+        department: "project_engineer",
         plannedDate: addDays(created.createdAt, 1),
-        ...(data.actionPlanDepartment ? { department: data.actionPlanDepartment } : {}),
       },
     });
 
