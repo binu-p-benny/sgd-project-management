@@ -1206,7 +1206,152 @@ function taskMatchesDepartmentFilter(task: UnifiedTask, filter: DepartmentFilter
   return filter === "all" || task.completedByDepartment === filter;
 }
 
-export function TaskTable({ tasks, isAdmin = false }: { tasks: UnifiedTask[]; isAdmin?: boolean }) {
+type UrgencyKey = "overdue" | "due_today" | "upcoming";
+
+function startOfToday(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+function endOfToday(): Date {
+  const d = new Date();
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
+// Same 3-way split (and the same "overrun wins regardless of what time of day plannedDate
+// carries" reasoning) as DepartmentTaskOverview's own bucketTasks — kept as a separate local
+// copy since that one also needs a 4th "unscheduled" bucket this table's own callers never do
+// (groupByUrgency is only ever turned on for the review queue, where every row always has a
+// due date — see task-reviews.ts). A task with no plannedDate at all falls back to "upcoming"
+// here rather than being silently dropped, just in case.
+function bucketTasksByUrgency(tasks: UnifiedTask[]): Record<UrgencyKey, UnifiedTask[]> {
+  const todayStart = startOfToday();
+  const todayEnd = endOfToday();
+  const buckets: Record<UrgencyKey, UnifiedTask[]> = { overdue: [], due_today: [], upcoming: [] };
+
+  for (const task of tasks) {
+    if (task.overrun) {
+      buckets.overdue.push(task);
+      continue;
+    }
+    const planned = task.plannedDate ? new Date(task.plannedDate) : null;
+    if (planned && planned >= todayStart && planned <= todayEnd) {
+      buckets.due_today.push(task);
+    } else {
+      buckets.upcoming.push(task);
+    }
+  }
+  return buckets;
+}
+
+const URGENCY_SECTIONS: { key: UrgencyKey; title: string }[] = [
+  { key: "overdue", title: "Overdue" },
+  { key: "due_today", title: "Due today" },
+  { key: "upcoming", title: "Upcoming" },
+];
+
+const CHEVRON = (
+  <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-5 w-5 shrink-0 stroke-current text-fg-muted transition-transform duration-200">
+    <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+// The mobile-cards + desktop-table pair TaskTable always renders for one flat list of rows —
+// pulled out so groupByUrgency below can render it once per urgency bucket instead of once for
+// the whole (unbucketed) list, without duplicating the table markup itself.
+function TaskListView({ tasks, isAdmin, emptyText }: { tasks: UnifiedTask[]; isAdmin: boolean; emptyText: string }) {
+  return (
+    <>
+      <div className="flex flex-col gap-2 sm:hidden">
+        {tasks.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-edge-2 py-8 text-center text-sm text-fg-muted">
+            {emptyText}
+          </p>
+        ) : (
+          tasks.map((task) => <TaskAccordionItem key={task.id} task={task} isAdmin={isAdmin} />)
+        )}
+      </div>
+
+      <div className="hidden overflow-x-auto rounded-xl border border-edge sm:block">
+        <table className="w-full min-w-[64rem] text-left text-sm">
+          <thead className="bg-surface text-[11px] uppercase tracking-wider text-fg-subtle">
+            <tr>
+              <th className="px-3 py-2.5 font-medium">Planned date</th>
+              <th className="px-3 py-2.5 font-medium">Project / Service</th>
+              <th className="w-64 px-3 py-2.5 font-medium">Task</th>
+              <th className="w-32 px-3 py-2.5 font-medium">Actual date</th>
+              <th className="w-56 px-3 py-2.5 font-medium">Reason</th>
+              <th className="px-3 py-2.5 font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="bg-surface">
+            {tasks.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-3 py-8 text-center text-sm text-fg-muted">
+                  {emptyText}
+                </td>
+              </tr>
+            ) : (
+              tasks.map((task) => <TaskRow key={task.id} task={task} isAdmin={isAdmin} />)
+            )}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+function UrgencySection({
+  title,
+  tasks,
+  isAdmin,
+  defaultOpen,
+}: {
+  title: string;
+  tasks: UnifiedTask[];
+  isAdmin: boolean;
+  defaultOpen: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="overflow-hidden rounded-xl border border-edge">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-3 bg-surface px-4 py-3 text-left transition-colors hover:bg-overlay/60"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-fg">{title}</span>
+          <span className="rounded-full bg-overlay px-2 py-0.5 text-xs font-medium text-fg-muted ring-1 ring-inset ring-edge">
+            {tasks.length}
+          </span>
+        </div>
+        <span className={open ? "rotate-180" : ""}>{CHEVRON}</span>
+      </button>
+      {open && (
+        <div className="border-t border-edge bg-surface p-3">
+          <TaskListView tasks={tasks} isAdmin={isAdmin} emptyText="Nothing here matches the current filters." />
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function TaskTable({
+  tasks,
+  isAdmin = false,
+  groupByUrgency = false,
+}: {
+  tasks: UnifiedTask[];
+  isAdmin?: boolean;
+  /** Groups the (filtered) rows into Overdue / Due today / Upcoming collapsible sections instead
+   *  of one flat list — see UrgencySection. Only ever turned on for Operations Manager's review
+   *  queue (see /my-tasks/page.tsx), where the list is long enough that "what's already late"
+   *  needs to stand apart from "what isn't due yet" at a glance. */
+  groupByUrgency?: boolean;
+}) {
   // Filters live on every keystroke / change — no separate submit step. The list is already
   // just one department's own open tasks (never more than a couple hundred rows), so
   // re-filtering on each change is cheap enough to not need debouncing.
@@ -1230,6 +1375,12 @@ export function TaskTable({ tasks, isAdmin = false }: { tasks: UnifiedTask[]; is
       taskMatchesStatusFilter(task, statusFilter) &&
       taskMatchesDepartmentFilter(task, departmentFilter)
   );
+  // Bucketed off the already-filtered list, not the raw one — each section's count should
+  // reflect whatever search/kind/status/department filter is currently active, same as the
+  // flat list would. Computed unconditionally (cheap) rather than only under groupByUrgency, so
+  // the render below doesn't need TypeScript to narrow two separate ternaries against the same
+  // prop.
+  const urgencyBuckets = bucketTasksByUrgency(visibleTasks);
 
   function clearFilters() {
     setQuery("");
@@ -1297,44 +1448,24 @@ export function TaskTable({ tasks, isAdmin = false }: { tasks: UnifiedTask[]; is
         )}
       </div>
 
-      {/* Mobile: collapsible cards — header carries planned date, project/service and task; the
-          rest of the row (date, reason, actions) lives in the expanded body. */}
-      <div className="flex flex-col gap-2 sm:hidden">
-        {visibleTasks.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-edge-2 py-8 text-center text-sm text-fg-muted">
-            No tasks match these filters.
-          </p>
-        ) : (
-          visibleTasks.map((task) => <TaskAccordionItem key={task.id} task={task} isAdmin={isAdmin} />)
-        )}
-      </div>
-
-      {/* Desktop: full table */}
-      <div className="hidden overflow-x-auto rounded-xl border border-edge sm:block">
-        <table className="w-full min-w-[64rem] text-left text-sm">
-          <thead className="bg-surface text-[11px] uppercase tracking-wider text-fg-subtle">
-            <tr>
-              <th className="px-3 py-2.5 font-medium">Planned date</th>
-              <th className="px-3 py-2.5 font-medium">Project / Service</th>
-              <th className="w-64 px-3 py-2.5 font-medium">Task</th>
-              <th className="w-32 px-3 py-2.5 font-medium">Actual date</th>
-              <th className="w-56 px-3 py-2.5 font-medium">Reason</th>
-              <th className="px-3 py-2.5 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="bg-surface">
-            {visibleTasks.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-sm text-fg-muted">
-                  No tasks match these filters.
-                </td>
-              </tr>
-            ) : (
-              visibleTasks.map((task) => <TaskRow key={task.id} task={task} isAdmin={isAdmin} />)
-            )}
-          </tbody>
-        </table>
-      </div>
+      {groupByUrgency ? (
+        <div className="flex flex-col gap-3">
+          {URGENCY_SECTIONS.map(({ key, title }) => {
+            const sectionTasks = urgencyBuckets[key];
+            return (
+              <UrgencySection
+                key={key}
+                title={title}
+                tasks={sectionTasks}
+                isAdmin={isAdmin}
+                defaultOpen={key === "overdue" && sectionTasks.length > 0}
+              />
+            );
+          })}
+        </div>
+      ) : (
+        <TaskListView tasks={visibleTasks} isAdmin={isAdmin} emptyText="No tasks match these filters." />
+      )}
     </div>
   );
 }

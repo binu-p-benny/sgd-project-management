@@ -68,7 +68,7 @@ export default async function MyTasksPage() {
           {isReviewQueue ? "Nothing pending review." : "Nothing open right now."}
         </p>
       ) : (
-        <TaskTable tasks={items} isAdmin={isAdmin} />
+        <TaskTable tasks={items} isAdmin={isAdmin} groupByUrgency={isReviewQueue} />
       )}
 
       {isReviewQueue && (
