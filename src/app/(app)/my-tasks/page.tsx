@@ -2,6 +2,7 @@ import { getSession, isAdminEditor, isOperationsManager } from "@/lib/auth";
 import { getUnifiedMyTasks } from "@/lib/unified-tasks";
 import { getReviewQueueTasks } from "@/lib/task-reviews";
 import { TaskTable } from "@/components/my-tasks/TaskTable";
+import { DepartmentTaskOverview } from "@/components/my-tasks/DepartmentTaskOverview";
 import { DEPARTMENT_LABELS } from "@/lib/labels";
 
 export default async function MyTasksPage() {
@@ -12,7 +13,13 @@ export default async function MyTasksPage() {
   // task-reviews.ts): every completed unit of work, from any department, still waiting on a
   // review.
   const isReviewQueue = !!session && isOperationsManager(session);
-  const items = isReviewQueue ? await getReviewQueueTasks() : await getUnifiedMyTasks(department);
+  const [items, everyDepartmentOpenTasks] = await Promise.all([
+    isReviewQueue ? getReviewQueueTasks() : getUnifiedMyTasks(department),
+    // Managing every department means also seeing what's still outstanding everywhere, not just
+    // what's already done and waiting on a review — see DepartmentTaskOverview. Only fetched for
+    // Operations Manager; every other department's own /my-tasks is unaffected.
+    isReviewQueue ? getUnifiedMyTasks(null) : Promise.resolve([]),
+  ]);
   // Only admin/owner can actually open /projects/[id] (see its own layout.tsx) — everyone else's
   // Project name here would just link to a page that immediately bounces them back here.
   const isAdmin = !!session && isAdminEditor(session);
@@ -62,6 +69,13 @@ export default async function MyTasksPage() {
         </p>
       ) : (
         <TaskTable tasks={items} isAdmin={isAdmin} />
+      )}
+
+      {isReviewQueue && (
+        <>
+          <hr className="border-edge" />
+          <DepartmentTaskOverview tasks={everyDepartmentOpenTasks} />
+        </>
       )}
     </div>
   );

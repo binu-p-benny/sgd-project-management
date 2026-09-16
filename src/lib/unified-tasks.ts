@@ -109,6 +109,11 @@ export interface UnifiedTask {
   // not the admin-only /dates route this row's own viewer wasn't granted access to.
   manualPlannedStartDate: string | null;
   manualPlannedEndDate: string | null;
+  // kind === "review_completed" only (see task-reviews.ts) — which department actually did the
+  // work being reviewed, so /my-tasks can offer a "filter by department" dropdown on Operations
+  // Manager's own review queue. `department` on a review row is always operations_manager (the
+  // assignee), so this is the only place that department lives. Null on every other kind.
+  completedByDepartment: Department | null;
 }
 
 /** Builds one procurement-stage or glass-PO-stage task row — same shape either way, just a
@@ -155,6 +160,7 @@ function buildStageTask(args: {
     contractorOverdue: false,
     manualPlannedStartDate: null,
     manualPlannedEndDate: null,
+    completedByDepartment: null,
   };
 }
 
@@ -200,6 +206,7 @@ function buildActionPlanTask(args: {
     contractorOverdue: false,
     manualPlannedStartDate: null,
     manualPlannedEndDate: null,
+    completedByDepartment: null,
   };
 }
 
@@ -282,6 +289,7 @@ async function buildPhaseStepTasks(department: Department | null): Promise<Unifi
           contractorOverdue: isContractorSelectionOverdue(contractorPlannedDate, step.contractorId),
           manualPlannedStartDate: null,
           manualPlannedEndDate: null,
+          completedByDepartment: null,
         });
       }
     }
@@ -318,6 +326,7 @@ async function buildPhaseStepTasks(department: Department | null): Promise<Unifi
       contractorOverdue: isContractorSelectionOverdue(contractorPlannedDate, step.contractorId),
       manualPlannedStartDate: null,
       manualPlannedEndDate: null,
+      completedByDepartment: null,
     });
   }
   return tasks;
@@ -382,6 +391,7 @@ async function buildPlannedDateEditTasks(department: Department | null): Promise
       contractorOverdue: false,
       manualPlannedStartDate: step.plannedStartDate?.toISOString() ?? null,
       manualPlannedEndDate: step.plannedEndDate?.toISOString() ?? null,
+      completedByDepartment: null,
     });
   }
   return tasks;
@@ -584,6 +594,7 @@ async function buildActionItemTasks(department: Department | null): Promise<Unif
       contractorOverdue: false,
       manualPlannedStartDate: null,
       manualPlannedEndDate: null,
+      completedByDepartment: null,
     });
   }
 
@@ -618,6 +629,7 @@ async function buildActionItemTasks(department: Department | null): Promise<Unif
       contractorOverdue: false,
       manualPlannedStartDate: null,
       manualPlannedEndDate: null,
+      completedByDepartment: null,
     });
   }
 
@@ -652,6 +664,7 @@ async function buildActionItemTasks(department: Department | null): Promise<Unif
       contractorOverdue: false,
       manualPlannedStartDate: null,
       manualPlannedEndDate: null,
+      completedByDepartment: null,
     });
   }
 
@@ -706,6 +719,7 @@ async function buildServiceItemTasks(department: Department | null): Promise<Uni
     contractorOverdue: false,
     manualPlannedStartDate: null,
     manualPlannedEndDate: null,
+    completedByDepartment: null,
   }));
 }
 

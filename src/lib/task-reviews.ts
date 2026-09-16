@@ -55,6 +55,7 @@ function buildReviewTask(args: {
   phase: UnifiedTask["phase"];
   project: { id: string; name: string; client: { name: string } };
   completedAt: Date;
+  completedByDepartment: Department;
 }): UnifiedTask {
   const dueDate = addDays(args.completedAt, REVIEW_DUE_DAYS);
   return {
@@ -65,6 +66,7 @@ function buildReviewTask(args: {
     subTaskLabel: args.subTaskLabel,
     project: args.project,
     department: "operations_manager",
+    completedByDepartment: args.completedByDepartment,
     secondaryDepartment: null,
     status: "not_started",
     plannedDate: dueDate.toISOString(),
@@ -113,6 +115,7 @@ async function phaseStepReviewTasks(reviewed: Set<string>): Promise<UnifiedTask[
         phase: step.phase,
         project: step.project,
         completedAt: step.actualEndDate,
+        completedByDepartment: step.owningDepartment,
       })
     );
   }
@@ -145,6 +148,7 @@ async function procurementStageReviewTasks(reviewed: Set<string>): Promise<Unifi
           phase: "phase_2",
           project: item.project,
           completedAt: value,
+          completedByDepartment: stage.department,
         })
       );
     }
@@ -159,6 +163,7 @@ async function procurementStageReviewTasks(reviewed: Set<string>): Promise<Unifi
             phase: "phase_2",
             project: item.project,
             completedAt: item.actionPlanAt,
+            completedByDepartment: "purchase",
           })
         );
       }
@@ -191,6 +196,7 @@ async function glassPOStageReviewTasks(reviewed: Set<string>): Promise<UnifiedTa
           phase: "phase_3",
           project: po.project,
           completedAt: value,
+          completedByDepartment: stage.department,
         })
       );
     }
@@ -205,6 +211,7 @@ async function glassPOStageReviewTasks(reviewed: Set<string>): Promise<UnifiedTa
             phase: "phase_3",
             project: po.project,
             completedAt: po.actionPlanAt,
+            completedByDepartment: "purchase",
           })
         );
       }
@@ -255,6 +262,7 @@ async function actionItemReviewTasks(reviewed: Set<string>): Promise<UnifiedTask
         phase: "phase_2",
         project: a.procurementItem.project,
         completedAt: a.actualDate,
+        completedByDepartment: a.department,
       })
     );
   }
@@ -271,6 +279,7 @@ async function actionItemReviewTasks(reviewed: Set<string>): Promise<UnifiedTask
         phase: "phase_3",
         project: a.glassPurchaseOrder.project,
         completedAt: a.actualDate,
+        completedByDepartment: a.department,
       })
     );
   }
@@ -287,6 +296,7 @@ async function actionItemReviewTasks(reviewed: Set<string>): Promise<UnifiedTask
         phase: "phase_3",
         project: a.phaseStep.project,
         completedAt: a.actualDate,
+        completedByDepartment: a.department,
       })
     );
   }
@@ -317,6 +327,7 @@ async function serviceItemReviewTasks(reviewed: Set<string>): Promise<UnifiedTas
         phase: "service",
         project: { id: item.service.id, name: item.service.title, client: item.service.client },
         completedAt: item.actualDate,
+        completedByDepartment: item.department,
       })
     );
   }

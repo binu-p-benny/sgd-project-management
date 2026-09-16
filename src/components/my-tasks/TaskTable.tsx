@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import type { Department } from "@prisma/client";
 import type { UnifiedTask } from "@/lib/unified-tasks";
 import { Spinner } from "@/components/ui/Spinner";
 import {
@@ -11,6 +12,7 @@ import {
   DELAY_CATEGORY_LABELS,
   DELAY_CATEGORY_OPTIONS,
   DEPARTMENT_LABELS,
+  ASSIGNABLE_DEPARTMENTS,
 } from "@/lib/labels";
 
 // Mirrors TaskCard.tsx's own copies of these same sets — kept local for the same reason: the
@@ -62,6 +64,7 @@ function taskSearchText(task: UnifiedTask): string {
     formatPhase(task.phase),
     DEPARTMENT_LABELS[task.department],
     task.secondaryDepartment ? DEPARTMENT_LABELS[task.secondaryDepartment] : null,
+    task.completedByDepartment ? DEPARTMENT_LABELS[task.completedByDepartment] : null,
     task.blockedReason ? BLOCKED_REASON_LABELS[task.blockedReason] : null,
     task.blockedNote,
     task.notes,
@@ -1154,6 +1157,7 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
 
 type KindFilter = "all" | "project" | "service";
 type StatusFilter = "all" | "not_started" | "in_progress" | "delayed" | "blocked";
+type DepartmentFilter = "all" | Department;
 
 const STATUS_FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
   { value: "all", label: "Any status" },
@@ -1194,6 +1198,14 @@ function taskMatchesStatusFilter(task: UnifiedTask, filter: StatusFilter): boole
   }
 }
 
+// completedByDepartment (see UnifiedTask) is only ever set on kind === "review_completed" rows —
+// Operations Manager's own review queue, where every row is assigned to them but was actually
+// *done* by some other department. Filtering by "all" is a no-op everywhere else, since the
+// field stays null.
+function taskMatchesDepartmentFilter(task: UnifiedTask, filter: DepartmentFilter): boolean {
+  return filter === "all" || task.completedByDepartment === filter;
+}
+
 export function TaskTable({ tasks, isAdmin = false }: { tasks: UnifiedTask[]; isAdmin?: boolean }) {
   // Filters live on every keystroke / change — no separate submit step. The list is already
   // just one department's own open tasks (never more than a couple hundred rows), so
@@ -1201,20 +1213,29 @@ export function TaskTable({ tasks, isAdmin = false }: { tasks: UnifiedTask[]; is
   const [query, setQuery] = useState("");
   const [kindFilter, setKindFilter] = useState<KindFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [departmentFilter, setDepartmentFilter] = useState<DepartmentFilter>("all");
+
+  // Only the review queue (see taskMatchesDepartmentFilter's own comment) ever has anything to
+  // filter here — hidden everywhere else rather than showing a dropdown that can never narrow
+  // the list.
+  const showDepartmentFilter = tasks.some((t) => t.completedByDepartment !== null);
 
   const normalizedQuery = query.trim().toLowerCase();
-  const filtersActive = normalizedQuery !== "" || kindFilter !== "all" || statusFilter !== "all";
+  const filtersActive =
+    normalizedQuery !== "" || kindFilter !== "all" || statusFilter !== "all" || departmentFilter !== "all";
   const visibleTasks = tasks.filter(
     (task) =>
       (!normalizedQuery || taskSearchText(task).includes(normalizedQuery)) &&
       taskMatchesKindFilter(task, kindFilter) &&
-      taskMatchesStatusFilter(task, statusFilter)
+      taskMatchesStatusFilter(task, statusFilter) &&
+      taskMatchesDepartmentFilter(task, departmentFilter)
   );
 
   function clearFilters() {
     setQuery("");
     setKindFilter("all");
     setStatusFilter("all");
+    setDepartmentFilter("all");
   }
 
   return (
@@ -1249,6 +1270,21 @@ export function TaskTable({ tasks, isAdmin = false }: { tasks: UnifiedTask[]; is
             </option>
           ))}
         </select>
+        {showDepartmentFilter && (
+          <select
+            value={departmentFilter}
+            onChange={(e) => setDepartmentFilter(e.target.value as DepartmentFilter)}
+            aria-label="Filter by department"
+            className={filterControlCls}
+          >
+            <option value="all">All departments</option>
+            {ASSIGNABLE_DEPARTMENTS.map((dept) => (
+              <option key={dept} value={dept}>
+                {DEPARTMENT_LABELS[dept]}
+              </option>
+            ))}
+          </select>
+        )}
         {filtersActive && (
           <>
             <button type="button" className={`${btnCls("secondary", "sm")} h-10 sm:h-8`} onClick={clearFilters}>
