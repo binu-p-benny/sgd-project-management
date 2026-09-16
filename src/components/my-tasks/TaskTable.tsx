@@ -160,6 +160,12 @@ function useTaskActions(task: UnifiedTask) {
   const [plannedDateEditEnd, setPlannedDateEditEnd] = useState(toPlannedDateInputValue(task.manualPlannedEndDate));
   const [plannedDateEditSubmitting, setPlannedDateEditSubmitting] = useState(false);
   const [plannedDateEditError, setPlannedDateEditError] = useState<string | null>(null);
+  // kind === "review_completed" only — the operation manager's own optional note, saved via
+  // POST /api/task-reviews (see saveReview below). task.refId here is the underlying completed
+  // task's own composite id (e.g. "phase_step:xxx"), not a row this file can PATCH directly.
+  const [reviewNoteDraft, setReviewNoteDraft] = useState("");
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
 
   useEffect(() => {
     const timeouts = rowTimeouts.current;
@@ -266,6 +272,30 @@ function useTaskActions(task: UnifiedTask) {
     } catch {
       setPlannedDateEditError("Could not reach the server");
       setPlannedDateEditSubmitting(false);
+    }
+  }
+
+  async function saveReview() {
+    setReviewSubmitting(true);
+    setReviewError(null);
+    try {
+      const res = await fetch("/api/task-reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId: task.refId, note: reviewNoteDraft.trim() || null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setReviewError(typeof data.error === "string" ? data.error : "Could not save review");
+        setReviewSubmitting(false);
+        return;
+      }
+      // Reviewing always fully resolves this row — there's no partial-review state to leave it
+      // open for, unlike a planned-date save.
+      flashRowSuccess({ removesRow: true });
+    } catch {
+      setReviewError("Could not reach the server");
+      setReviewSubmitting(false);
     }
   }
 
@@ -420,7 +450,10 @@ function useTaskActions(task: UnifiedTask) {
 
   const canStartOrComplete = task.gateBlockedBy === null || task.gateBlockedBy.length === 0;
   const isPhaseStep = task.kind === "phase_step";
-  const isServiceTask = task.kind === "service_item";
+  // phase === "service" rather than kind === "service_item": a review_completed row built from a
+  // completed service item (see getReviewQueueTasks) still needs to read as a Service here too,
+  // not just the original service_item kind it was derived from.
+  const isServiceTask = task.phase === "service";
   // 1A collects its delay category *inside* the visit-urgency panel (see confirmVisitUrgency),
   // not before it opens — gating the row's own initial button on it too would disable the very
   // click that's supposed to open that panel in the first place, a deadlock. Every other step
@@ -472,6 +505,11 @@ function useTaskActions(task: UnifiedTask) {
     plannedDateEditSubmitting,
     plannedDateEditError,
     savePlannedDateEdit,
+    reviewNoteDraft,
+    setReviewNoteDraft,
+    reviewSubmitting,
+    reviewError,
+    saveReview,
     needsLateReasonSimple,
     canStartOrComplete,
     isPhaseStep,
@@ -625,6 +663,32 @@ function PlannedDateEditField({ task, s, size }: { task: UnifiedTask; s: TaskAct
         {s.plannedDateEditSubmitting ? <Spinner className={spinnerCls(size)} /> : "Save planned dates"}
       </button>
       {s.plannedDateEditError && <p className="text-[11px] text-red-600 dark:text-red-400">{s.plannedDateEditError}</p>}
+    </div>
+  );
+}
+
+// The action side of a kind === "review_completed" row (see getReviewQueueTasks in
+// task-reviews.ts) — an optional note plus one button, same "single action resolves the row"
+// shape as ContractorActionField, just with no required input at all.
+function ReviewActionField({ s, size }: { s: TaskActions; size: Size }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <textarea
+        rows={2}
+        value={s.reviewNoteDraft}
+        onChange={(e) => s.setReviewNoteDraft(e.target.value)}
+        placeholder="Review note (optional)"
+        className={`${fieldCls(size)} h-auto py-1.5`}
+      />
+      <button
+        type="button"
+        className={btnCls("primary", size)}
+        onClick={s.saveReview}
+        disabled={s.reviewSubmitting}
+      >
+        {s.reviewSubmitting ? <Spinner className={spinnerCls(size)} /> : "Review completed"}
+      </button>
+      {s.reviewError && <p className="text-[11px] text-red-600 dark:text-red-400">{s.reviewError}</p>}
     </div>
   );
 }
@@ -902,7 +966,7 @@ function TaskRow({ task, isAdmin }: { task: UnifiedTask; isAdmin: boolean }) {
         <td className="px-3 py-2.5">
           {isAdmin ? (
             <Link
-              href={task.kind === "service_item" ? `/services/${task.project.id}` : `/projects/${task.project.id}`}
+              href={s.isServiceTask ? `/services/${task.project.id}` : `/projects/${task.project.id}`}
               className="text-sm font-medium text-fg hover:underline"
             >
               {task.project.name}
@@ -930,14 +994,14 @@ function TaskRow({ task, isAdmin }: { task: UnifiedTask; isAdmin: boolean }) {
           )}
         </td>
         <td className="px-3 py-2.5">
-          {task.kind === "contractor_selection" || task.kind === "planned_date_edit" ? (
+          {task.kind === "contractor_selection" || task.kind === "planned_date_edit" || task.kind === "review_completed" ? (
             <span className="text-xs text-fg-subtle">—</span>
           ) : (
             <ActualDateField s={s} size="sm" />
           )}
         </td>
         <td className="px-3 py-2.5">
-          {task.kind === "contractor_selection" || task.kind === "planned_date_edit" ? (
+          {task.kind === "contractor_selection" || task.kind === "planned_date_edit" || task.kind === "review_completed" ? (
             <span className="text-xs text-fg-subtle">—</span>
           ) : (
             <ReasonField task={task} s={s} size="sm" />
@@ -948,6 +1012,8 @@ function TaskRow({ task, isAdmin }: { task: UnifiedTask; isAdmin: boolean }) {
             <ContractorActionField s={s} size="sm" />
           ) : task.kind === "planned_date_edit" ? (
             <PlannedDateEditField task={task} s={s} size="sm" />
+          ) : task.kind === "review_completed" ? (
+            <ReviewActionField s={s} size="sm" />
           ) : (
             <TaskActionCluster task={task} s={s} isAdmin={isAdmin} size="sm" />
           )}
@@ -1048,10 +1114,10 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
           )}
           {isAdmin && (
             <Link
-              href={task.kind === "service_item" ? `/services/${task.project.id}` : `/projects/${task.project.id}`}
+              href={s.isServiceTask ? `/services/${task.project.id}` : `/projects/${task.project.id}`}
               className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline"
             >
-              View {task.kind === "service_item" ? "service" : "project"}
+              View {s.isServiceTask ? "service" : "project"}
               <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-3.5 w-3.5 stroke-current">
                 <path d="M7 17 17 7M9 7h8v8" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -1061,6 +1127,8 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
             <ContractorActionField s={s} size="md" />
           ) : task.kind === "planned_date_edit" ? (
             <PlannedDateEditField task={task} s={s} size="md" />
+          ) : task.kind === "review_completed" ? (
+            <ReviewActionField s={s} size="md" />
           ) : (
             <>
               <ActualDateField s={s} size="md" label="Actual date" />
@@ -1100,7 +1168,9 @@ const filterControlCls =
 
 function taskMatchesKindFilter(task: UnifiedTask, filter: KindFilter): boolean {
   if (filter === "all") return true;
-  const isService = task.kind === "service_item";
+  // phase === "service" rather than kind === "service_item" — see isServiceTask's own comment
+  // in useTaskActions for why a review_completed row needs the same check.
+  const isService = task.phase === "service";
   return filter === "service" ? isService : !isService;
 }
 

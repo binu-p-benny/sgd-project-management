@@ -22,14 +22,19 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (pathname.startsWith("/dashboard") && session.department !== "owner_admin") {
+  if (
+    pathname.startsWith("/dashboard") &&
+    session.department !== "owner_admin" &&
+    session.department !== "operations_manager"
+  ) {
     return NextResponse.redirect(new URL("/my-tasks", request.url));
   }
 
   if (
     pathname.startsWith("/admin") &&
     session.department !== "owner_admin" &&
-    session.department !== "hr_admin"
+    session.department !== "hr_admin" &&
+    session.department !== "operations_manager"
   ) {
     return NextResponse.redirect(new URL("/my-tasks", request.url));
   }

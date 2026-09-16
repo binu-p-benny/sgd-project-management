@@ -6,6 +6,7 @@ import { DeleteServiceButton } from "@/components/services/DeleteServiceButton";
 import { ServiceReviewCard } from "@/components/services/ServiceReviewCard";
 import { isProcurementStageOverrun } from "@/lib/overrun";
 import { getServiceStatus, getServiceReviewPlannedDate } from "@/lib/service";
+import { getTaskReviewsByIds } from "@/lib/task-reviews";
 import { SERVICE_STATUS_LABELS, SERVICE_STATUS_COLORS } from "@/lib/labels";
 
 export default async function ServiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -17,6 +18,10 @@ export default async function ServiceDetailPage({ params }: { params: Promise<{ 
     include: { client: true, items: { orderBy: { createdAt: "asc" } } },
   });
   if (!service) notFound();
+
+  const reviewedTaskIds = new Set(
+    (await getTaskReviewsByIds(service.items.map((item) => `service_item:${item.id}`))).keys()
+  );
 
   const status = getServiceStatus(service.items, service.completedAt, service.reviewCompletedAt);
   // Same "any signed-in user can add/complete a row" idea as ProcurementActionItem's own rows —
@@ -82,6 +87,7 @@ export default async function ServiceDetailPage({ params }: { params: Promise<{ 
           actualDate: item.actualDate?.toISOString() ?? null,
           note: item.note,
           overrun: isProcurementStageOverrun(item.plannedDate, item.actualDate),
+          reviewed: reviewedTaskIds.has(`service_item:${item.id}`),
         }))}
       />
 

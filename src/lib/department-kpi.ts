@@ -152,7 +152,15 @@ export function inRange(date: Date, range: KpiRange): boolean {
 // ---------------------------------------------------------------------------
 
 export type CompletionOutcome = "on_time" | "late" | "client_caused";
-export type UnitSource = "phase_step" | "procurement_stage" | "glass_po_stage" | "action_item" | "service_item";
+export type UnitSource =
+  | "phase_step"
+  | "procurement_stage"
+  | "glass_po_stage"
+  | "action_item"
+  | "service_item"
+  // The operation manager's own review of one of the 5 sources above (see task-reviews.ts) —
+  // credited to operations_manager, never to whichever department did the original work.
+  | "review";
 
 export interface CompletedUnitRow {
   department: Department;

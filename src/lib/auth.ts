@@ -72,11 +72,28 @@ export function isOwnerAdmin(session: SessionPayload): boolean {
   return session.department === "owner_admin";
 }
 
+export function isOperationsManager(session: SessionPayload): boolean {
+  return session.department === "operations_manager";
+}
+
+/** /dashboard is one of the "all pages except /performance" Operations Manager gets — same
+ *  owner_admin-only data as always, just also readable by them. */
+export function canViewDashboard(session: SessionPayload): boolean {
+  return isOwnerAdmin(session) || isOperationsManager(session);
+}
+
 /**
  * HR & Admin acts as a proxy editor for any department's steps, procurement items,
  * and payment fields — not all staff reliably update their own tasks, so HR can do
- * it on their behalf. Same bypass owner_admin already has.
+ * it on their behalf. Same bypass owner_admin already has. Operations Manager gets the
+ * same full page access (everything except /performance — see its own layout.tsx gate)
+ * so they can review completed work in context, even though their own day-to-day queue
+ * is the review queue in /my-tasks, not proxy-editing other departments' steps.
  */
 export function isAdminEditor(session: SessionPayload): boolean {
-  return session.department === "owner_admin" || session.department === "hr_admin";
+  return (
+    session.department === "owner_admin" ||
+    session.department === "hr_admin" ||
+    session.department === "operations_manager"
+  );
 }

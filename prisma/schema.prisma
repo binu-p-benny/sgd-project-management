@@ -18,6 +18,9 @@ enum Department {
   purchase
   accounts
   owner_admin
+  // Reviews other departments' completed work (see TaskReview) — same page access as
+  // hr_admin (see isAdminEditor) plus its own /my-tasks review queue, minus /performance.
+  operations_manager
 }
 
 enum PaymentStatus {
@@ -683,4 +686,35 @@ model StepStatusLog {
 
   @@index([phaseStepId])
   @@map("step_status_log")
+}
+
+// The operation manager's review of one unit of already-completed work — a PhaseStep, a single
+// procurement/glass-PO stage field, an action item, or a service item (see lib/task-reviews.ts).
+// Deliberately not a row per source table: "pending review" is derived at read time (same
+// "compute, don't persist" convention as isStepOverrun/delayed in overrun.ts) by finding a
+// completed unit whose taskId has no row here yet, so nothing is written until someone actually
+// reviews it. taskId reuses the exact composite id unified-tasks.ts already builds for that same
+// unit (e.g. "phase_step:<id>", "procurement_stage:<id>:requirementCreatedAt",
+// "service_item:<id>") — stable and already unique per completable unit, so no separate
+// discriminator columns are needed.
+model TaskReview {
+  id         String   @id @default(cuid())
+  taskId     String   @unique @map("task_id")
+  reviewedAt DateTime @map("reviewed_at") @db.Timestamptz(3)
+  reviewNote String?  @map("review_note") @db.Text
+
+  // Snapshotted at review time (see resolveReviewContext in task-reviews.ts) rather than
+  // re-derived later — the department-KPI report (department-kpi-report.ts) needs the
+  // underlying unit's own completion date to score whether the review itself landed on time
+  // (due REVIEW_DUE_DAYS after completedAt), and the display fields so its late-completions
+  // drill-down can show something meaningful without a live join back to whichever of the 5
+  // source tables taskId happens to point at.
+  completedAt DateTime @map("completed_at") @db.Timestamptz(3)
+  taskLabel   String   @map("task_label")
+  contextName String   @map("context_name")
+  projectId   String   @map("project_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@map("task_reviews")
 }

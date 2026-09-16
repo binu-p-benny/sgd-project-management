@@ -787,6 +787,14 @@ export function TaskCard({
               {item.timesOverdue}×
             </span>
           )}
+          {item.reviewedAt && (
+            <span
+              title={`Reviewed ${formatDate(item.reviewedAt)}${item.reviewNote ? ` — "${item.reviewNote}"` : ""}`}
+              className="rounded-full bg-violet-500/10 px-2 py-0.5 text-xs font-medium text-violet-700 ring-1 ring-inset ring-violet-500/25 dark:text-violet-400"
+            >
+              Reviewed
+            </span>
+          )}
         </div>
       </div>
 

@@ -5,6 +5,7 @@ import { getRequirementCreatedStatus, getMaterialsArrivedStatus, getMaterialQCSt
 import { isStepOverrun, isContractorSelectionOverdue, daysBlocked } from "@/lib/overrun";
 import { findUpstreamDelay, type DelayGraphNode } from "@/lib/reschedule";
 import { DERIVED_STEP_CODES, MANUAL_CONTRACTOR_STEP_CODES } from "@/lib/step-actions";
+import { getTaskReviewsByIds } from "@/lib/task-reviews";
 
 export interface MyTaskItem {
   id: string;
@@ -59,6 +60,10 @@ export interface MyTaskItem {
   // /api/phase-steps/[id]/planned-date-permission). Once set, that department can fill the dates
   // in themselves from /my-tasks, via /api/phase-steps/[id]/planned-dates.
   plannedDateEditDepartment: Department | null;
+  // Set once the operation manager has reviewed this step's completion (see task-reviews.ts) —
+  // null until then, and always null for a step that isn't completed yet.
+  reviewedAt: string | null;
+  reviewNote: string | null;
 }
 
 export interface GetMyTasksOptions {
@@ -133,6 +138,11 @@ export async function getMyTasks(
     graphNodesByProject.set(s.projectId, list);
   }
 
+  // Batched the same "one query for the whole result set" way — same composite id scheme
+  // task-reviews.ts builds review candidates with, so a completed step here matches up with
+  // whatever the operation manager has already reviewed.
+  const reviewsByTaskId = await getTaskReviewsByIds(steps.map((s) => `phase_step:${s.id}`));
+
   const items: MyTaskItem[] = [];
 
   for (const step of steps) {
@@ -204,6 +214,8 @@ export async function getMyTasks(
       contractorPlannedDate: contractorPlannedDate?.toISOString() ?? null,
       contractorOverdue: isContractorSelectionOverdue(contractorPlannedDate, step.contractorId),
       plannedDateEditDepartment: step.plannedDateEditDepartment,
+      reviewedAt: reviewsByTaskId.get(`phase_step:${step.id}`)?.reviewedAt.toISOString() ?? null,
+      reviewNote: reviewsByTaskId.get(`phase_step:${step.id}`)?.reviewNote ?? null,
     });
   }
 

@@ -94,6 +94,9 @@ export interface GlassStageData {
   /** Meaningful whenever isPassFail is true: null = no result yet, true = passed, false = failed.
    *  Stays null forever on a plain (non-pass/fail) row. */
   qcPassed: boolean | null;
+  /** Set once the operation manager has reviewed this stage's completion (see task-reviews.ts) —
+   *  always false while actualDate is still null. */
+  reviewed: boolean;
 }
 
 interface GlassActionItemData {
@@ -108,6 +111,7 @@ interface GlassActionItemData {
   actualDate: string | null;
   note: string | null;
   overrun: boolean;
+  reviewed: boolean;
 }
 
 function StageRow({
@@ -274,6 +278,11 @@ function StageRow({
             {DEPARTMENT_LABELS[stage.department]}
             {stage.secondaryDepartment ? ` + ${DEPARTMENT_LABELS[stage.secondaryDepartment]}` : ""}
           </span>
+          {stage.reviewed && (
+            <span className="shrink-0 rounded-full bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 ring-1 ring-inset ring-violet-500/25 dark:text-violet-400">
+              Reviewed
+            </span>
+          )}
         </div>
       </td>
 
@@ -669,6 +678,7 @@ export function GlassTracker({
                       paymentGated: false,
                       qcPassed: actionItem.qcPassed,
                       overrun: actionItem.overrun,
+                      reviewed: actionItem.reviewed,
                     }}
                     editable={canEdit}
                     // Custom follow-up rows are a flat todo list, not part of the fixed

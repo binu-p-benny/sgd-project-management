@@ -6,8 +6,10 @@ import {
   computeAllProcurementPlannedDates,
   type ProcurementStagePlannedDates,
 } from "@/lib/procurement";
+import { addDays } from "@/lib/step-template";
 import { PROCUREMENT_STAGES } from "@/lib/project-filters";
 import { GLASS_PO_FULL_STAGES, getUnifiedMyTasks } from "@/lib/unified-tasks";
+import { REVIEW_DUE_DAYS, getReviewQueueTasks } from "@/lib/task-reviews";
 import { ASSIGNABLE_DEPARTMENTS, DEPARTMENT_LABELS } from "@/lib/labels";
 import {
   classifyCompletion,
@@ -29,6 +31,13 @@ import {
 
 // Non-derived, manually-completed phase steps only.
 const SCORED_STEP_CODES = ["1A", "1B", "1C", "1D", "2D2", "3C1", "3C2", "3E"];
+
+// ASSIGNABLE_DEPARTMENTS plus Operations Manager — scored here even though it's deliberately
+// left out of ASSIGNABLE_DEPARTMENTS itself (that list is for assigning *new* work — action
+// items, service rows — to a real work-performing department; Operations Manager never gets
+// handed one of those, it only reviews what other departments already finished). Kept local
+// to this file rather than widening the shared constant everyone else's dropdowns read from.
+const KPI_DEPARTMENTS = [...ASSIGNABLE_DEPARTMENTS, "operations_manager"] as const satisfies readonly Department[];
 
 // Actual-timestamp field -> its key in ProcurementStagePlannedDates (mirrors the plannedByField
 // map in unified-tasks.ts' buildProcurementStageTasks).
@@ -74,8 +83,16 @@ function capitalize(s: string): string {
  * the drill-down.
  */
 export async function getCompletedUnits(range: KpiRange): Promise<CompletedUnitRow[]> {
-  const [phaseSteps, procurementItems, glassOrders, procActionItems, glassActionItems, stepActionItems, serviceItems] =
-    await Promise.all([
+  const [
+    phaseSteps,
+    procurementItems,
+    glassOrders,
+    procActionItems,
+    glassActionItems,
+    stepActionItems,
+    serviceItems,
+    reviews,
+  ] = await Promise.all([
       prisma.phaseStep.findMany({
         where: { status: "completed", stepCode: { in: SCORED_STEP_CODES }, actualEndDate: { not: null } },
         include: { project: { select: { id: true, name: true } } },
@@ -113,6 +130,7 @@ export async function getCompletedUnits(range: KpiRange): Promise<CompletedUnitR
         where: { actualDate: { not: null } },
         include: { service: { select: { id: true, title: true } } },
       }),
+      prisma.taskReview.findMany(),
     ]);
 
   const rows: CompletedUnitRow[] = [];
@@ -287,14 +305,41 @@ export async function getCompletedUnits(range: KpiRange): Promise<CompletedUnitR
     });
   }
 
+  // --- Operations Manager's own reviews of other departments' completed work ---
+  // Always credited to operations_manager, regardless of which department did the original
+  // work being reviewed — this scores the review itself, not a second time the same unit.
+  // "Planned" here is the review's own due date (REVIEW_DUE_DAYS after the original
+  // completion, snapshotted onto the row at review time — see resolveReviewContext), not the
+  // original unit's own planned date. No client-caused concept for a review.
+  for (const r of reviews) {
+    if (!inRange(r.reviewedAt, range)) continue;
+    const dueDate = addDays(r.completedAt, REVIEW_DUE_DAYS);
+    const { outcome, daysLate } = classifyCompletion(dueDate, r.reviewedAt, null);
+    rows.push({
+      department: "operations_manager",
+      source: "review",
+      taskLabel: r.taskLabel,
+      contextName: r.contextName,
+      projectId: r.projectId,
+      plannedDate: dueDate,
+      completedDate: r.reviewedAt,
+      daysLate,
+      outcome,
+      isQc: false,
+      qcPassed: null,
+    });
+  }
+
   return rows;
 }
 
 /** Open work a department is currently sitting on, and how much of it is already overdue —
  *  read straight off getUnifiedMyTasks (which already excludes derived steps and not-yet-
- *  reachable ones), grouped by the task's primary department. */
+ *  reachable ones), grouped by the task's primary department. Operations Manager owns none of
+ *  those (nothing in getUnifiedMyTasks is ever assigned to it) — its own backlog is the pending
+ *  review queue instead (see getReviewQueueTasks), merged in the same shape. */
 async function getBacklogByDepartment(): Promise<Map<Department, { openOwned: number; overdueOpen: number }>> {
-  const openTasks = await getUnifiedMyTasks(null);
+  const [openTasks, reviewQueue] = await Promise.all([getUnifiedMyTasks(null), getReviewQueueTasks()]);
   const map = new Map<Department, { openOwned: number; overdueOpen: number }>();
   for (const task of openTasks) {
     const entry = map.get(task.department) ?? { openOwned: 0, overdueOpen: 0 };
@@ -302,13 +347,17 @@ async function getBacklogByDepartment(): Promise<Map<Department, { openOwned: nu
     if (task.overrun) entry.overdueOpen += 1;
     map.set(task.department, entry);
   }
+  map.set("operations_manager", {
+    openOwned: reviewQueue.length,
+    overdueOpen: reviewQueue.filter((t) => t.overrun).length,
+  });
   return map;
 }
 
 export async function getDepartmentKpis(range: KpiRange): Promise<DepartmentKpiResult> {
   const [units, backlog] = await Promise.all([getCompletedUnits(range), getBacklogByDepartment()]);
 
-  const rows: DepartmentKpiRow[] = ASSIGNABLE_DEPARTMENTS.map((department) => {
+  const rows: DepartmentKpiRow[] = KPI_DEPARTMENTS.map((department) => {
     const own = units.filter((u) => u.department === department);
     const assessedUnits = own.filter((u) => u.plannedDate !== null);
     const onTime = assessedUnits.filter((u) => u.outcome === "on_time").length;

@@ -102,17 +102,26 @@ function initials(name: string): string {
 }
 
 function navItemsFor(department: Department): NavItem[] {
-  const primary: NavItem =
-    department === "owner_admin"
-      ? { href: "/dashboard", label: "Dashboard", icon: DASHBOARD_ICON }
-      : { href: "/my-tasks", label: "My Tasks", icon: HOME_ICON };
+  const items: NavItem[] = [];
 
-  const items: NavItem[] = [primary];
+  // owner_admin and Operations Manager both land on Dashboard first — Operations Manager
+  // additionally gets My Tasks as its own nav item (its review queue lives there, see
+  // /my-tasks), which owner_admin has no equivalent need for. Every other department's only
+  // home is My Tasks.
+  if (department === "owner_admin" || department === "operations_manager") {
+    items.push({ href: "/dashboard", label: "Dashboard", icon: DASHBOARD_ICON });
+  }
+  if (department !== "owner_admin") {
+    items.push({ href: "/my-tasks", label: "My Tasks", icon: HOME_ICON });
+  }
 
-  // HR & Admin proxy-edits any department's steps/procurement/payment on their behalf — same
-  // pairing /clients', /contractors', /projects' and /services' own layout.tsx gate on, so
-  // these links only ever appear for someone who can actually get past them.
-  const isAdmin = department === "owner_admin" || department === "hr_admin";
+  // HR & Admin proxy-edits any department's steps/procurement/payment on their behalf, and
+  // Operations Manager needs the same full page access to review completed work in context
+  // (see isAdminEditor) — same pairing /clients', /contractors', /projects' and /services' own
+  // layout.tsx gate on, so these links only ever appear for someone who can actually get past
+  // them.
+  const isAdmin =
+    department === "owner_admin" || department === "hr_admin" || department === "operations_manager";
   if (isAdmin) {
     items.push(
       { href: "/clients", label: "Clients", icon: CLIENTS_ICON },

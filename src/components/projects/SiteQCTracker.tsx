@@ -68,6 +68,7 @@ export interface SiteQCActionItemData {
   plannedDate: string;
   actualDate: string | null;
   note: string | null;
+  reviewed: boolean;
 }
 
 interface RowData {
@@ -81,6 +82,10 @@ interface RowData {
   department: Department;
   isPassFail?: boolean;
   qcPassed: boolean | null;
+  /** Set once the operation manager has reviewed this row's completion (see task-reviews.ts) —
+   *  undefined for the fixed Action plan row, which isn't part of the /my-tasks task universe
+   *  task-reviews.ts covers and so has no review data to show. */
+  reviewed?: boolean;
 }
 
 /** One row — the fixed Action plan row, or a custom follow-up — mirrors GlassTracker's own
@@ -191,6 +196,11 @@ function Row({
           <span className="shrink-0 rounded-full bg-overlay px-1.5 py-0.5 text-[10px] font-medium text-fg-muted ring-1 ring-inset ring-edge">
             {DEPARTMENT_LABELS[row.department]}
           </span>
+          {row.reviewed && (
+            <span className="shrink-0 rounded-full bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 ring-1 ring-inset ring-violet-500/25 dark:text-violet-400">
+              Reviewed
+            </span>
+          )}
         </div>
       </td>
 
@@ -535,6 +545,7 @@ export function SiteQCTracker({
                   department: actionItem.department,
                   isPassFail: actionItem.isPassFail,
                   qcPassed: actionItem.qcPassed,
+                  reviewed: actionItem.reviewed,
                 }}
                 editable={canEdit}
                 onSaved={() => router.refresh()}

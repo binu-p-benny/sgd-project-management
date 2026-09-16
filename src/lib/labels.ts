@@ -16,6 +16,7 @@ export const DEPARTMENT_LABELS: Record<Department, string> = {
   purchase: "Purchase",
   accounts: "Accounts",
   owner_admin: "Owner / Admin",
+  operations_manager: "Operations Manager",
 };
 
 // The real work departments a task can be assigned to — owner_admin is an admin role, not

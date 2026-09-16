@@ -1,12 +1,18 @@
-import { getSession, isAdminEditor } from "@/lib/auth";
+import { getSession, isAdminEditor, isOperationsManager } from "@/lib/auth";
 import { getUnifiedMyTasks } from "@/lib/unified-tasks";
+import { getReviewQueueTasks } from "@/lib/task-reviews";
 import { TaskTable } from "@/components/my-tasks/TaskTable";
 import { DEPARTMENT_LABELS } from "@/lib/labels";
 
 export default async function MyTasksPage() {
   const session = await getSession();
   const department = session && session.department !== "owner_admin" ? session.department : null;
-  const items = await getUnifiedMyTasks(department);
+  // Operations Manager owns no phase steps or service items of its own — getUnifiedMyTasks would
+  // just come back empty for it — so its /my-tasks is the review queue instead (see
+  // task-reviews.ts): every completed unit of work, from any department, still waiting on a
+  // review.
+  const isReviewQueue = !!session && isOperationsManager(session);
+  const items = isReviewQueue ? await getReviewQueueTasks() : await getUnifiedMyTasks(department);
   // Only admin/owner can actually open /projects/[id] (see its own layout.tsx) — everyone else's
   // Project name here would just link to a page that immediately bounces them back here.
   const isAdmin = !!session && isAdminEditor(session);
@@ -27,11 +33,14 @@ export default async function MyTasksPage() {
           </svg>
         </span>
         <div>
-          <h1 className="text-xl font-semibold text-fg">My Tasks</h1>
+          <h1 className="text-xl font-semibold text-fg">{isReviewQueue ? "Review completed work" : "My Tasks"}</h1>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-fg-muted">
             <span>
-              {department ? DEPARTMENT_LABELS[department] : "All departments"} · {items.length} open task
-              {items.length === 1 ? "" : "s"}
+              {isReviewQueue
+                ? `${items.length} pending review${items.length === 1 ? "" : "s"}`
+                : `${department ? DEPARTMENT_LABELS[department] : "All departments"} · ${items.length} open task${
+                    items.length === 1 ? "" : "s"
+                  }`}
             </span>
             {overdueCount > 0 && (
               <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/25">
@@ -49,7 +58,7 @@ export default async function MyTasksPage() {
 
       {items.length === 0 ? (
         <p className="rounded-lg border border-dashed border-edge-2 py-10 text-center text-sm text-fg-muted">
-          Nothing open right now.
+          {isReviewQueue ? "Nothing pending review." : "Nothing open right now."}
         </p>
       ) : (
         <TaskTable tasks={items} isAdmin={isAdmin} />

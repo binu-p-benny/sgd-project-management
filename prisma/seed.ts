@@ -24,6 +24,7 @@ const DEMO_USERS: { name: string; email: string; department: Department }[] = [
   { name: "Suresh Pillai", email: "purchase@sgd.demo", department: "purchase" },
   { name: "Lakshmi Menon", email: "accounts@sgd.demo", department: "accounts" },
   { name: "Owner Admin", email: "owner@sgd.demo", department: "owner_admin" },
+  { name: "Rahul Verma", email: "opsmanager@sgd.demo", department: "operations_manager" },
 ];
 
 export async function seedUsers() {

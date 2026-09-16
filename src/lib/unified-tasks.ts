@@ -24,7 +24,11 @@ export type TaskKind =
   | "action_item"
   | "service_item"
   | "contractor_selection"
-  | "planned_date_edit";
+  | "planned_date_edit"
+  // Built by task-reviews.ts, not this file — a completed unit of work (of any other kind
+  // above) the operation manager hasn't reviewed yet. Kept in this union rather than its own
+  // type so it can flow through the same UnifiedTask shape and TaskTable UI as everything else.
+  | "review_completed";
 
 // Field -> human label/note-field, shared by procurement items and the glass PO tracker (which
 // reuse the exact same stage names) — see the fixed stage arrays built inline in the project

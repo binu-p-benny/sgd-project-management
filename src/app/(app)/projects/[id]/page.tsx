@@ -12,6 +12,7 @@ import { PhaseReviewCard } from "@/components/projects/PhaseReviewCard";
 import { StepProgressBar } from "@/components/projects/StepProgressBar";
 import { TaskCard } from "@/components/my-tasks/TaskCard";
 import { getMyTasks, type MyTaskItem } from "@/lib/my-tasks";
+import { getTaskReviewsByIds } from "@/lib/task-reviews";
 import { getBlockerHistory } from "@/lib/blocker-history";
 import { isStepOverrun, isProcurementStageOverrun, getEffectiveOverallStatus, projectHasOverrun } from "@/lib/overrun";
 import {
@@ -254,6 +255,41 @@ export default async function ProjectDetailPage({
   const blockerHistory = await getBlockerHistory(id);
   const canEditEverything = !!session && isAdminEditor(session);
 
+  // Every reviewable unit's own composite id (see task-reviews.ts), fetched once here rather
+  // than per-tracker — the procurement/glass-PO stage fields, plus every action-item row across
+  // all three tables. Phase-step-level review (the "Reviewed" chip on TaskCard) is handled
+  // separately inside getMyTasks itself, since that's a shared helper other pages call too.
+  const reviewCandidateIds = [
+    ...project.procurementItems.flatMap((item) => [
+      "requirementCreatedAt",
+      "quoteCreatedAt",
+      "paymentSettledAt",
+      "orderConfirmedAt",
+      "materialDespatchAt",
+      "arrivedForPowderCoatingAt",
+      "actualArrivalDate",
+      "qcCheckedAt",
+      "actionPlanAt",
+    ].map((field) => `procurement_stage:${item.id}:${field}`)),
+    ...project.procurementItems.flatMap((item) => item.actionItems.map((a) => `action_item:procurement:${a.id}`)),
+    ...(project.glassPurchaseOrder
+      ? [
+          ...[
+            "requirementCreatedAt",
+            "quoteCreatedAt",
+            "paymentSettledAt",
+            "orderConfirmedAt",
+            "actualArrivalDate",
+            "qcCheckedAt",
+            "actionPlanAt",
+          ].map((field) => `glass_po_stage:${project.glassPurchaseOrder!.id}:${field}`),
+          ...project.glassPurchaseOrder.actionItems.map((a) => `action_item:glass:${a.id}`),
+        ]
+      : []),
+    ...project.phaseSteps.flatMap((step) => step.actionItems.map((a) => `action_item:phase_step:${a.id}`)),
+  ];
+  const reviewedTaskIds = new Set((await getTaskReviewsByIds(reviewCandidateIds)).keys());
+
   const effectiveStatus = getEffectiveOverallStatus(
     project.overallStatus,
     projectHasOverrun(project.phaseSteps, project.procurementItems),
@@ -366,6 +402,7 @@ export default async function ProjectDetailPage({
             plannedDate: a.plannedDate.toISOString(),
             actualDate: a.actualDate?.toISOString() ?? null,
             note: a.note,
+            reviewed: reviewedTaskIds.has(`action_item:phase_step:${a.id}`),
           }))}
         />
       </div>
@@ -630,6 +667,7 @@ export default async function ProjectDetailPage({
             requirementGated: stage.requirementGated,
             paymentGated: stage.paymentGated,
             qcPassed: stage.qcPassed,
+            reviewed: reviewedTaskIds.has(`procurement_stage:${item.id}:${stage.dateField}`),
           }));
 
           return {
@@ -649,6 +687,7 @@ export default async function ProjectDetailPage({
               actualDate: a.actualDate?.toISOString() ?? null,
               note: a.note,
               overrun: isProcurementStageOverrun(a.plannedDate, a.actualDate),
+              reviewed: reviewedTaskIds.has(`action_item:procurement:${a.id}`),
             })),
           };
         })}
@@ -798,6 +837,7 @@ export default async function ProjectDetailPage({
         actualDate: stage.actualDate?.toISOString() ?? null,
         plannedDate: stage.plannedDate?.toISOString() ?? null,
         overrun: isProcurementStageOverrun(stage.plannedDate, stage.actualDate),
+        reviewed: reviewedTaskIds.has(`glass_po_stage:${glassPO.id}:${stage.dateField}`),
       }))}
       actionItems={glassPO.actionItems.map((a) => ({
         id: a.id,
@@ -809,6 +849,7 @@ export default async function ProjectDetailPage({
         actualDate: a.actualDate?.toISOString() ?? null,
         note: a.note,
         overrun: isProcurementStageOverrun(a.plannedDate, a.actualDate),
+        reviewed: reviewedTaskIds.has(`action_item:glass:${a.id}`),
       }))}
     />
   ) : null;

@@ -42,6 +42,9 @@ export interface ServiceItemData {
   actualDate: string | null;
   note: string | null;
   overrun: boolean;
+  /** Set once the operation manager has reviewed this item's completion (see task-reviews.ts) —
+   *  always false while actualDate is still null. */
+  reviewed: boolean;
 }
 
 function toDateInputValue(iso: string | null): string {
@@ -169,6 +172,11 @@ function ItemRow({ item, editable, onSaved }: { item: ServiceItemData; editable:
           <span className="shrink-0 rounded-full bg-overlay px-1.5 py-0.5 text-[10px] font-medium text-fg-muted ring-1 ring-inset ring-edge">
             {DEPARTMENT_LABELS[item.department]}
           </span>
+          {item.reviewed && (
+            <span className="shrink-0 rounded-full bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 ring-1 ring-inset ring-violet-500/25 dark:text-violet-400">
+              Reviewed
+            </span>
+          )}
         </div>
       </td>
 

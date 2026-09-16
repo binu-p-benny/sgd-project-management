@@ -20,6 +20,7 @@ const DEPARTMENT_COLOR_VAR: Record<Department, string> = {
   purchase: "var(--chart-series-4)",
   accounts: "var(--chart-series-5)",
   owner_admin: "var(--chart-muted)",
+  operations_manager: "var(--chart-muted)",
 };
 
 export function DepartmentWorkloadWidget({ data }: { data: DepartmentWorkloadRow[] }) {
