@@ -11,6 +11,7 @@ import {
   getProjectQcFailureReason,
   daysBlocked,
   type EffectiveOverallStatus,
+  type GlassPurchaseOrderOverrunFields,
 } from "@/lib/overrun";
 import { buildAllStepCodes } from "@/lib/step-template";
 import {
@@ -131,7 +132,8 @@ function getStatusReasonText(
     expectedArrivalDate: Date | null;
     actualArrivalDate: Date | null;
     qcPassed: boolean | null;
-  }[]
+  }[],
+  glassPurchaseOrder: (GlassPurchaseOrderOverrunFields & { qcPassed: boolean | null }) | null
 ): string | null {
   if (effectiveStatus === "blocked") {
     const step = getProjectBlockedStep(steps);
@@ -140,16 +142,18 @@ function getStatusReasonText(
     return `${step.stepCode} ${step.stepName} — ${label}${step.blockedNote ? `: ${step.blockedNote}` : ""}`;
   }
   if (effectiveStatus === "delayed") {
-    const reason = getProjectDelayReason(steps, procurementItems);
+    const reason = getProjectDelayReason(steps, procurementItems, glassPurchaseOrder);
     if (!reason) return null;
-    return reason.kind === "step"
-      ? `${reason.stepCode} ${reason.stepName} — overdue since ${formatShortDate(reason.plannedEndDate)}`
-      : `${capitalize(reason.itemType)} arrival — overdue since ${formatShortDate(reason.expectedArrivalDate)}`;
+    if (reason.kind === "step") return `${reason.stepCode} ${reason.stepName} — overdue since ${formatShortDate(reason.plannedEndDate)}`;
+    if (reason.kind === "item") return `${capitalize(reason.itemType)} arrival — overdue since ${formatShortDate(reason.expectedArrivalDate)}`;
+    return `Glass PO — ${reason.stageLabel} — overdue since ${formatShortDate(reason.plannedDate)}`;
   }
   if (effectiveStatus === "qc_failed") {
-    const reason = getProjectQcFailureReason(steps, procurementItems);
+    const reason = getProjectQcFailureReason(steps, procurementItems, glassPurchaseOrder);
     if (!reason) return null;
-    return reason.kind === "item" ? `${capitalize(reason.itemType)} — QC failed` : `${reason.stepCode} ${reason.stepName} — QC failed`;
+    if (reason.kind === "item") return `${capitalize(reason.itemType)} — QC failed`;
+    if (reason.kind === "step") return `${reason.stepCode} ${reason.stepName} — QC failed`;
+    return "Glass PO — QC failed";
   }
   return null;
 }
@@ -169,16 +173,19 @@ function getStatusDays(
     plannedEndDate: Date | null;
     updatedAt: Date;
   }[],
-  procurementItems: { itemType: string; expectedArrivalDate: Date | null; actualArrivalDate: Date | null }[]
+  procurementItems: { itemType: string; expectedArrivalDate: Date | null; actualArrivalDate: Date | null }[],
+  glassPurchaseOrder: GlassPurchaseOrderOverrunFields | null
 ): number | null {
   if (effectiveStatus === "blocked") {
     const step = getProjectBlockedStep(steps);
     return step ? daysBlocked(step.updatedAt) : null;
   }
   if (effectiveStatus === "delayed") {
-    const reason = getProjectDelayReason(steps, procurementItems);
+    const reason = getProjectDelayReason(steps, procurementItems, glassPurchaseOrder);
     if (!reason) return null;
-    return daysBlocked(reason.kind === "step" ? reason.plannedEndDate : reason.expectedArrivalDate);
+    if (reason.kind === "step") return daysBlocked(reason.plannedEndDate);
+    if (reason.kind === "item") return daysBlocked(reason.expectedArrivalDate);
+    return daysBlocked(reason.plannedDate);
   }
   return null;
 }
@@ -272,7 +279,21 @@ export default async function ProjectsPage({
         },
       },
       glassPurchaseOrder: {
-        select: { requirementCreatedAt: true, quoteCreatedAt: true, paymentSettledAt: true, orderConfirmedAt: true },
+        select: {
+          requirementCreatedAt: true,
+          requirementPlannedDate: true,
+          quoteCreatedAt: true,
+          quotePlannedDate: true,
+          paymentSettledAt: true,
+          paymentPlannedDate: true,
+          orderConfirmedAt: true,
+          orderPlannedDate: true,
+          actualArrivalDate: true,
+          arrivalPlannedDate: true,
+          qcCheckedAt: true,
+          qcPlannedDate: true,
+          qcPassed: true,
+        },
       },
     },
     orderBy: { createdAt: "desc" },
@@ -288,16 +309,17 @@ export default async function ProjectsPage({
       const currentStep = getCurrentStep(p.phaseSteps);
       const effectiveStatus = getEffectiveOverallStatus(
         p.overallStatus,
-        projectHasOverrun(p.phaseSteps, p.procurementItems),
+        projectHasOverrun(p.phaseSteps, p.procurementItems, p.glassPurchaseOrder),
         p.procurementItems.some((i) => i.qcPassed === false) ||
-          p.phaseSteps.some((s) => s.stepCode === "3E" && s.qcPassed === false)
+          p.phaseSteps.some((s) => s.stepCode === "3E" && s.qcPassed === false) ||
+          p.glassPurchaseOrder?.qcPassed === false
       );
       return {
         ...p,
         effectiveStatus,
-        statusReason: getStatusReasonText(effectiveStatus, p.phaseSteps, p.procurementItems),
-        statusDays: getStatusDays(effectiveStatus, p.phaseSteps, p.procurementItems),
-        hasOverdue: projectHasOverrun(p.phaseSteps, p.procurementItems),
+        statusReason: getStatusReasonText(effectiveStatus, p.phaseSteps, p.procurementItems, p.glassPurchaseOrder),
+        statusDays: getStatusDays(effectiveStatus, p.phaseSteps, p.procurementItems, p.glassPurchaseOrder),
+        hasOverdue: projectHasOverrun(p.phaseSteps, p.procurementItems, p.glassPurchaseOrder),
         currentStep,
         activeDepartments: getProjectActiveDepartments(
           currentStep,

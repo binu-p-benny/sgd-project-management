@@ -292,9 +292,10 @@ export default async function ProjectDetailPage({
 
   const effectiveStatus = getEffectiveOverallStatus(
     project.overallStatus,
-    projectHasOverrun(project.phaseSteps, project.procurementItems),
+    projectHasOverrun(project.phaseSteps, project.procurementItems, project.glassPurchaseOrder),
     project.procurementItems.some((i) => i.qcPassed === false) ||
-      project.phaseSteps.some((s) => s.stepCode === "3E" && s.qcPassed === false)
+      project.phaseSteps.some((s) => s.stepCode === "3E" && s.qcPassed === false) ||
+      project.glassPurchaseOrder?.qcPassed === false
   );
 
   const stepsByPhase = PHASE_ORDER.map((phase) => ({

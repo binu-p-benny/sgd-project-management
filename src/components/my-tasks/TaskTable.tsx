@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Department } from "@prisma/client";
 import type { UnifiedTask } from "@/lib/unified-tasks";
+import { isDueToday } from "@/lib/overrun";
 import { Spinner } from "@/components/ui/Spinner";
 import {
   BLOCKED_REASON_LABELS,
@@ -44,6 +45,11 @@ function toPlannedDateInputValue(iso: string | null): string {
 }
 function daysOverdue(plannedIso: string): number {
   return Math.max(0, Math.floor((Date.now() - new Date(plannedIso).getTime()) / (1000 * 60 * 60 * 24)));
+}
+// task.overrun is already calendar-day-aware (see overrun.ts) — false for a task due today, so
+// this only ever fires for the one day it's neither overdue nor "not due yet".
+function dueToday(task: UnifiedTask): boolean {
+  return !task.overrun && isDueToday(task.plannedDate);
 }
 function formatPhase(phase: UnifiedTask["phase"]): string {
   if (phase === "service") return "Service";
@@ -958,9 +964,18 @@ function TaskRow({ task, isAdmin }: { task: UnifiedTask; isAdmin: boolean }) {
       >
         <td className="whitespace-nowrap px-3 py-2.5 text-xs text-fg-muted">
           {task.plannedDate ? (
-            <span className={task.overrun ? "font-medium text-amber-700 dark:text-amber-400" : undefined}>
+            <span
+              className={
+                task.overrun
+                  ? "font-medium text-amber-700 dark:text-amber-400"
+                  : dueToday(task)
+                    ? "font-medium text-sky-700 dark:text-sky-400"
+                    : undefined
+              }
+            >
               {formatDate(task.plannedDate)}
               {task.overrun && <span className="block text-[11px]">Overdue {daysOverdue(task.plannedDate)}d</span>}
+              {dueToday(task) && <span className="block text-[11px]">Due today</span>}
             </span>
           ) : (
             "—"
@@ -1066,7 +1081,11 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span
               className={`text-xs ${
-                task.overrun ? "font-medium text-amber-700 dark:text-amber-400" : "text-fg-muted"
+                task.overrun
+                  ? "font-medium text-amber-700 dark:text-amber-400"
+                  : dueToday(task)
+                    ? "font-medium text-sky-700 dark:text-sky-400"
+                    : "text-fg-muted"
               }`}
             >
               {task.plannedDate ? formatDate(task.plannedDate) : "No planned date"}
@@ -1074,6 +1093,11 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
             {task.overrun && task.plannedDate && (
               <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
                 Overdue {daysOverdue(task.plannedDate)}d
+              </span>
+            )}
+            {dueToday(task) && (
+              <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-[11px] font-medium text-sky-700 dark:text-sky-400">
+                Due today
               </span>
             )}
           </div>
@@ -1219,24 +1243,27 @@ function endOfToday(): Date {
   return d;
 }
 
-// Same 3-way split (and the same "overrun wins regardless of what time of day plannedDate
-// carries" reasoning) as DepartmentTaskOverview's own bucketTasks — kept as a separate local
-// copy since that one also needs a 4th "unscheduled" bucket this table's own callers never do
-// (groupByUrgency is only ever turned on for the review queue, where every row always has a
-// due date — see task-reviews.ts). A task with no plannedDate at all falls back to "upcoming"
-// here rather than being silently dropped, just in case.
+// Bucketed by calendar day alone, deliberately *not* task.overrun — overrun is a precise
+// now-vs-exact-planned-timestamp comparison (see overrun.ts), so a task planned for later today
+// already reads overrun the moment its time-of-day passes, even though it's still "today" by any
+// normal reading. Checking overrun first put those rows in Overdue instead of Due today. Same
+// 3-way split (and the same reasoning) as DepartmentTaskOverview's own bucketTasks — kept as a
+// separate local copy since that one also needs a 4th "unscheduled" bucket this table's own
+// callers never do (groupByUrgency is only ever turned on for the review queue, where every row
+// always has a due date — see task-reviews.ts). A task with no plannedDate at all falls back to
+// "upcoming" here rather than being silently dropped, just in case.
 function bucketTasksByUrgency(tasks: UnifiedTask[]): Record<UrgencyKey, UnifiedTask[]> {
   const todayStart = startOfToday();
   const todayEnd = endOfToday();
   const buckets: Record<UrgencyKey, UnifiedTask[]> = { overdue: [], due_today: [], upcoming: [] };
 
   for (const task of tasks) {
-    if (task.overrun) {
-      buckets.overdue.push(task);
-      continue;
-    }
     const planned = task.plannedDate ? new Date(task.plannedDate) : null;
-    if (planned && planned >= todayStart && planned <= todayEnd) {
+    if (!planned) {
+      buckets.upcoming.push(task);
+    } else if (planned < todayStart) {
+      buckets.overdue.push(task);
+    } else if (planned <= todayEnd) {
       buckets.due_today.push(task);
     } else {
       buckets.upcoming.push(task);

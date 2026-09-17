@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import type { UnifiedTask } from "@/lib/unified-tasks";
+import { isDueToday } from "@/lib/overrun";
 import { DEPARTMENT_LABELS } from "@/lib/labels";
 
 function formatDate(iso: string | null): string {
@@ -40,9 +41,11 @@ interface Bucket {
  * Splits every department's still-open work (see getUnifiedMyTasks(null)) into the same 4
  * buckets a person would naturally ask about — what's already late, what's due today, what's
  * coming up, and what can't even be bucketed yet because nobody's set its planned date (only
- * ever kind === "planned_date_edit" — see unified-tasks.ts). Checked in this order because
- * `overrun` is a precise now-vs-planned-timestamp comparison (not a calendar-day one — see
- * overrun.ts), so it always wins regardless of what time of day a plannedDate itself carries.
+ * ever kind === "planned_date_edit" — see unified-tasks.ts). Bucketed by calendar day alone,
+ * deliberately *not* task.overrun — overrun is a precise now-vs-exact-planned-timestamp
+ * comparison (see overrun.ts), so a task planned for later today already reads overrun the
+ * moment its time-of-day passes, even though it's still "today" by any normal reading; checking
+ * it first put those rows in Overdue instead of Due today.
  */
 function bucketTasks(tasks: UnifiedTask[]): { overdue: UnifiedTask[]; dueToday: UnifiedTask[]; upcoming: UnifiedTask[]; unscheduled: UnifiedTask[] } {
   const todayStart = startOfToday();
@@ -53,16 +56,14 @@ function bucketTasks(tasks: UnifiedTask[]): { overdue: UnifiedTask[]; dueToday: 
   const unscheduled: UnifiedTask[] = [];
 
   for (const task of tasks) {
-    if (task.overrun) {
-      overdue.push(task);
-      continue;
-    }
     if (!task.plannedDate) {
       unscheduled.push(task);
       continue;
     }
     const planned = new Date(task.plannedDate);
-    if (planned >= todayStart && planned <= todayEnd) {
+    if (planned < todayStart) {
+      overdue.push(task);
+    } else if (planned <= todayEnd) {
       dueToday.push(task);
     } else {
       upcoming.push(task);
@@ -108,9 +109,18 @@ function TaskRow({ task }: { task: UnifiedTask }) {
       </div>
       <div className="shrink-0 text-left text-xs text-fg-muted sm:text-right">
         {task.plannedDate ? (
-          <span className={task.overrun ? "font-medium text-amber-700 dark:text-amber-400" : undefined}>
+          <span
+            className={
+              task.overrun
+                ? "font-medium text-amber-700 dark:text-amber-400"
+                : !task.overrun && isDueToday(task.plannedDate)
+                  ? "font-medium text-sky-700 dark:text-sky-400"
+                  : undefined
+            }
+          >
             {formatDate(task.plannedDate)}
             {task.overrun && <span className="block">Overdue {daysOverdue(task.plannedDate)}d</span>}
+            {!task.overrun && isDueToday(task.plannedDate) && <span className="block">Due today</span>}
           </span>
         ) : (
           "No planned date yet"

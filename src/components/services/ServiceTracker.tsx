@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSyncedDraft } from "@/hooks/useSyncedDraft";
 import { Spinner } from "@/components/ui/Spinner";
+import { isDueToday } from "@/lib/overrun";
 import { DEPARTMENT_LABELS, ASSIGNABLE_DEPARTMENTS } from "@/lib/labels";
 import type { Department } from "@prisma/client";
 
@@ -94,6 +95,9 @@ function ItemRow({ item, editable, onSaved }: { item: ServiceItemData; editable:
   const needsReason = (isCorrection || isLate) && !noteDraft.trim();
   const isQC = item.isPassFail;
   const failNeedsNote = isQC && !noteDraft.trim();
+  // item.overrun is already calendar-day-aware (see overrun.ts) — false for an item due today,
+  // so this only ever fires for the one day it's neither overdue nor "not due yet".
+  const isDueTodayItem = !isDone && !item.overrun && isDueToday(item.plannedDate);
 
   async function patch(body: Record<string, unknown>) {
     setSaving(true);
@@ -155,7 +159,9 @@ function ItemRow({ item, editable, onSaved }: { item: ServiceItemData; editable:
                   : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
                 : isCorrection || item.overrun
                   ? "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
-                  : "bg-overlay text-fg-subtle"
+                  : isDueTodayItem
+                    ? "bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400"
+                    : "bg-overlay text-fg-subtle"
             }`}
           >
             {isDone && !isCorrection ? (
@@ -186,6 +192,11 @@ function ItemRow({ item, editable, onSaved }: { item: ServiceItemData; editable:
           {!isDone && item.overrun && (
             <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-inset ring-amber-500/25 dark:text-amber-400">
               Overdue
+            </span>
+          )}
+          {isDueTodayItem && (
+            <span className="shrink-0 rounded-full bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium text-sky-700 ring-1 ring-inset ring-sky-500/25 dark:text-sky-400">
+              Due today
             </span>
           )}
         </div>

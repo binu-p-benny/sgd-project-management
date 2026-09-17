@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { MyTaskItem } from "@/lib/my-tasks";
+import { isDueToday } from "@/lib/overrun";
 import { useSyncedDraft } from "@/hooks/useSyncedDraft";
 import { Spinner } from "@/components/ui/Spinner";
 import {
@@ -700,6 +701,13 @@ export function TaskCard({
   // Same condition as the "Overdue" pill below — blocked steps already get their own red
   // treatment via the blocked-reason banner, so this doesn't pile an amber highlight on top.
   const isOverdueCard = item.overrun && item.status !== "blocked";
+  // item.overrun is already calendar-day-aware (see overrun.ts) — false for a step due today, so
+  // this only ever fires for the one day it's neither overdue nor "not due yet". Computed here
+  // from the same plannedEndDate the card already has, same as isDueToday's own doc comment
+  // describes for every other client component that needs this.
+  const isDueTodayCard = !item.overrun && item.status !== "blocked" && item.status !== "completed" && isDueToday(item.plannedEndDate);
+  const contractorDueToday =
+    !item.contractorOverdue && !item.contractorId && isDueToday(item.contractorPlannedDate);
   // 2D2 has no Start action (see SINGLE_COMPLETION_STEP_CODES above), so its stored status can
   // only ever be not_started or completed — nothing ever sets it to in_progress. Once its
   // planned finish passes with nothing recorded yet, show the badge as "In progress" anyway
@@ -776,6 +784,11 @@ export function TaskCard({
               Overdue
             </span>
           )}
+          {isDueTodayCard && (
+            <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-xs font-medium text-sky-700 ring-1 ring-inset ring-sky-500/25 dark:text-sky-400">
+              Due today
+            </span>
+          )}
           {item.timesOverdue > 0 && (
             <span
               title={`Flagged overdue ${item.timesOverdue} time${item.timesOverdue === 1 ? "" : "s"}${
@@ -811,11 +824,15 @@ export function TaskCard({
             {item.contractorPlannedDate && (
               <span
                 className={`text-xs ${
-                  item.contractorOverdue ? "font-medium text-amber-700 dark:text-amber-400" : "text-fg-subtle"
+                  item.contractorOverdue
+                    ? "font-medium text-amber-700 dark:text-amber-400"
+                    : contractorDueToday
+                      ? "font-medium text-sky-700 dark:text-sky-400"
+                      : "text-fg-subtle"
                 }`}
               >
                 Target: {formatDate(item.contractorPlannedDate)}
-                {item.contractorOverdue ? " — overdue" : ""}
+                {item.contractorOverdue ? " — overdue" : contractorDueToday ? " — due today" : ""}
               </span>
             )}
           </div>

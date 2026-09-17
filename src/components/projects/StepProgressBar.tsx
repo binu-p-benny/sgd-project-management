@@ -1,5 +1,5 @@
 import { PHASE_LABELS, STEP_STATUS_LABELS, BLOCKED_REASON_LABELS } from "@/lib/labels";
-import { isStepOverrun, daysBlocked } from "@/lib/overrun";
+import { isStepOverrun, isDueToday, daysBlocked } from "@/lib/overrun";
 import type { BlockedReason, StepPhase, StepStatus } from "@prisma/client";
 
 interface ProgressStep {
@@ -38,10 +38,13 @@ function getStatusDetail(step: ProgressStep): { primary: string; secondary: stri
 
   if (step.status === "in_progress") {
     const overdue = isStepOverrun(step.plannedEndDate, step.status);
+    const dueToday = !overdue && step.plannedEndDate && isDueToday(step.plannedEndDate);
     return {
       primary: "In progress",
       secondary: step.plannedEndDate
-        ? `${overdue ? "was due" : "due"} ${formatShortDate(step.plannedEndDate)}`
+        ? dueToday
+          ? "due today"
+          : `${overdue ? "was due" : "due"} ${formatShortDate(step.plannedEndDate)}`
         : null,
     };
   }
@@ -123,6 +126,7 @@ export function StepProgressBar({ steps }: { steps: ProgressStep[] }) {
           <div className="flex items-start">
             {phaseSteps.map((step, i) => {
               const overdue = isStepOverrun(step.plannedEndDate, step.status);
+              const dueToday = !overdue && step.plannedEndDate && isDueToday(step.plannedEndDate) && step.status !== "completed";
               const { primary, secondary } = getStatusDetail(step);
               return (
                 <div key={step.id} className="flex flex-1 items-start last:flex-none">
@@ -136,6 +140,9 @@ export function StepProgressBar({ steps }: { steps: ProgressStep[] }) {
                       </div>
                       {overdue && (
                         <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface bg-amber-500" />
+                      )}
+                      {dueToday && (
+                        <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface bg-sky-500" />
                       )}
                     </div>
                     <span
@@ -182,6 +189,9 @@ export function StepProgressBar({ steps }: { steps: ProgressStep[] }) {
         </span>
         <span className="flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-full bg-amber-500" /> Overdue
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-sky-500" /> Due today
         </span>
       </div>
     </div>

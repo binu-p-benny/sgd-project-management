@@ -1,5 +1,23 @@
 import { prisma } from "@/lib/prisma";
 import { isProcurementItemOverrun, isStepOverrun, getEffectiveOverallStatus, projectHasOverrun } from "@/lib/overrun";
+
+// Reused across every query below that needs projectHasOverrun's Glass PO argument — see its own
+// doc comment in overrun.ts for why these (unlike a ProcurementItem's other stages) are cheap:
+// real stored columns, not a computed anchor chain.
+const GLASS_PO_OVERRUN_SELECT = {
+  requirementCreatedAt: true,
+  requirementPlannedDate: true,
+  quoteCreatedAt: true,
+  quotePlannedDate: true,
+  paymentSettledAt: true,
+  paymentPlannedDate: true,
+  orderConfirmedAt: true,
+  orderPlannedDate: true,
+  actualArrivalDate: true,
+  arrivalPlannedDate: true,
+  qcCheckedAt: true,
+  qcPlannedDate: true,
+} as const;
 import { getServiceStatus, type ServiceStatus } from "@/lib/service";
 import type { Department, ItemType, OverallStatus, PaymentStatus, ProjectPhase, StepStatus } from "@prisma/client";
 
@@ -24,12 +42,16 @@ export async function getPhaseStatusSummary(): Promise<PhaseStatusCell[]> {
       overallStatus: true,
       phaseSteps: { select: { plannedEndDate: true, status: true } },
       procurementItems: { select: { expectedArrivalDate: true, actualArrivalDate: true } },
+      glassPurchaseOrder: { select: GLASS_PO_OVERRUN_SELECT },
     },
   });
 
   const counts = new Map<string, number>();
   for (const p of projects) {
-    const status = getEffectiveOverallStatus(p.overallStatus, projectHasOverrun(p.phaseSteps, p.procurementItems));
+    const status = getEffectiveOverallStatus(
+      p.overallStatus,
+      projectHasOverrun(p.phaseSteps, p.procurementItems, p.glassPurchaseOrder)
+    );
     const key = `${p.currentPhase}::${status}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
@@ -60,6 +82,7 @@ export async function getProjectSituationCounts(): Promise<ProjectSituationCount
       paymentStatus: true,
       phaseSteps: { select: { plannedEndDate: true, status: true } },
       procurementItems: { select: { expectedArrivalDate: true, actualArrivalDate: true } },
+      glassPurchaseOrder: { select: GLASS_PO_OVERRUN_SELECT },
     },
   });
 
@@ -78,7 +101,10 @@ export async function getProjectSituationCounts(): Promise<ProjectSituationCount
   };
 
   for (const p of projects) {
-    const status = getEffectiveOverallStatus(p.overallStatus, projectHasOverrun(p.phaseSteps, p.procurementItems));
+    const status = getEffectiveOverallStatus(
+      p.overallStatus,
+      projectHasOverrun(p.phaseSteps, p.procurementItems, p.glassPurchaseOrder)
+    );
     if (status === "on_track") counts.onTrack += 1;
     else if (status === "delayed") counts.delayed += 1;
     else if (status === "blocked") counts.blocked += 1;
@@ -363,6 +389,7 @@ export async function getProjectProgressList(
       overallStatus: true,
       phaseSteps: { select: { status: true, plannedEndDate: true } },
       procurementItems: { select: { expectedArrivalDate: true, actualArrivalDate: true } },
+      glassPurchaseOrder: { select: GLASS_PO_OVERRUN_SELECT },
     },
   });
 
@@ -370,7 +397,7 @@ export async function getProjectProgressList(
     const completedSteps = p.phaseSteps.filter((s) => s.status === "completed").length;
     const effectiveStatus = getEffectiveOverallStatus(
       p.overallStatus,
-      projectHasOverrun(p.phaseSteps, p.procurementItems)
+      projectHasOverrun(p.phaseSteps, p.procurementItems, p.glassPurchaseOrder)
     );
     return {
       projectId: p.id,

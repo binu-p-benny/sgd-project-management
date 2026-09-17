@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSyncedDraft } from "@/hooks/useSyncedDraft";
 import { Spinner } from "@/components/ui/Spinner";
+import { isDueToday } from "@/lib/overrun";
 import { DELAY_CATEGORY_LABELS, DEPARTMENT_LABELS, ASSIGNABLE_DEPARTMENTS } from "@/lib/labels";
 import type { Department } from "@prisma/client";
 
@@ -223,6 +224,9 @@ function StageRow({
   // Only gates a fresh completion, not a correction to an already-done row — fixing a settled
   // date shouldn't be blocked by some unrelated earlier stage's own state.
   const blockedByPreviousStage = !isDone && !previousStageDone;
+  // stage.overrun is already calendar-day-aware (see overrun.ts) — false for a stage due today,
+  // so this only ever fires for the one day it's neither overdue nor "not due yet".
+  const isDueTodayStage = !isDone && !stage.overrun && isDueToday(stage.plannedDate);
 
   async function patch(body: Record<string, unknown>, field: "date" | "note") {
     setSaving(field);
@@ -332,7 +336,9 @@ function StageRow({
                   : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
                 : isCorrection || stage.overrun
                   ? "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
-                  : "bg-overlay text-fg-subtle"
+                  : isDueTodayStage
+                    ? "bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400"
+                    : "bg-overlay text-fg-subtle"
             }`}
           >
             {isDone && !isCorrection ? (
@@ -382,6 +388,11 @@ function StageRow({
           {!isDone && stage.overrun && (
             <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-inset ring-amber-500/25 dark:text-amber-400">
               Overdue
+            </span>
+          )}
+          {isDueTodayStage && (
+            <span className="shrink-0 rounded-full bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium text-sky-700 ring-1 ring-inset ring-sky-500/25 dark:text-sky-400">
+              Due today
             </span>
           )}
         </div>

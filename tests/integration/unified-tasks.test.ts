@@ -141,20 +141,35 @@ describe("getUnifiedMyTasks — excludes derived phase steps and soft-deleted pr
 });
 
 describe("getUnifiedMyTasks — 3C1's own contractor-selection sub-task", () => {
-  it("surfaces the Section item's requirement-created date as contractorPlannedDate, already overdue by the time 3C1 exists", async () => {
+  it("surfaces the Section item's requirement-created date as contractorPlannedDate, overdue once it's genuinely in the past", async () => {
     const project = await createTestProjectDayOne();
     await advanceThroughPhase1(project.id, users);
     await advanceThroughPhase2(project.id, users); // drives 2F to completed, seeding Phase 3 (3C1)
+    // Overdue is a calendar-day check (see overrun.ts's isProcurementStageOverrun) — backdated a
+    // full 5 days rather than relying on "just now" being in the past, which after
+    // advanceThroughPhase2 is still *today* and so no longer counts as overdue (see the
+    // "not overdue the same day" test right below, which covers exactly that case).
+    const past = new Date(Date.now() - 1000 * 60 * 60 * 24 * 5);
+    await patchProcurementItem(project.id, "section", users.design_engineer, { requirementCreatedAt: past });
 
     const all = tasksFor(await getUnifiedMyTasks("project_engineer"), project.id);
     const threeC1 = all.find((t) => t.kind === "phase_step" && t.stepCode === "3C1");
     expect(threeC1).toBeDefined();
     expect(threeC1!.contractorId).toBeNull();
-    expect(threeC1!.contractorPlannedDate).not.toBeNull();
-    // Section's requirement was created moments ago (advanceThroughPhase2's own doing) — already
-    // in the past, so this reads overdue the instant 3C1 shows up at all. See MyTaskItem's own
-    // contractorOverdue for the same rule on the project-detail page.
+    expect(threeC1!.contractorPlannedDate).toBe(past.toISOString());
+    // See MyTaskItem's own contractorOverdue for the same rule on the project-detail page.
     expect(threeC1!.contractorOverdue).toBe(true);
+  });
+
+  it("not overdue the same day the Section requirement was created — due today isn't overdue yet", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users); // Section's requirement is created just now — i.e. today
+
+    const all = tasksFor(await getUnifiedMyTasks("project_engineer"), project.id);
+    const threeC1 = all.find((t) => t.kind === "phase_step" && t.stepCode === "3C1");
+    expect(threeC1!.contractorPlannedDate).not.toBeNull();
+    expect(threeC1!.contractorOverdue).toBe(false);
   });
 
   it("not overdue while the Section requirement's date is still in the future", async () => {
