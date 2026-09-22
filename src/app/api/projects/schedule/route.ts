@@ -41,19 +41,24 @@ interface ScheduleRow {
   sortDate: Date | null;
 }
 
+// Each \n is a deliberate, explicit line break (Excel renders it as one, same as Alt+Enter),
+// not left to wrapText's own auto-wrapping — auto-wrap alone broke the 3-4 word headers into as
+// many lines as would fit the column width, taller than the fixed header row height allowed for,
+// clipping the bottom line. Paired with the wider columns below (E–H) so neither line wraps a
+// second time on its own.
 const COLUMN_HEADERS = [
   "SL",
   "CUSTOMER",
-  "Glass Requirement Created",
+  "Glass Requirement\nCreated",
   "Glass Arrival",
-  "Aluminum framework planned start",
-  "Aluminum framework planned end",
-  "Aluminum framework actual start",
-  "Aluminum framework actual end",
-  "Installation planned start",
-  "Installation planned end",
-  "Installation actual start",
-  "Installation actual end",
+  "Aluminum framework\nplanned start",
+  "Aluminum framework\nplanned end",
+  "Aluminum framework\nactual start",
+  "Aluminum framework\nactual end",
+  "Installation\nplanned start",
+  "Installation\nplanned end",
+  "Installation\nactual start",
+  "Installation\nactual end",
 ];
 
 /** Pastel fills cycled across contractor groups — not trying to match the paper sheet's exact
@@ -75,13 +80,13 @@ function buildWorkbook(
   sheet.columns = [
     { width: 6 },
     { width: 22 },
-    { width: 16 },
+    { width: 20 }, // "Glass Requirement" (line 1) needs this much to not wrap a second time
     { width: 14 },
-    { width: 16 },
-    { width: 16 },
-    { width: 16 },
-    { width: 16 },
-    { width: 16 },
+    { width: 20 }, // "Aluminum framework" (line 1, E–H) — same reasoning as column C above
+    { width: 20 },
+    { width: 20 },
+    { width: 20 },
+    { width: 16 }, // "Installation" (line 1, I–L) already fits at this width
     { width: 16 },
     { width: 16 },
     { width: 16 },
@@ -118,7 +123,9 @@ function buildWorkbook(
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: `FF${HEADER_FILL}` } };
       cell.border = { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } };
     }
-    headRow.height = 30;
+    // Exactly 2 lines everywhere now (see COLUMN_HEADERS' own \n breaks) — tall enough that the
+    // second line isn't clipped, same height regardless of which header happens to be longest.
+    headRow.height = 34;
 
     for (const row of group.rows) {
       serial++;
