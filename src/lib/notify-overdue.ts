@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { Department } from "@prisma/client";
 
-const ADMIN_DEPARTMENTS: Department[] = ["owner_admin", "hr_admin"];
+const ADMIN_DEPARTMENTS: Department[] = ["owner_admin", "hr_admin", "operations_manager"];
 
 function formatShortDate(date: Date): string {
   return new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short" }).format(date);

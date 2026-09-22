@@ -80,7 +80,7 @@ export async function PATCH(
   // General project/client info is an admin-only proxy edit. Payment fields are also
   // open to Accounts directly, since that's their own domain.
   if (touchesGeneralInfo && !isAdminEditor(session)) {
-    return NextResponse.json({ error: "Forbidden — only owner_admin and HR & Admin can edit project details" }, { status: 403 });
+    return NextResponse.json({ error: "Forbidden — only owner_admin, HR & Admin and Operations Manager can edit project details" }, { status: 403 });
   }
   if (touchesPayment && !isAdminEditor(session) && session.department !== "accounts") {
     return NextResponse.json({ error: "Forbidden — payment info is Accounts' domain" }, { status: 403 });
@@ -119,7 +119,7 @@ export async function DELETE(
   }
   if (!isAdminEditor(session)) {
     return NextResponse.json(
-      { error: "Forbidden — only owner_admin and HR & Admin can delete a project" },
+      { error: "Forbidden — only owner_admin, HR & Admin and Operations Manager can delete a project" },
       { status: 403 }
     );
   }

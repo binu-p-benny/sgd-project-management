@@ -30,7 +30,7 @@ async function backdateStep(stepId: string, plannedEndDate: Date) {
 }
 
 describe("notifyOverdueSteps", () => {
-  it("notifies the owning department, secondary department, and both admin departments — once each", async () => {
+  it("notifies the owning department, secondary department, and every admin department (owner, HR & Admin, Operations Manager) — once each", async () => {
     const project = await createTestProjectDayOne({ visitUrgency: "hot" });
     const oneA = await getStep(project.id, "1A"); // owning: hr_admin, secondary: project_engineer
     await backdateStep(oneA.id, daysAgo(2));
@@ -42,7 +42,7 @@ describe("notifyOverdueSteps", () => {
     const recipientIds = notifications.map((n) => n.userId).sort();
     // hr_admin is both 1A's owning department AND an admin department — must appear once, not twice.
     expect(recipientIds).toEqual(
-      [users.hr_admin, users.project_engineer, users.owner_admin].sort()
+      [users.hr_admin, users.project_engineer, users.owner_admin, users.operations_manager].sort()
     );
     expect(notifications.every((n) => n.projectId === project.id && n.type === "step_overdue")).toBe(true);
     expect(notifications[0].message).toContain("1A");

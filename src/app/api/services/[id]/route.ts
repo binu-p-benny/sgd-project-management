@@ -57,7 +57,7 @@ export async function PATCH(
   }
   if (!isAdminEditor(session)) {
     return NextResponse.json(
-      { error: "Forbidden — only owner_admin and HR & Admin can edit service details" },
+      { error: "Forbidden — only owner_admin, HR & Admin and Operations Manager can edit service details" },
       { status: 403 }
     );
   }
@@ -111,7 +111,7 @@ export async function DELETE(
   }
   if (!isAdminEditor(session)) {
     return NextResponse.json(
-      { error: "Forbidden — only owner_admin and HR & Admin can delete a service" },
+      { error: "Forbidden — only owner_admin, HR & Admin and Operations Manager can delete a service" },
       { status: 403 }
     );
   }

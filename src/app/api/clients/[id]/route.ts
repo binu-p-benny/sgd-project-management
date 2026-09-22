@@ -19,7 +19,7 @@ export async function DELETE(
   }
   if (!isAdminEditor(session)) {
     return NextResponse.json(
-      { error: "Forbidden — only owner_admin and HR & Admin can delete a client" },
+      { error: "Forbidden — only owner_admin, HR & Admin and Operations Manager can delete a client" },
       { status: 403 }
     );
   }

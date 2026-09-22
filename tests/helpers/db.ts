@@ -14,6 +14,7 @@ const ALL_DEPARTMENTS: Department[] = [
   "purchase",
   "accounts",
   "owner_admin",
+  "operations_manager",
 ];
 
 let cachedUsers: Record<Department, string> | null = null;

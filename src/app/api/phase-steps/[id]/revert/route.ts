@@ -26,7 +26,7 @@ function authorize(session: Awaited<ReturnType<typeof getSession>>) {
   }
   if (!isAdminEditor(session)) {
     return NextResponse.json(
-      { error: "Forbidden — only owner_admin and HR & Admin can revert a step" },
+      { error: "Forbidden — only owner_admin, HR & Admin and Operations Manager can revert a step" },
       { status: 403 }
     );
   }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getSession, isOwnerAdmin } from "@/lib/auth";
+import { getSession, hasOwnerAccess } from "@/lib/auth";
 import { StepActionError, skipToPhase } from "@/lib/step-actions";
 
 const skipPhaseSchema = z.object({
@@ -10,9 +10,9 @@ const skipPhaseSchema = z.object({
 
 /**
  * Backfills an already-live project straight to Phase 2 or Phase 3 — see skipToPhase in
- * step-actions.ts for what that actually mutates. Owner only, not the wider isAdminEditor set
- * (HR & Admin) — same tighter gate /performance already uses, and for the same reason: this
- * bulk-rewrites history rather than recording today's work, a call the owner alone should make.
+ * step-actions.ts for what that actually mutates. Owner-level only (owner_admin and Operations
+ * Manager — see hasOwnerAccess), not the wider isAdminEditor set (HR & Admin): this bulk-rewrites
+ * history rather than recording today's work, a call for whoever runs the whole operation.
  */
 export async function POST(
   request: NextRequest,
@@ -22,8 +22,11 @@ export async function POST(
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!isOwnerAdmin(session)) {
-    return NextResponse.json({ error: "Forbidden — only the owner can skip a phase" }, { status: 403 });
+  if (!hasOwnerAccess(session)) {
+    return NextResponse.json(
+      { error: "Forbidden — only the owner or Operations Manager can skip a phase" },
+      { status: 403 }
+    );
   }
 
   const { id } = await params;

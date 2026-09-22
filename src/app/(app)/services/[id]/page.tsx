@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { getSession } from "@/lib/auth";
+import { getSession, isAdminEditor } from "@/lib/auth";
 import { ServiceTracker } from "@/components/services/ServiceTracker";
 import { DeleteServiceButton } from "@/components/services/DeleteServiceButton";
 import { ServiceReviewCard } from "@/components/services/ServiceReviewCard";
@@ -28,7 +28,8 @@ export default async function ServiceDetailPage({ params }: { params: Promise<{ 
   // a service item's department is chosen per-row, not owned by a single team the way a
   // procurement item's fixed stages are, so there's no single department to gate editing behind.
   const canEdit = !!session;
-  const canDelete = !!session && (session.department === "owner_admin" || session.department === "hr_admin");
+  // The same set the PATCH/DELETE routes themselves gate on (see /api/services/[id]).
+  const canDelete = !!session && isAdminEditor(session);
   // The customer review is an admin-only proxy edit, same as the Project's own phase reviews.
   const canEditReview = canDelete;
 

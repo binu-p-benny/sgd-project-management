@@ -67,7 +67,10 @@ export const sessionCookieOptions = {
   maxAge: SESSION_TTL_SECONDS,
 };
 
-/** owner_admin has access to everything; other departments are scoped to their own steps. */
+/** The owner alone. Since Operations Manager got the owner's full console, the only thing this is
+ *  still the right check for is /performance (see its own layout.tsx) — anything else that used to
+ *  mean "owner-level" should use hasOwnerAccess below instead, or Operations Manager gets locked
+ *  out of it by mistake. */
 export function isOwnerAdmin(session: SessionPayload): boolean {
   return session.department === "owner_admin";
 }
@@ -76,10 +79,21 @@ export function isOperationsManager(session: SessionPayload): boolean {
   return session.department === "operations_manager";
 }
 
+/**
+ * Owner-level access: owner_admin, or Operations Manager — who is meant to be able to do
+ * everything the owner can except see /performance. The check to reach for on any "owner only"
+ * action (skipping a phase, seeing every department's steps, the dashboard); isOwnerAdmin is
+ * reserved for /performance itself. Still narrower than isAdminEditor, which also includes HR &
+ * Admin.
+ */
+export function hasOwnerAccess(session: SessionPayload): boolean {
+  return isOwnerAdmin(session) || isOperationsManager(session);
+}
+
 /** /dashboard is one of the "all pages except /performance" Operations Manager gets — same
  *  owner_admin-only data as always, just also readable by them. */
 export function canViewDashboard(session: SessionPayload): boolean {
-  return isOwnerAdmin(session) || isOperationsManager(session);
+  return hasOwnerAccess(session);
 }
 
 /**
