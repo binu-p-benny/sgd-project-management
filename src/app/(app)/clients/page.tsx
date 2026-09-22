@@ -57,6 +57,9 @@ export default async function ClientsPage() {
                     {client._count.services} service{client._count.services === 1 ? "" : "s"}
                   </span>
                 </div>
+                <div className="truncate font-mono text-[11px] text-fg-subtle" title={client.id}>
+                  {client.id}
+                </div>
                 <div className="text-sm text-fg-muted">{client.phone}</div>
                 <div className="text-sm text-fg-muted">{client.address}</div>
                 {canDelete && (
@@ -73,6 +76,7 @@ export default async function ClientsPage() {
             <table className="w-full text-left text-sm">
               <thead className="bg-cyan-500/10 text-[11px] uppercase tracking-wider text-fg-subtle dark:bg-cyan-500/[0.08]">
                 <tr>
+                  <th className="px-4 py-3 font-medium">ID</th>
                   <th className="px-4 py-3 font-medium">Name</th>
                   <th className="px-4 py-3 font-medium">Phone</th>
                   <th className="px-4 py-3 font-medium">Address</th>
@@ -84,6 +88,9 @@ export default async function ClientsPage() {
               <tbody className="divide-y divide-edge">
                 {clients.map((client) => (
                   <tr key={client.id} className="bg-surface">
+                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-fg-subtle" title={client.id}>
+                      {client.id}
+                    </td>
                     <td className="px-4 py-3 font-medium text-fg">{client.name}</td>
                     <td className="px-4 py-3 text-fg-muted">{client.phone}</td>
                     <td className="max-w-xs truncate px-4 py-3 text-fg-muted">{client.address}</td>
