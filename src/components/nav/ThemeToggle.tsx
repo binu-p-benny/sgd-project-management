@@ -60,7 +60,7 @@ export function ThemeToggle({ variant = "row" }: { variant?: "row" | "iconOnly" 
       className="group/item mt-1 flex w-full items-center gap-3 rounded-lg py-1 text-sm font-medium text-fg-muted transition-colors hover:text-fg"
     >
       <IconChip active={false}>{icon}</IconChip>
-      <span className="whitespace-nowrap opacity-0 transition-opacity duration-150 group-hover:opacity-100">{label}</span>
+      <span className="whitespace-nowrap opacity-0 transition-opacity duration-150 group-[:hover]:opacity-100">{label}</span>
     </button>
   );
 }

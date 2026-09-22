@@ -162,8 +162,12 @@ export function AppShell({
 
   return (
     <div className="flex min-h-screen bg-bg">
-      {/* Desktop left sidebar — icon rail that expands to icon+label on hover */}
-      <aside className="group sticky top-0 hidden h-screen w-[72px] shrink-0 flex-col overflow-hidden border-r border-edge bg-surface/90 backdrop-blur-md transition-[width] duration-200 ease-in-out hover:w-60 sm:flex">
+      {/* Desktop left sidebar — icon rail that expands to icon+label on hover. Uses the arbitrary
+          [&:hover] / group-[:hover] variants instead of hover: / group-hover: on purpose —
+          Tailwind v4 wraps the latter in @media (hover: hover), so on a touchscreen, a 2-in-1 in
+          tablet mode or an emulated device the rail never opened at all. Here a tap's sticky
+          :hover is exactly what we want. */}
+      <aside className="group sticky top-0 hidden h-screen w-[72px] shrink-0 flex-col overflow-hidden border-r border-edge bg-surface/90 backdrop-blur-md transition-[width] duration-200 ease-in-out [&:hover]:w-60 sm:flex">
         <div className="flex h-16 shrink-0 items-center gap-3 px-[15px]">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-accent to-accent-2 text-xs font-bold text-white shadow-[var(--shadow-accent)]">
             S
@@ -171,8 +175,8 @@ export function AppShell({
           <span className="shrink-0">
             <NotificationBell />
           </span>
-          <span className="whitespace-nowrap text-base font-semibold tracking-tight text-fg opacity-0 transition-opacity duration-150 group-hover:opacity-100">
-            SGD Monitoring
+          <span className="whitespace-nowrap text-base font-semibold tracking-tight text-fg opacity-0 transition-opacity duration-150 group-[:hover]:opacity-100">
+            SGD Connect
           </span>
         </div>
 
@@ -186,7 +190,7 @@ export function AppShell({
                 className="group/item flex items-center gap-3 rounded-lg py-1 text-sm font-medium text-fg-muted transition-colors hover:text-fg"
               >
                 <IconChip active={active}>{item.icon}</IconChip>
-                <span className={`whitespace-nowrap opacity-0 transition-opacity duration-150 group-hover:opacity-100 ${active ? "text-fg" : ""}`}>
+                <span className={`whitespace-nowrap opacity-0 transition-opacity duration-150 group-[:hover]:opacity-100 ${active ? "text-fg" : ""}`}>
                   {item.label}
                 </span>
               </Link>
@@ -199,7 +203,7 @@ export function AppShell({
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-3 text-xs font-semibold text-fg">
               {initials(session.name)}
             </span>
-            <div className="min-w-0 whitespace-nowrap opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+            <div className="min-w-0 whitespace-nowrap opacity-0 transition-opacity duration-150 group-[:hover]:opacity-100">
               <div className="truncate text-sm font-medium text-fg">{session.name}</div>
               <div className="truncate text-xs text-fg-muted">{DEPARTMENT_LABELS[session.department]}</div>
             </div>
@@ -211,7 +215,7 @@ export function AppShell({
             className="group/item mt-1 flex w-full items-center gap-3 rounded-lg py-1 text-sm font-medium text-fg-muted transition-colors hover:text-fg disabled:opacity-60"
           >
             <IconChip active={false}>{loggingOut ? <Spinner className="h-4 w-4" /> : LOGOUT_ICON}</IconChip>
-            <span className="whitespace-nowrap opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+            <span className="whitespace-nowrap opacity-0 transition-opacity duration-150 group-[:hover]:opacity-100">
               {loggingOut ? "Logging out…" : "Log out"}
             </span>
           </button>
@@ -225,7 +229,7 @@ export function AppShell({
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-accent to-accent-2 text-xs font-bold text-white shadow-[var(--shadow-accent)]">
               S
             </span>
-            SGD Monitoring
+            SGD Connect
           </span>
           <div className="flex items-center gap-3">
             <NotificationBell />

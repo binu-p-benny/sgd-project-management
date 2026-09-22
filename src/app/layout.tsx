@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SGD Project Monitoring",
+  title: "SGD Project Connect",
   description: "Window & glass installation project monitoring",
 };
 

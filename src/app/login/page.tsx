@@ -49,7 +49,7 @@ export default function LoginPage() {
           <div className="mb-4 inline-flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-accent to-accent-2 text-lg font-bold text-white shadow-[var(--shadow-accent)]">
             S
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight text-fg">SGD Project Monitoring</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-fg">SGD Project Connect</h1>
           <p className="mt-1 text-sm text-fg-muted">Sign in with your department account</p>
         </div>
 
