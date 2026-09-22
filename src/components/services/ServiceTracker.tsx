@@ -75,8 +75,22 @@ function openPicker(e: React.MouseEvent<HTMLInputElement>) {
 
 /** One row of service work — mirrors StageRow in ProcurementTracker.tsx for its custom
  *  ("+ Add row") rows, minus the fixed-stage planned-date-override column (a service item's
- *  planned date is set once, at creation, and never edited afterward). */
-function ItemRow({ item, editable, onSaved }: { item: ServiceItemData; editable: boolean; onSaved: () => void }) {
+ *  planned date is set once, at creation, and never edited afterward).
+ *
+ *  Exported, with the PATCH endpoint passed in rather than hardcoded, because a project's
+ *  additional-work blocks (see AdditionalWorks.tsx) are the same kind of flat work row and share
+ *  this exactly — same completion, late-reason and Pass/Fail behavior, just a different table. */
+export function ItemRow({
+  item,
+  editable,
+  patchUrl,
+  onSaved,
+}: {
+  item: ServiceItemData;
+  editable: boolean;
+  patchUrl: string;
+  onSaved: () => void;
+}) {
   const isDone = item.actualDate !== null;
   const [dateDraft, setDateDraft] = useSyncedDraft(item.actualDate, toDateInputValue);
   const [noteDraft, setNoteDraft] = useSyncedDraft(item.note, (v) => v ?? "");
@@ -103,7 +117,7 @@ function ItemRow({ item, editable, onSaved }: { item: ServiceItemData; editable:
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/service-items/${item.id}`, {
+      const res = await fetch(patchUrl, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -315,8 +329,10 @@ function ItemRow({ item, editable, onSaved }: { item: ServiceItemData; editable:
 
 /** The "+ Add row" CTA and the inline task/planned-date form it opens into — always available
  *  to anyone who can edit the service (there's no precondition the way ProcurementActionItem's
- *  own add-row has: a service simply starts empty and grows one row at a time). */
-function AddItemRow({ serviceId, onSaved }: { serviceId: string; onSaved: () => void }) {
+ *  own add-row has: a service simply starts empty and grows one row at a time).
+ *
+ *  Exported with the POST endpoint passed in, same reason as ItemRow above. */
+export function AddItemRow({ addUrl, onSaved }: { addUrl: string; onSaved: () => void }) {
   const [adding, setAdding] = useState(false);
   const [taskDraft, setTaskDraft] = useState("");
   const [departmentDraft, setDepartmentDraft] = useState("");
@@ -342,7 +358,7 @@ function AddItemRow({ serviceId, onSaved }: { serviceId: string; onSaved: () => 
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/services/${serviceId}/items`, {
+      const res = await fetch(addUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -502,9 +518,15 @@ export function ServiceTracker({
               </tr>
             )}
             {items.map((item) => (
-              <ItemRow key={item.id} item={item} editable={canEdit} onSaved={() => router.refresh()} />
+              <ItemRow
+                key={item.id}
+                item={item}
+                editable={canEdit}
+                patchUrl={`/api/service-items/${item.id}`}
+                onSaved={() => router.refresh()}
+              />
             ))}
-            {canEdit && <AddItemRow serviceId={serviceId} onSaved={() => router.refresh()} />}
+            {canEdit && <AddItemRow addUrl={`/api/services/${serviceId}/items`} onSaved={() => router.refresh()} />}
           </tbody>
         </table>
       </div>

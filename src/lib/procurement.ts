@@ -542,6 +542,41 @@ export function computeAllProcurementPlannedDates(
   };
 }
 
+/** Installation is planned to open this many days after procurement's QC checked planned date, and
+ *  to wrap up this many days after it. Sundays don't count toward either span — the same
+ *  working-day rule as the chains above (see addWorkingDays), so neither date can land on one. */
+export const INSTALLATION_WINDOW_START_OFFSET_DAYS = 10;
+export const INSTALLATION_WINDOW_END_OFFSET_DAYS = 22;
+
+export interface InstallationPlannedWindow {
+  /** The QC checked planned date both ends below are measured from. */
+  qcPlanned: Date;
+  start: Date;
+  end: Date;
+}
+
+/**
+ * Forecast of when installation will run, purely off procurement's own QC checked planned dates —
+ * one per item, from computeAllProcurementPlannedDates(...).qc. Installation can't begin until
+ * every item has been QC-checked, so the window keys off the *latest* of them; that is the same
+ * value for all three items unless hardware or gasket carries its own manual QC override (see
+ * computeHardwareGasketChainDates), and this is what makes the override count.
+ *
+ * Null when no item has a QC planned date yet — i.e. before 1D completes and the shared plan
+ * anchor exists (see computePhase2PlanAnchor).
+ */
+export function computeInstallationPlannedWindow(itemQCPlannedDates: (Date | null)[]): InstallationPlannedWindow | null {
+  const known = itemQCPlannedDates.filter((d): d is Date => d !== null);
+  if (known.length === 0) return null;
+
+  const qcPlanned = new Date(Math.max(...known.map((d) => d.getTime())));
+  return {
+    qcPlanned,
+    start: addWorkingDays(qcPlanned, INSTALLATION_WINDOW_START_OFFSET_DAYS),
+    end: addWorkingDays(qcPlanned, INSTALLATION_WINDOW_END_OFFSET_DAYS),
+  };
+}
+
 /** 2A is derived: complete only when all 3 procurement_items rows have requirement_created_at set. */
 export async function getRequirementCreatedStatus(
   projectId: string

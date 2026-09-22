@@ -1,11 +1,31 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { updateStepStatus, DELAY_CATEGORY_STEP_CODES, MANUAL_PLANNED_DATE_STEP_CODES } from "@/lib/step-actions";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
+import { NextRequest } from "next/server";
+
+// Only getSession is faked (there's no request cookie to read in a test) — used by the small
+// number of tests below that exercise PATCH /api/phase-steps/[id]/dates directly; every other
+// test in this file calls lib functions straight and never touches it.
+vi.mock("@/lib/auth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/auth")>();
+  return { ...actual, getSession: vi.fn() };
+});
+
+import { getSession } from "@/lib/auth";
+import { PATCH as patchStepDates } from "@/app/api/phase-steps/[id]/dates/route";
+import {
+  updateStepStatus,
+  DELAY_CATEGORY_STEP_CODES,
+  MANUAL_PLANNED_DATE_STEP_CODES,
+  maybeEarlyUnlockPhase3,
+} from "@/lib/step-actions";
 import { rescheduleProjectDates } from "@/lib/reschedule";
 import {
   computeItemArrivalPlanned,
   computePhase2PlanAnchor,
   computeSectionOrderConfirmedPlanned,
   computeExpectedFinalMeasurementDate,
+  computeSectionQCPlanned,
+  computeAllProcurementPlannedDates,
+  computeInstallationPlannedWindow,
   resetProcurementItem,
 } from "@/lib/procurement";
 import { addDays } from "@/lib/step-template";
@@ -19,13 +39,34 @@ import {
   getProcurementItems,
   cleanupTestProjects,
 } from "../helpers/db";
-import { advanceThroughPhase2 } from "../helpers/scenarios";
+import { advanceThroughPhase1, advanceThroughPhase2 } from "../helpers/scenarios";
 import type { Department } from "@prisma/client";
 
 let users: Record<Department, string>;
+const mockedGetSession = vi.mocked(getSession);
+
+/** Calls the real PATCH /api/phase-steps/[id]/dates handler as owner_admin. */
+function patchDates(stepId: string, body: unknown) {
+  mockedGetSession.mockResolvedValue({
+    userId: users.owner_admin,
+    email: "owner@test.local",
+    name: "Test owner_admin",
+    department: "owner_admin",
+  });
+  const request = new NextRequest(`http://localhost/api/phase-steps/${stepId}/dates`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return patchStepDates(request, { params: Promise.resolve({ id: stepId }) });
+}
 
 beforeAll(async () => {
   users = await ensureTestUsers();
+});
+
+beforeEach(() => {
+  mockedGetSession.mockReset();
 });
 
 afterAll(async () => {
@@ -60,9 +101,9 @@ describe("Day-one Phase 1+2 scheduling", () => {
     }
   });
 
-  it("planned dates stay system-computed and aren't manually editable, except 3C1/3C2/3E's own (see MANUAL_PLANNED_DATE_STEP_CODES)", async () => {
+  it("planned dates stay system-computed and aren't manually editable, except 3C1/3E's own (see MANUAL_PLANNED_DATE_STEP_CODES)", async () => {
     // Regression guard at the type level: the dates PATCH route only accepts actual dates for
-    // every step but 3C1/3C2/3E now. (Exercised functionally by the route's own schema — see
+    // every step but 3C1/3E now. (Exercised functionally by the route's own schema — see
     // api/phase-steps/[id]/dates/route.ts.)
     const project = await createTestProjectDayOne();
     const oneA = await getStep(project.id, "1A");
@@ -71,8 +112,8 @@ describe("Day-one Phase 1+2 scheduling", () => {
   });
 });
 
-describe("Phase 3 never gets planned dates", () => {
-  it("Phase 3 rows seed with null planned dates once 2F completes", async () => {
+describe("Phase 3 never gets planned dates, except 3C2 (see computeInstallationPlannedWindow)", () => {
+  it("Phase 3 rows seed with null planned dates once 2F completes, except 3C2 which is backfilled immediately", async () => {
     const project = await createTestProjectDayOne({ visitUrgency: "emergency" });
     const oneA = await getStep(project.id, "1A");
     await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency" });
@@ -85,15 +126,24 @@ describe("Phase 3 never gets planned dates", () => {
 
     await advanceThroughPhase2(project.id, users);
 
-    for (const code of ["3A", "3B", "3C1", "3C2", "3E"]) {
+    for (const code of ["3A", "3B", "3C1", "3E"]) {
       const step = await findStep(project.id, code);
       expect(step, `${code} exists`).not.toBeNull();
       expect(step!.plannedStartDate, `${code} planned start`).toBeNull();
       expect(step!.plannedEndDate, `${code} planned end`).toBeNull();
     }
+
+    // 2F completing runs rescheduleProjectDates right after seeding Phase 3 (see
+    // seedNextPhaseIfNeeded's caller) — 3C2 gets its Installation planned window dates
+    // immediately, same values computeInstallationPlannedWindow would produce standalone.
+    const threeC2 = await findStep(project.id, "3C2");
+    expect(threeC2).not.toBeNull();
+    expect(threeC2!.plannedStartDate).not.toBeNull();
+    expect(threeC2!.plannedEndDate).not.toBeNull();
+    expect(threeC2!.plannedStartDate!.getTime()).toBeLessThan(threeC2!.plannedEndDate!.getTime());
   });
 
-  it("rescheduleProjectDates leaves Phase 3 rows untouched even when it runs", async () => {
+  it("rescheduleProjectDates leaves Phase 3 rows untouched even when it runs (3C2 aside)", async () => {
     const project = await createTestProjectDayOne({ visitUrgency: "emergency" });
     const oneA = await getStep(project.id, "1A");
     await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency" });
@@ -110,6 +160,198 @@ describe("Phase 3 never gets planned dates", () => {
     const threeA = await getStep(project.id, "3A");
     expect(threeA.plannedStartDate).toBeNull();
     expect(threeA.plannedEndDate).toBeNull();
+  });
+});
+
+describe("3C2's planned dates track the Installation planned window", () => {
+  async function projectAtPhase3() {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users);
+    return project;
+  }
+
+  it("matches computeInstallationPlannedWindow computed independently off the same procurement items", async () => {
+    const project = await projectAtPhase3();
+    const oneD = await getStep(project.id, "1D");
+    const phase2PlanAnchor = computePhase2PlanAnchor(oneD.plannedEndDate, oneD.actualEndDate, oneD.delayCategory);
+    const items = await getProcurementItems(project.id);
+    const sectionItem = items.find((i) => i.itemType === "section")!;
+    const sectionQCPlanned = computeSectionQCPlanned(sectionItem, phase2PlanAnchor);
+    const expected = computeInstallationPlannedWindow(
+      items.map((item) => computeAllProcurementPlannedDates(item, phase2PlanAnchor, sectionQCPlanned).qc)
+    )!;
+
+    const threeC2 = await getStep(project.id, "3C2");
+    expect(threeC2.plannedStartDate).toEqual(expected.start);
+    expect(threeC2.plannedEndDate).toEqual(expected.end);
+  });
+
+  it("moves when a procurement item's own QC planned date is overridden, on the next reschedule", async () => {
+    const project = await projectAtPhase3();
+    const before = await getStep(project.id, "3C2");
+
+    const items = await getProcurementItems(project.id);
+    const hardwareItem = items.find((i) => i.itemType === "hardware")!;
+    const laterOverride = addDays(before.plannedStartDate!, 60);
+    await prisma.procurementItem.update({
+      where: { id: hardwareItem.id },
+      data: { qcPlannedOverride: laterOverride },
+    });
+    await rescheduleProjectDates(project.id);
+
+    const after = await getStep(project.id, "3C2");
+    expect(after.plannedStartDate!.getTime()).toBeGreaterThan(before.plannedStartDate!.getTime());
+    expect(after.plannedEndDate!.getTime()).toBeGreaterThan(before.plannedEndDate!.getTime());
+  });
+
+  it("never overwrites 3C2 once it's completed — its dates are historical record from then on", async () => {
+    const project = await projectAtPhase3();
+    const threeC1 = await getStep(project.id, "3C1");
+    await updateStepStatus(threeC1.id, "completed", users.project_engineer);
+    const threeC2 = await getStep(project.id, "3C2");
+    await updateStepStatus(threeC2.id, "completed", users.project_engineer);
+    const completed = await getStep(project.id, "3C2");
+
+    const items = await getProcurementItems(project.id);
+    const hardwareItem = items.find((i) => i.itemType === "hardware")!;
+    await prisma.procurementItem.update({
+      where: { id: hardwareItem.id },
+      data: { qcPlannedOverride: addDays(new Date(), 90) },
+    });
+    await rescheduleProjectDates(project.id);
+
+    const after = await getStep(project.id, "3C2");
+    expect(after.plannedStartDate).toEqual(completed.plannedStartDate);
+    expect(after.plannedEndDate).toEqual(completed.plannedEndDate);
+  });
+
+  it("maybeEarlyUnlockPhase3 backfills 3C2's dates immediately too, not just 2F completing", async () => {
+    const project = await createTestProjectDayOne({ visitUrgency: "emergency" });
+    await advanceThroughPhase1(project.id, users, "emergency");
+
+    // Every item arrives (completes 2D1), but none are QC-checked — 2F stays incomplete, so
+    // Phase 3 hasn't unlocked via the normal path yet.
+    const items = await getProcurementItems(project.id);
+    const arrival = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000); // 3 days ago — past the 2-day grace
+    for (const item of items) {
+      await prisma.procurementItem.update({ where: { id: item.id }, data: { actualArrivalDate: arrival } });
+    }
+    expect(await findStep(project.id, "3C2")).toBeNull();
+
+    await maybeEarlyUnlockPhase3(project.id);
+
+    const threeC2 = await findStep(project.id, "3C2");
+    expect(threeC2).not.toBeNull();
+    expect(threeC2!.plannedStartDate).not.toBeNull();
+    expect(threeC2!.plannedEndDate).not.toBeNull();
+  });
+});
+
+describe("3C2's planned dates can be manually overridden — the window is only ever a rough default", () => {
+  async function projectAtPhase3() {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users);
+    return project;
+  }
+
+  it("an override wins outright and survives a reschedule the window's own inputs would otherwise move", async () => {
+    const project = await projectAtPhase3();
+    const before = await getStep(project.id, "3C2");
+    const overrideStart = addDays(before.plannedStartDate!, 100);
+    const overrideEnd = addDays(before.plannedEndDate!, 100);
+
+    await prisma.phaseStep.update({
+      where: { id: before.id },
+      data: { plannedStartDateOverride: overrideStart, plannedEndDateOverride: overrideEnd },
+    });
+    await rescheduleProjectDates(project.id);
+    const overridden = await getStep(project.id, "3C2");
+    expect(overridden.plannedStartDate).toEqual(overrideStart);
+    expect(overridden.plannedEndDate).toEqual(overrideEnd);
+
+    // The window's own inputs move — an un-overridden 3C2 would follow (see the previous
+    // describe block's own "moves when..." test) — but this one stays exactly where it was set.
+    const items = await getProcurementItems(project.id);
+    const hardwareItem = items.find((i) => i.itemType === "hardware")!;
+    await prisma.procurementItem.update({
+      where: { id: hardwareItem.id },
+      data: { qcPlannedOverride: addDays(new Date(), 200) },
+    });
+    await rescheduleProjectDates(project.id);
+
+    const after = await getStep(project.id, "3C2");
+    expect(after.plannedStartDate).toEqual(overrideStart);
+    expect(after.plannedEndDate).toEqual(overrideEnd);
+  });
+
+  it("clearing the override goes back to tracking the window automatically", async () => {
+    const project = await projectAtPhase3();
+    const before = await getStep(project.id, "3C2");
+    await prisma.phaseStep.update({
+      where: { id: before.id },
+      data: {
+        plannedStartDateOverride: addDays(before.plannedStartDate!, 100),
+        plannedEndDateOverride: addDays(before.plannedEndDate!, 100),
+      },
+    });
+    await rescheduleProjectDates(project.id);
+
+    await prisma.phaseStep.update({
+      where: { id: before.id },
+      data: { plannedStartDateOverride: null, plannedEndDateOverride: null },
+    });
+    await rescheduleProjectDates(project.id);
+
+    const after = await getStep(project.id, "3C2");
+    expect(after.plannedStartDate).toEqual(before.plannedStartDate);
+    expect(after.plannedEndDate).toEqual(before.plannedEndDate);
+  });
+
+  it("PATCH /api/phase-steps/[id]/dates accepts 3C2's planned dates now, and they stick across an unrelated reschedule", async () => {
+    const project = await projectAtPhase3();
+    const threeC2 = await getStep(project.id, "3C2");
+    const overrideStart = addDays(threeC2.plannedStartDate!, 30);
+    const overrideEnd = addDays(threeC2.plannedEndDate!, 30);
+
+    const res = await patchDates(threeC2.id, {
+      plannedStartDate: overrideStart.toISOString(),
+      plannedEndDate: overrideEnd.toISOString(),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(new Date(body.plannedStartDate)).toEqual(overrideStart);
+    expect(new Date(body.plannedEndDate)).toEqual(overrideEnd);
+
+    // Sticks even once something else triggers a reschedule for this project.
+    const items = await getProcurementItems(project.id);
+    const hardwareItem = items.find((i) => i.itemType === "hardware")!;
+    await prisma.procurementItem.update({
+      where: { id: hardwareItem.id },
+      data: { qcPlannedOverride: addDays(new Date(), 300) },
+    });
+    await rescheduleProjectDates(project.id);
+
+    const after = await getStep(project.id, "3C2");
+    expect(after.plannedStartDate).toEqual(overrideStart);
+    expect(after.plannedEndDate).toEqual(overrideEnd);
+  });
+
+  it("PATCH .../dates with null planned dates resets 3C2 back to the current window", async () => {
+    const project = await projectAtPhase3();
+    const threeC2 = await getStep(project.id, "3C2");
+    await patchDates(threeC2.id, {
+      plannedStartDate: addDays(threeC2.plannedStartDate!, 30).toISOString(),
+      plannedEndDate: addDays(threeC2.plannedEndDate!, 30).toISOString(),
+    });
+
+    const res = await patchDates(threeC2.id, { plannedStartDate: null, plannedEndDate: null });
+    expect(res.status).toBe(200);
+
+    const after = await getStep(project.id, "3C2");
+    expect(after.plannedStartDate).toEqual(threeC2.plannedStartDate);
+    expect(after.plannedEndDate).toEqual(threeC2.plannedEndDate);
   });
 });
 
@@ -223,9 +465,9 @@ describe("1B's delay_category controls whether a late completion moves 1C's plan
   });
 });
 
-describe("MANUAL_PLANNED_DATE_STEP_CODES: 3C1, 3C2 and 3E are the Phase 3 steps with a hand-filled Planned date", () => {
+describe("MANUAL_PLANNED_DATE_STEP_CODES: 3C1 and 3E are the Phase 3 steps with a hand-filled Planned date (3C2 is computed)", () => {
   it("locks in the exact set", () => {
-    expect([...MANUAL_PLANNED_DATE_STEP_CODES].sort()).toEqual(["3C1", "3C2", "3E"]);
+    expect([...MANUAL_PLANNED_DATE_STEP_CODES].sort()).toEqual(["3C1", "3E"]);
   });
 });
 

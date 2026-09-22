@@ -28,7 +28,7 @@ export async function PATCH(
   }
   if (!isAdminEditor(session)) {
     return NextResponse.json(
-      { error: "Forbidden — only owner_admin and HR & Admin can grant this" },
+      { error: "Forbidden — only owner_admin, HR & Admin and Operations Manager can grant this" },
       { status: 403 }
     );
   }

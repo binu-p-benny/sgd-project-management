@@ -1,14 +1,16 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { getSession, isAdminEditor, isOwnerAdmin } from "@/lib/auth";
+import { getSession, isAdminEditor, hasOwnerAccess } from "@/lib/auth";
 import { SkipPhaseButton } from "@/components/projects/SkipPhaseButton";
 import { ProcurementTracker } from "@/components/procurement/ProcurementTracker";
 import { GlassTracker, type GlassStageData } from "@/components/glass/GlassTracker";
 import { SiteQCTracker } from "@/components/projects/SiteQCTracker";
 import { PaymentEditor } from "@/components/projects/PaymentEditor";
 import { PhaseReviewCard } from "@/components/projects/PhaseReviewCard";
+import { InstallationWindowCard } from "@/components/projects/InstallationWindowCard";
+import { AdditionalWorks, type WorkBlockData } from "@/components/projects/AdditionalWorks";
 import { StepProgressBar } from "@/components/projects/StepProgressBar";
 import { TaskCard } from "@/components/my-tasks/TaskCard";
 import { getMyTasks, type MyTaskItem } from "@/lib/my-tasks";
@@ -23,6 +25,8 @@ import {
   computeItemArrivalPlanned,
   computeSectionQCPlanned,
   computePhase2PlanAnchor,
+  computeAllProcurementPlannedDates,
+  computeInstallationPlannedWindow,
 } from "@/lib/procurement";
 import { findUpstreamDelay } from "@/lib/reschedule";
 import { maybeEarlyUnlockPhase3 } from "@/lib/step-actions";
@@ -255,6 +259,31 @@ export default async function ProjectDetailPage({
   const blockerHistory = await getBlockerHistory(id);
   const canEditEverything = !!session && isAdminEditor(session);
 
+  // Top-level read (not a nested include on `project`) so lib/prisma.ts's soft-delete filter
+  // applies to it — a nested include would still hand back a block that has been deleted.
+  const workBlocks = await prisma.workBlock.findMany({
+    where: { projectId: id },
+    orderBy: { createdAt: "asc" },
+    include: { tasks: { orderBy: { createdAt: "asc" } } },
+  });
+  const additionalWorkBlocks: WorkBlockData[] = workBlocks.map((block) => ({
+    id: block.id,
+    label: block.label,
+    tasks: block.tasks.map((task) => ({
+      id: task.id,
+      taskLabel: task.taskLabel,
+      department: task.department,
+      isPassFail: task.isPassFail,
+      qcPassed: task.qcPassed,
+      plannedDate: task.plannedDate.toISOString(),
+      actualDate: task.actualDate?.toISOString() ?? null,
+      note: task.note,
+      overrun: isProcurementStageOverrun(task.plannedDate, task.actualDate),
+      // Additional works aren't part of the operation manager's review queue (see task-reviews.ts).
+      reviewed: false,
+    })),
+  }));
+
   // Every reviewable unit's own composite id (see task-reviews.ts), fetched once here rather
   // than per-tracker — the procurement/glass-PO stage fields, plus every action-item row across
   // all three tables. Phase-step-level review (the "Reviewed" chip on TaskCard) is handled
@@ -441,6 +470,21 @@ export default async function ProjectDetailPage({
   // has no way to see Section's independently-computed chain from a different iteration.
   const sectionItem = project.procurementItems.find((i) => i.itemType === "section");
   const sectionQCPlanned = sectionItem ? computeSectionQCPlanned(sectionItem, phase2PlanAnchor) : null;
+
+  // Preview card between Phase 1 and Phase 2 — see InstallationWindowCard. Each item's QC planned
+  // date comes from the same computeAllProcurementPlannedDates the tracker's own "QC checked" row
+  // is kept in sync with (unified-tasks and the KPI report read it too), not re-derived here. Only
+  // shown before the real Phase 3 exists — once it does, the real Step timeline's Phase 3 section
+  // (with 3C2's own dates now kept in sync with this exact computation — see reschedule.ts) takes
+  // over, and this preview would just be a redundant, stale-looking duplicate of it.
+  const hasRealPhase3 = (canEditEverything ? editablePhase3Only : phase3Only).length > 0;
+  const installationWindowCard = hasRealPhase3 ? null : (
+    <InstallationWindowCard
+      plannedWindow={computeInstallationPlannedWindow(
+        project.procurementItems.map((item) => computeAllProcurementPlannedDates(item, phase2PlanAnchor, sectionQCPlanned).qc)
+      )}
+    />
+  );
 
   const procurementTracker = (
     <ProcurementTracker
@@ -887,7 +931,7 @@ export default async function ProjectDetailPage({
                 Edit project
               </Link>
             )}
-            {!!session && isOwnerAdmin(session) && (
+            {!!session && hasOwnerAccess(session) && (
               <SkipPhaseButton projectId={project.id} currentPhase={project.currentPhase} />
             )}
           </div>
@@ -940,24 +984,28 @@ export default async function ProjectDetailPage({
 
         {canEditEverything
           ? editableBeforePhase3.map(({ phase, items }) => (
-              <EditablePhaseGroup
-                key={phase}
-                phase={phase}
-                items={items}
-                insertBeforeStepCode={phase === "phase_2" ? MATERIALS_ARRIVED_STEP_CODE : undefined}
-                insertContent={phase === "phase_2" ? procurementTracker : undefined}
-                appendToBeforeGrid={phase === "phase_1" ? phase1ReviewCard : undefined}
-              />
+              <Fragment key={phase}>
+                <EditablePhaseGroup
+                  phase={phase}
+                  items={items}
+                  insertBeforeStepCode={phase === "phase_2" ? MATERIALS_ARRIVED_STEP_CODE : undefined}
+                  insertContent={phase === "phase_2" ? procurementTracker : undefined}
+                  appendToBeforeGrid={phase === "phase_1" ? phase1ReviewCard : undefined}
+                />
+                {phase === "phase_1" && installationWindowCard}
+              </Fragment>
             ))
           : beforePhase3.map(({ phase, steps }) => (
-              <ReadOnlyPhaseGroup
-                key={phase}
-                phase={phase}
-                steps={steps}
-                insertBeforeStepCode={phase === "phase_2" ? MATERIALS_ARRIVED_STEP_CODE : undefined}
-                insertContent={phase === "phase_2" ? procurementTracker : undefined}
-                trailingContent={phase === "phase_1" ? phase1ReviewCard : undefined}
-              />
+              <Fragment key={phase}>
+                <ReadOnlyPhaseGroup
+                  phase={phase}
+                  steps={steps}
+                  insertBeforeStepCode={phase === "phase_2" ? MATERIALS_ARRIVED_STEP_CODE : undefined}
+                  insertContent={phase === "phase_2" ? procurementTracker : undefined}
+                  trailingContent={phase === "phase_1" ? phase1ReviewCard : undefined}
+                />
+                {phase === "phase_1" && installationWindowCard}
+              </Fragment>
             ))}
       </div>
 
@@ -986,6 +1034,8 @@ export default async function ProjectDetailPage({
               ))}
         </div>
       )}
+
+      <AdditionalWorks projectId={project.id} blocks={additionalWorkBlocks} canEdit={canEditEverything} />
 
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-2.5">

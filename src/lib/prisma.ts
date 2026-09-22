@@ -23,6 +23,10 @@ const PATH_TO_PROJECT: Record<string, object> = {
   // and its items satisfy just as well as a project and its children do.
   Service: { deletedAt: null },
   ServiceItem: { service: { deletedAt: null } },
+  // A work block has its own soft delete on top of its project's, so both apply — and a deleted
+  // block takes its rows with it.
+  WorkBlock: { deletedAt: null, project: { deletedAt: null } },
+  WorkTask: { workBlock: { deletedAt: null, project: { deletedAt: null } } },
 };
 
 // Reads. Writes are deliberately left alone: a soft-deleted project's rows can still be updated

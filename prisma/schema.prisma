@@ -186,6 +186,7 @@ model Project {
   glassPurchaseOrder GlassPurchaseOrder?
   paymentSchedule    PaymentSchedule?
   notifications      Notification[]
+  workBlocks         WorkBlock[]
 
   @@index([currentPhase])
   @@index([overallStatus])
@@ -261,15 +262,26 @@ model PhaseStep {
   actualStartDate  DateTime? @map("actual_start_date") @db.Timestamptz(3)
   actualEndDate    DateTime? @map("actual_end_date") @db.Timestamptz(3)
 
-  // 3C1/3C2/3E only (see MANUAL_PLANNED_DATE_STEP_CODES) — normally only an admin can fill in
-  // this step's own manual Planned start/end (see /api/phase-steps/[id]/dates). An admin can
-  // delegate that to one department instead by setting this field (see
+  // 3C2 ("Installation") only. The Installation planned window (see
+  // computeInstallationPlannedWindow, wired into rescheduleProjectDates) is only a rough
+  // default — planned_start_date/planned_end_date above track it automatically right up until
+  // an admin sets these, at which point the override wins outright and reschedule stops
+  // touching this step, the same "override always wins" rule every procurement/glass-PO stage's
+  // own xxx_planned_override column already follows (see POST /api/phase-steps/[id]/dates).
+  // Null clears the override and goes back to tracking the window. Null for every other step.
+  plannedStartDateOverride DateTime? @map("planned_start_date_override") @db.Timestamptz(3)
+  plannedEndDateOverride   DateTime? @map("planned_end_date_override") @db.Timestamptz(3)
+
+  // 3C1/3E only (see MANUAL_PLANNED_DATE_STEP_CODES) — normally only an admin can fill in this
+  // step's own manual Planned start/end (see /api/phase-steps/[id]/dates). An admin can delegate
+  // that to one department instead by setting this field (see
   // /api/phase-steps/[id]/planned-date-permission) — once set, that department gets a "Set
   // planned dates" task of its own in /my-tasks (see MANUAL_PLANNED_DATE_STEP_CODES in
   // unified-tasks.ts), reachable via the separate /api/phase-steps/[id]/planned-dates route
   // rather than the admin-only one. Left set after use (not cleared once the dates are filled
   // in) purely as a record of who was delegated — the task itself disappears on its own once
-  // the dates are locked in, same as contractorId below.
+  // the dates are locked in, same as contractorId below. 3C2 doesn't use this — its own override
+  // above is always admin-only, there's nothing to delegate.
   plannedDateEditDepartment Department? @map("planned_date_edit_department")
 
   // 3C1 only today (see MANUAL_CONTRACTOR_STEP_CODES in TaskCard.tsx) — which crew is doing the
@@ -668,6 +680,58 @@ model ServiceItem {
 
   @@index([serviceId])
   @@map("service_items")
+}
+
+// A group of extra work on a project, beyond its standard phase/procurement flow — e.g. "Extra
+// balcony railing" — created one at a time from the project detail page (see
+// AdditionalWorks.tsx). Deliberately just a label plus a flat list of rows (see WorkTask): no
+// phases, no dependency chain, and nothing here gates, reschedules or changes the status of the
+// project's own steps.
+model WorkBlock {
+  id        String  @id @default(cuid())
+  projectId String  @map("project_id")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  label String
+
+  // Soft delete, same convention as Project/Service (see lib/prisma.ts, which enforces the
+  // filter centrally): a mistaken delete keeps the block and all its rows in the database.
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tasks WorkTask[]
+
+  @@index([projectId])
+  @@index([deletedAt])
+  @@map("work_blocks")
+}
+
+// One open-ended work row inside a WorkBlock — same shape, and same "+ Add row" flow, as
+// ServiceItem (task, department, optional pass/fail, planned/actual date, note): a block starts
+// with zero of these and grows one row at a time. See ServiceTracker.tsx, whose row UI this shares.
+model WorkTask {
+  id          String    @id @default(cuid())
+  workBlockId String    @map("work_block_id")
+  workBlock   WorkBlock @relation(fields: [workBlockId], references: [id], onDelete: Cascade)
+
+  taskLabel   String     @map("task_label")
+  department  Department @default(purchase)
+  // When true, this row gets a Pass/Fail button pair instead of a single Mark complete button —
+  // opted into at creation only, same as ServiceItem.isPassFail.
+  isPassFail  Boolean    @default(false) @map("is_pass_fail")
+  plannedDate DateTime   @map("planned_date") @db.Timestamptz(3)
+  actualDate  DateTime?  @map("actual_date") @db.Timestamptz(3)
+  // Only meaningful when isPassFail is true — null until that outcome is recorded.
+  qcPassed    Boolean?   @map("qc_passed")
+  note        String?    @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([workBlockId])
+  @@map("work_tasks")
 }
 
 model StepStatusLog {

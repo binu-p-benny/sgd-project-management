@@ -19,6 +19,9 @@ import {
   computeItemArrivalPlanned,
   computeSectionQCPlanned,
   computeAllProcurementPlannedDates,
+  computeInstallationPlannedWindow,
+  INSTALLATION_WINDOW_START_OFFSET_DAYS,
+  INSTALLATION_WINDOW_END_OFFSET_DAYS,
   type ProcurementItemArrivalInputs,
 } from "@/lib/procurement";
 
@@ -515,5 +518,104 @@ describe("computeAllProcurementPlannedDates: every stage's Planned date for one 
     const hardwareItem = { itemType: "hardware" as const, ...emptyFields, qcPlannedOverride: overrideQC };
     const result = computeAllProcurementPlannedDates(hardwareItem, phase2PlanAnchor, new Date("2026-01-01T00:00:00.000Z"));
     expect(result.qc).toEqual(overrideQC);
+  });
+});
+
+describe("computeInstallationPlannedWindow: QC checked planned date + 10 days (start) / + 22 days (end), Sundays not counted", () => {
+  const phase2PlanAnchor = new Date("2026-08-24T00:00:00.000Z"); // Monday
+  const emptyFields: Omit<ProcurementItemArrivalInputs, "itemType"> = {
+    planAnchorOverride: null,
+    requirementPlannedOverride: null,
+    quotePlannedOverride: null,
+    paymentPlannedOverride: null,
+    orderPlannedOverride: null,
+    arrivalPlannedOverride: null,
+    qcPlannedOverride: null,
+    orderConfirmedAt: null,
+    materialDespatchAt: null,
+    materialDespatchPlannedOverride: null,
+    arrivedForPowderCoatingAt: null,
+    arrivedForPowderCoatingPlannedOverride: null,
+  };
+
+  it("uses the offsets the spec names", () => {
+    expect(INSTALLATION_WINDOW_START_OFFSET_DAYS).toBe(10);
+    expect(INSTALLATION_WINDOW_END_OFFSET_DAYS).toBe(22);
+  });
+
+  it("start is QC planned + 10 days, end is QC planned + 22, skipping Sundays — across a month/year boundary too", () => {
+    const qc = new Date("2026-12-10T00:00:00.000Z"); // Thursday
+    const result = computeInstallationPlannedWindow([qc])!;
+
+    expect(result.qcPlanned).toEqual(qc);
+    expect(result.start).toEqual(new Date("2026-12-22T00:00:00.000Z")); // Tuesday; 13th and 20th are Sundays
+    expect(result.end).toEqual(new Date("2027-01-05T00:00:00.000Z")); // Tuesday; 13th, 20th, 27th, 3rd are Sundays
+  });
+
+  it("Sundays don't count: +10 plain calendar days would have landed on Sunday 20 Dec, but the start skips past it — and neither date can ever land on a Sunday", () => {
+    const qc = new Date("2026-12-10T00:00:00.000Z");
+    const result = computeInstallationPlannedWindow([qc])!;
+
+    expect(result.start.getTime()).toBeGreaterThan(new Date("2026-12-20T00:00:00.000Z").getTime());
+    expect(result.start.getDay()).not.toBe(0);
+    expect(result.end.getDay()).not.toBe(0);
+  });
+
+  it("a QC planned date that itself falls on a Sunday is just the starting point — counting begins the next day", () => {
+    const qc = new Date("2026-12-13T00:00:00.000Z"); // Sunday
+    const result = computeInstallationPlannedWindow([qc])!;
+
+    expect(result.qcPlanned).toEqual(qc);
+    expect(result.start).toEqual(new Date("2026-12-24T00:00:00.000Z")); // Thursday
+    expect(result.end).toEqual(new Date("2027-01-07T00:00:00.000Z")); // Thursday
+  });
+
+  it("null when no item has a QC planned date yet (shared anchor not resolved)", () => {
+    expect(computeInstallationPlannedWindow([])).toBeNull();
+    expect(computeInstallationPlannedWindow([null, null, null])).toBeNull();
+  });
+
+  it("ignores items with no QC planned date and still computes off the ones that have one", () => {
+    const qc = new Date("2026-12-10T00:00:00.000Z");
+    const result = computeInstallationPlannedWindow([null, qc, null])!;
+    expect(result.qcPlanned).toEqual(qc);
+  });
+
+  it("keys off the latest QC planned date when items differ — installation can't start until every item is checked", () => {
+    const earlier = new Date("2026-12-10T00:00:00.000Z");
+    const later = new Date("2026-12-15T00:00:00.000Z"); // Tuesday
+    const result = computeInstallationPlannedWindow([earlier, later, earlier])!;
+
+    expect(result.qcPlanned).toEqual(later);
+    expect(result.start).toEqual(new Date("2026-12-26T00:00:00.000Z")); // Saturday; 20th is a Sunday
+    expect(result.end).toEqual(new Date("2027-01-09T00:00:00.000Z")); // Saturday; 20th, 27th, 3rd are Sundays
+  });
+
+  it("fed the real per-item chain (section + hardware + gasket, no overrides), all three share Section's QC date, so the window is Section's QC + 10/+22 days without Sundays", () => {
+    const items = (["section", "hardware", "gasket"] as const).map((itemType) => ({ itemType, ...emptyFields }));
+    const sectionQCPlanned = computeSectionQCPlanned(items[0], phase2PlanAnchor)!;
+
+    const result = computeInstallationPlannedWindow(
+      items.map((item) => computeAllProcurementPlannedDates(item, phase2PlanAnchor, sectionQCPlanned).qc)
+    )!;
+
+    expect(sectionQCPlanned).toEqual(new Date("2026-09-24T00:00:00.000Z")); // Thursday — anchors the two dates below
+    expect(result.qcPlanned).toEqual(sectionQCPlanned);
+    expect(result.start).toEqual(new Date("2026-10-06T00:00:00.000Z")); // Tuesday; 27 Sep and 4 Oct are Sundays
+    expect(result.end).toEqual(new Date("2026-10-20T00:00:00.000Z")); // Tuesday; 27 Sep, 4, 11, 18 Oct are Sundays
+  });
+
+  it("a hardware QC override later than Section's pulls the whole window out to it", () => {
+    const overrideQC = new Date("2027-03-01T00:00:00.000Z");
+    const section = { itemType: "section" as const, ...emptyFields };
+    const hardware = { itemType: "hardware" as const, ...emptyFields, qcPlannedOverride: overrideQC };
+    const sectionQCPlanned = computeSectionQCPlanned(section, phase2PlanAnchor);
+
+    const result = computeInstallationPlannedWindow([
+      computeAllProcurementPlannedDates(section, phase2PlanAnchor, sectionQCPlanned).qc,
+      computeAllProcurementPlannedDates(hardware, phase2PlanAnchor, sectionQCPlanned).qc,
+    ])!;
+
+    expect(result.qcPlanned).toEqual(overrideQC);
   });
 });

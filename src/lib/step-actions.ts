@@ -32,20 +32,34 @@ export const DERIVED_STEP_CODES = new Set(["2A", "2D1", "2F"]);
 // team-caused reason worth distinguishing, rather than a purely internal derived/auto-stamped one.
 export const DELAY_CATEGORY_STEP_CODES = new Set(["1A", "1B", "1C", "1D", "2D2"]);
 
-// Phase 3 never gets a computed planned date (rescheduleProjectDates excludes the whole phase),
-// but 3C1 and 3C2 still get a manual planned start+end each, and 3E a manual planned end only
-// (see MANUAL_PLANNED_END_ONLY_STEP_CODES below — a single on-site QC check has no planned start
-// worth tracking), each filled in by hand via their own small Save CTA — normally admin-only (see
-// /api/phase-steps/[id]/dates), or by one delegated department once granted (see
-// plannedDateEditDepartment, /api/phase-steps/[id]/planned-date(s|-permission), and
-// buildPlannedDateEditTasks in unified-tasks.ts). Every other step's planned_start_date/
-// planned_end_date stays fully system-computed and /dates rejects writes to them, same as always.
-export const MANUAL_PLANNED_DATE_STEP_CODES = new Set(["3C1", "3C2", "3E"]);
+// Phase 3 never gets a computed planned date (rescheduleProjectDates excludes the whole phase).
+// 3C1 gets a manual planned start+end, and 3E a manual planned end only (see
+// MANUAL_PLANNED_END_ONLY_STEP_CODES below — a single on-site QC check has no planned start
+// worth tracking), each starting out empty and filled in by hand via their own small Save CTA —
+// normally admin-only (see /api/phase-steps/[id]/dates), or by one delegated department once
+// granted (see plannedDateEditDepartment, /api/phase-steps/[id]/planned-date(s|-permission), and
+// buildPlannedDateEditTasks in unified-tasks.ts). 3C2 ("Installation") is its own third case —
+// see INSTALLATION_OVERRIDE_STEP_CODE just below — not part of this set: unlike 3C1/3E it never
+// starts empty (it's prefilled from the Installation planned window) and never locks, so neither
+// the "starts empty, needs delegating" framing nor the once-both-are-set lock this set drives
+// actually fits it. Every OTHER step's planned_start_date/planned_end_date stays fully
+// system-computed and /dates rejects direct writes to them, same as always.
+export const MANUAL_PLANNED_DATE_STEP_CODES = new Set(["3C1", "3E"]);
 
 // Of those, 3E only ever gets a Planned *end* — see the comment above. Mirrored locally as its own
 // copy in TaskCard.tsx/TaskTable.tsx for the usual reason ("use client" files can't import this
 // Prisma-touching module) — keep both in sync with this one by hand.
 export const MANUAL_PLANNED_END_ONLY_STEP_CODES = new Set(["3E"]);
+
+// 3C2 ("Installation") — the one step whose planned start/end is a computed default (the
+// Installation planned window, see computeInstallationPlannedWindow) that an admin can also
+// override at any time, rather than either purely computed (like 2D1/2D2) or purely hand-typed
+// (like 3C1/3E — see MANUAL_PLANNED_DATE_STEP_CODES above). POST /api/phase-steps/[id]/dates
+// checks this alongside that set, but writes to plannedStartDateOverride/plannedEndDateOverride
+// instead of the plain columns — rescheduleProjectDates is what actually keeps
+// plannedStartDate/plannedEndDate in sync with whichever of override-or-window currently wins
+// (see its own 3C2 handling). No delegation for this one: it's always admin-only.
+export const INSTALLATION_OVERRIDE_STEP_CODE = "3C2";
 
 // 3C1 ("Aluminum framework") only, for now — which crew is fabricating it. Its own separate
 // task from that step's manual Planned start/end, with its own Save CTA (see
@@ -253,8 +267,11 @@ async function seedPhaseSteps(
 ) {
   const existing = await prisma.phaseStep.count({ where: { projectId, phase } });
   if (existing === 0) {
-    // Phase 3 never gets planned dates — only Phase 1/2 are auto-scheduled. Phase 2 rows
-    // only reach here for projects created before day-one seeding existed (see the
+    // Phase 3 seeds with every planned date null — only Phase 1/2 get a real one here. 3C2 is the
+    // one exception (see MANUAL_PLANNED_DATE_STEP_CODES), but its date comes from the Installation
+    // planned window, not from this seeding pass: both callers of seedPhaseSteps run
+    // rescheduleProjectDates right after, which backfills it the moment the row exists. Phase 2
+    // rows only reach here for projects created before day-one seeding existed (see the
     // existing-rows check above), so this still computes real dates for that legacy path.
     const dates =
       phase === "phase_3" ? null : computePlannedDates(template, anchor, new Map([[anchorStepCode, anchor]]));
@@ -338,6 +355,10 @@ export async function maybeEarlyUnlockPhase3(projectId: string): Promise<void> {
   await seedPhaseSteps(projectId, "phase_3", buildPhase3Steps(project.glassType), lastArrival, "2F");
   await createEmptyGlassPurchaseOrderForProject(projectId);
   await recomputeProjectPhase(projectId);
+  // Unlike the other seedNextPhaseIfNeeded call sites, nothing downstream of this opportunistic
+  // page-load check already runs rescheduleProjectDates — without this, the newly-seeded 3C2 would
+  // sit at null planned dates until some unrelated procurement edit happened to trigger one.
+  await rescheduleProjectDates(projectId);
 }
 
 /**

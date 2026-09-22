@@ -72,17 +72,20 @@ const GLASS_PO_HINT: Record<string, string> = {
   "3B": "Auto-filled from the Glass PO tracker below — Actual arrival.",
 };
 
-// Phase 3 never gets a computed planned date (see rescheduleProjectDates's phase_3 exclusion) —
-// 3C1, 3C2 and 3E are the steps that still get a manual Planned date each, filled in by hand via
-// their own small Save CTA, same "plain freeform field, not a forecast" idea as the Glass PO
-// tracker's Planned column. Once set, the inputs lock — see plannedDatesLocked below. Kept local
-// rather than imported from step-actions.ts's own copy of this same set, for the same reason
-// DELAY_CATEGORY_STEP_CODES above is — that file pulls in the Prisma client.
-const MANUAL_PLANNED_DATE_STEP_CODES = new Set(["3C1", "3C2", "3E"]);
+// Phase 3 mostly never gets a computed planned date (see rescheduleProjectDates's phase_3
+// exclusion) — 3C1 and 3E are the steps that still get a manual Planned date each, filled in by
+// hand via their own small Save CTA, same "plain freeform field, not a forecast" idea as the
+// Glass PO tracker's Planned column. Once set, the inputs lock — see plannedDatesLocked below.
+// 3C2 ("Installation") is the one Phase 3 step that IS computed — from the Installation planned
+// window (see computeInstallationPlannedWindow in procurement.ts) — so it's deliberately left out
+// of this set and falls through to the same read-only planned-date display every other computed
+// step gets. Kept local rather than imported from step-actions.ts's own copy of this same set,
+// for the same reason DELAY_CATEGORY_STEP_CODES above is — that file pulls in the Prisma client.
+const MANUAL_PLANNED_DATE_STEP_CODES = new Set(["3C1", "3E"]);
 
 // Of those, 3E only gets a Planned *end* — a single on-site QC check has no meaningful planned
 // start to fill in separately (same reasoning as its Actual date being end-only, just above).
-// 3C1/3C2 keep the full start+end pair since those are genuinely multi-day spans of work.
+// 3C1 keeps the full start+end pair since that's a genuinely multi-day span of work.
 const MANUAL_PLANNED_END_ONLY_STEP_CODES = new Set(["3E"]);
 
 // 3C1 ("Aluminum framework") only, for now — which crew is fabricating it, chosen alongside that
@@ -586,6 +589,34 @@ export function TaskCard({
     }
   }
 
+  // 3C2 only — clears plannedStartDateOverride/plannedEndDateOverride (see
+  // INSTALLATION_OVERRIDE_STEP_CODE in step-actions.ts) so this step goes back to tracking the
+  // Installation planned window automatically. Safe to call whether or not an override is
+  // currently set — the server writes null either way, a no-op when there wasn't one.
+  async function resetPlannedDatesToAuto() {
+    setPlannedDateSubmitting(true);
+    setPlannedDateError(null);
+    setPlannedDateSaved(false);
+    try {
+      const res = await fetch(`/api/phase-steps/${item.id}/dates`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plannedStartDate: null, plannedEndDate: null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setPlannedDateError(typeof data.error === "string" ? data.error : "Could not reset planned dates");
+        setPlannedDateSubmitting(false);
+        return;
+      }
+      setPlannedDateSubmitting(false);
+      flashSavedThenRefresh(setPlannedDateSaved);
+    } catch {
+      setPlannedDateError("Could not reach the server");
+      setPlannedDateSubmitting(false);
+    }
+  }
+
   async function savePlannedDatePermission() {
     setPlannedDatePermissionSubmitting(true);
     setPlannedDatePermissionError(null);
@@ -655,6 +686,11 @@ export function TaskCard({
   const needsDelayCategory = needsDelayCategoryChoice && !delayCategory;
   const isGlassPO = GLASS_PO_STEP_CODES.has(item.stepCode);
   const hasManualPlannedDates = MANUAL_PLANNED_DATE_STEP_CODES.has(item.stepCode);
+  // 3C2 only — see INSTALLATION_OVERRIDE_STEP_CODE in step-actions.ts (kept local for the usual
+  // reason: that file pulls in the Prisma client). Deliberately not part of hasManualPlannedDates
+  // above: this step's planned dates are never empty (they default to the Installation planned
+  // window) and never lock — the edit form below stays open the whole time, unlike 3C1/3E's.
+  const isInstallationOverride = item.stepCode === "3C2";
   const hasManualContractor = MANUAL_CONTRACTOR_STEP_CODES.has(item.stepCode);
   const plannedDatesEndOnly = MANUAL_PLANNED_END_ONLY_STEP_CODES.has(item.stepCode);
   // Once the relevant field(s) are saved they're locked in — no more casual re-editing through
@@ -1227,6 +1263,59 @@ export function TaskCard({
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {canEditDates && isInstallationOverride && (
+        <div className="flex flex-col gap-2 border-t border-edge pt-3">
+          <p className="text-xs text-fg-subtle">
+            Prefilled from the Installation planned window — a rough default, not a fixed plan. Edit and save to
+            override it; Reset goes back to tracking the window automatically.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-fg-muted">Planned start</label>
+              <input
+                type="date"
+                value={plannedDateFields.plannedStartDate}
+                disabled={plannedDateSubmitting}
+                onChange={(e) => setPlannedDateFields((prev) => ({ ...prev, plannedStartDate: e.target.value }))}
+                onClick={openPicker}
+                className="h-10 w-full rounded-lg border border-edge bg-bg px-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-80"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-fg-muted">Planned end</label>
+              <input
+                type="date"
+                value={plannedDateFields.plannedEndDate}
+                disabled={plannedDateSubmitting}
+                onChange={(e) => setPlannedDateFields((prev) => ({ ...prev, plannedEndDate: e.target.value }))}
+                onClick={openPicker}
+                className="h-10 w-full rounded-lg border border-edge bg-bg px-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-80"
+              />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={savePlannedDates}
+              disabled={plannedDateSubmitting}
+              className={`${btnAdminSmall} disabled:opacity-40`}
+            >
+              {plannedDateSubmitting ? <Spinner className="h-3.5 w-3.5" /> : "Save planned dates"}
+            </button>
+            <button
+              type="button"
+              onClick={resetPlannedDatesToAuto}
+              disabled={plannedDateSubmitting}
+              className={`${btnSecondary} disabled:opacity-40`}
+            >
+              Reset to automatic
+            </button>
+          </div>
+          {plannedDateSaved && <p className="text-xs text-emerald-600 dark:text-emerald-400">Saved</p>}
+          {plannedDateError && <p className="text-xs text-red-600 dark:text-red-400">{plannedDateError}</p>}
         </div>
       )}
 

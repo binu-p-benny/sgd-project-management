@@ -333,15 +333,16 @@ async function buildPhaseStepTasks(department: Department | null): Promise<Unifi
 }
 
 /**
- * A MANUAL_PLANNED_DATE_STEP_CODES step (3C1/3C2/3E) an admin has delegated to one department
- * (see plannedDateEditDepartment) shows up here as its own task for that department — separate
- * from the step's own phase_step row above, which stays gated by owningDepartment/
- * secondaryDepartment as always; delegating *who may plan the dates* doesn't hand over the rest
- * of the step (Start/Complete etc.) too. Deliberately its own query rather than folded into
+ * A MANUAL_PLANNED_DATE_STEP_CODES step (3C1/3E — 3C2 is computed from the Installation planned
+ * window instead, see step-actions.ts) an admin has delegated to one department (see
+ * plannedDateEditDepartment) shows up here as its own task for that department — separate from
+ * the step's own phase_step row above, which stays gated by owningDepartment/secondaryDepartment
+ * as always; delegating *who may plan the dates* doesn't hand over the rest of the step
+ * (Start/Complete etc.) too. Deliberately its own query rather than folded into
  * buildPhaseStepTasks' loop: that loop skips a not_started step still behind an unmet dependency
  * gate — real work nobody can act on yet — but planning ahead is exactly the point of delegating
- * this, so a still-gated 3C2 or 3E should show up here even before 3C1/3B finish. Disappears once
- * the dates are filled in and locked, same as contractor_selection vanishing once a contractor's
+ * this, so a still-gated 3E should show up here even before 3B/3C2 finish. Disappears once the
+ * dates are filled in and locked, same as contractor_selection vanishing once a contractor's
  * picked — see the lock check below, mirroring TaskCard.tsx's own plannedDatesLocked.
  */
 async function buildPlannedDateEditTasks(department: Department | null): Promise<UnifiedTask[]> {

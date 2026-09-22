@@ -21,7 +21,10 @@ import {
 // file can't import.
 const SINGLE_COMPLETION_STEP_CODES = new Set(["1A", "1B", "1D", "2D2"]);
 const DELAY_CATEGORY_STEP_CODES = new Set(["1A", "1B", "1C", "1D", "2D2"]);
-const MANUAL_PLANNED_DATE_STEP_CODES = new Set(["3C1", "3C2", "3E"]);
+// 3C2 ("Installation") is deliberately left out — it's computed from the Installation planned
+// window (see computeInstallationPlannedWindow in procurement.ts, wired into
+// rescheduleProjectDates), not hand-typed, so it never generates a planned_date_edit task.
+const MANUAL_PLANNED_DATE_STEP_CODES = new Set(["3C1", "3E"]);
 // 3E only — a single on-site QC check has no planned start worth tracking, see
 // MANUAL_PLANNED_END_ONLY_STEP_CODES in step-actions.ts (this file's own mirrored copy).
 const MANUAL_PLANNED_END_ONLY_STEP_CODES = new Set(["3E"]);
@@ -259,7 +262,7 @@ function useTaskActions(task: UnifiedTask) {
     setPlannedDateEditError(null);
     const endOnly = !!task.stepCode && MANUAL_PLANNED_END_ONLY_STEP_CODES.has(task.stepCode);
     // Whether this save is the one that actually locks the step in (see buildPlannedDateEditTasks
-    // in unified-tasks.ts) — a start-only save on 3C1/3C2 still leaves the task open, so that case
+    // in unified-tasks.ts) — a start-only save on 3C1 still leaves the task open, so that case
     // flashes success without removing the row.
     const willLock = endOnly ? !!plannedDateEditEnd : !!plannedDateEditStart && !!plannedDateEditEnd;
     try {

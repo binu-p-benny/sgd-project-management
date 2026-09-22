@@ -4,6 +4,9 @@ import {
   computePhase2PlanAnchor,
   computeSectionOrderConfirmedPlanned,
   computeExpectedFinalMeasurementDate,
+  computeSectionQCPlanned,
+  computeAllProcurementPlannedDates,
+  computeInstallationPlannedWindow,
 } from "@/lib/procurement";
 
 function addDays(date: Date, days: number): Date {
@@ -72,8 +75,11 @@ export function findUpstreamDelay(
  * Completed steps are never touched — their dates are historical record, not a
  * projection. A dependency that's still unresolved (e.g. 1B before visit_urgency sets
  * its duration) correctly leaves everything downstream of it unresolved too, same as
- * the baseline scheduler in step-template.ts. Phase 3 is skipped entirely — it never
- * carries planned dates; its actual dates come only from step status transitions.
+ * the baseline scheduler in step-template.ts. Phase 3 is otherwise skipped entirely — its
+ * actual dates come only from step status transitions — except for 3C2, handled separately
+ * below: it's the one Phase 3 step with a planned date this function still keeps current, a
+ * rough default off the Installation planned window that an admin's own override (see
+ * plannedStartDateOverride/plannedEndDateOverride) always wins over.
  *
  * 2D1 ("Materials arrived") and 2D2 ("Final tight measurement at site") are the two steps whose
  * *planned end* doesn't come from start+duration like everything else. 2D1's is the latest of
@@ -138,6 +144,18 @@ export async function rescheduleProjectDates(projectId: string): Promise<void> {
   const finalMeasurementPlanned = sectionOrderConfirmedPlanned
     ? computeExpectedFinalMeasurementDate(sectionOrderConfirmedPlanned)
     : null;
+
+  // 3C2 ("Installation")'s own planned start/end — see computeInstallationPlannedWindow. Reuses
+  // the exact same procurementItems/phase2PlanAnchor this function already loaded above, so this
+  // can never drift from what the project detail page's own Installation planned window card
+  // shows. Resolves to a forecast as soon as phase2PlanAnchor does (1D completing), well before
+  // 3C2 itself exists — harmless: the update below only ever applies once there's a real 3C2 row
+  // to apply it to.
+  const sectionQCPlanned = sectionItem ? computeSectionQCPlanned(sectionItem, phase2PlanAnchor) : null;
+  const itemQCPlannedDates = procurementItems.map(
+    (item) => computeAllProcurementPlannedDates(item, phase2PlanAnchor, sectionQCPlanned).qc
+  );
+  const installationWindow = computeInstallationPlannedWindow(itemQCPlannedDates);
 
   // Ground truth for a step's "end", for the purposes of scheduling what comes after it:
   // a completed step's actual end date if known, else its current planned end date. A step
@@ -211,14 +229,52 @@ export async function rescheduleProjectDates(projectId: string): Promise<void> {
     if (!changed) break;
   }
 
-  if (updates.size === 0) return;
-
-  await prisma.$transaction(
-    Array.from(updates.entries()).map(([stepCode, dates]) =>
-      prisma.phaseStep.updateMany({
-        where: { projectId, stepCode },
-        data: dates,
-      })
-    )
+  const transactionOps = Array.from(updates.entries()).map(([stepCode, dates]) =>
+    prisma.phaseStep.updateMany({
+      where: { projectId, stepCode },
+      data: dates,
+    })
   );
+
+  // 3C2 lives outside the loop above (it's excluded from `steps`, same as the rest of Phase 3),
+  // so it gets its own small, separately-guarded write — same "completed steps are historical,
+  // only write on an actual change, and re-arm the overdue notification when the end date moves"
+  // rules as everything above, just evaluated against installationWindow instead of the
+  // dependsOn/duration chain. An admin's own override (see plannedStartDateOverride/
+  // plannedEndDateOverride and POST /api/phase-steps/[id]/dates) wins outright over the window,
+  // same "override always wins" rule every procurement/glass-PO stage's own override already
+  // follows — the window is only ever a rough default for whichever half hasn't been overridden.
+  const threeC2 = await prisma.phaseStep.findFirst({
+    where: { projectId, stepCode: "3C2" },
+    select: {
+      id: true,
+      status: true,
+      plannedStartDate: true,
+      plannedEndDate: true,
+      plannedStartDateOverride: true,
+      plannedEndDateOverride: true,
+    },
+  });
+  if (threeC2 && threeC2.status !== "completed") {
+    const effectiveStart = threeC2.plannedStartDateOverride ?? installationWindow?.start ?? null;
+    const effectiveEnd = threeC2.plannedEndDateOverride ?? installationWindow?.end ?? null;
+    const startMoved = (effectiveStart?.getTime() ?? null) !== (threeC2.plannedStartDate?.getTime() ?? null);
+    const endMoved = (effectiveEnd?.getTime() ?? null) !== (threeC2.plannedEndDate?.getTime() ?? null);
+    if (startMoved || endMoved) {
+      transactionOps.push(
+        prisma.phaseStep.updateMany({
+          where: { id: threeC2.id },
+          data: {
+            plannedStartDate: effectiveStart,
+            plannedEndDate: effectiveEnd,
+            ...(endMoved ? { notifiedOverdueAt: null } : {}),
+          },
+        })
+      );
+    }
+  }
+
+  if (transactionOps.length === 0) return;
+
+  await prisma.$transaction(transactionOps);
 }
