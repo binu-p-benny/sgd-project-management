@@ -130,7 +130,7 @@ export async function getCompletedUnits(range: KpiRange): Promise<CompletedUnitR
         where: { actualDate: { not: null } },
         include: { service: { select: { id: true, title: true } } },
       }),
-      prisma.taskReview.findMany(),
+      prisma.taskReview.findMany({ where: { autoReviewed: false } }),
     ]);
 
   const rows: CompletedUnitRow[] = [];

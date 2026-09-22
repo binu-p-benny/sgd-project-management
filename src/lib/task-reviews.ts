@@ -477,7 +477,11 @@ async function resolveReviewContext(taskId: string): Promise<ReviewContext | nul
   return null;
 }
 
-export async function markTaskReviewed(taskId: string, note: string | null): Promise<void> {
+export async function markTaskReviewed(
+  taskId: string,
+  note: string | null,
+  autoReviewed = false
+): Promise<void> {
   const context = await resolveReviewContext(taskId);
   const reviewedAt = new Date();
   // Falls back to something inert rather than throwing — the row being reviewed right now was
@@ -485,8 +489,8 @@ export async function markTaskReviewed(taskId: string, note: string | null): Pro
   // out from under the request. Rare enough not to block the review over; the KPI report just
   // won't have anything meaningful to show for this one row.
   const data = context
-    ? { reviewedAt, reviewNote: note, completedAt: context.completedAt, taskLabel: context.taskLabel, contextName: context.contextName, projectId: context.projectId }
-    : { reviewedAt, reviewNote: note, completedAt: reviewedAt, taskLabel: "Unknown", contextName: "", projectId: "" };
+    ? { reviewedAt, reviewNote: note, completedAt: context.completedAt, taskLabel: context.taskLabel, contextName: context.contextName, projectId: context.projectId, autoReviewed }
+    : { reviewedAt, reviewNote: note, completedAt: reviewedAt, taskLabel: "Unknown", contextName: "", projectId: "", autoReviewed };
 
   await prisma.taskReview.upsert({
     where: { taskId },

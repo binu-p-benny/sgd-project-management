@@ -22,6 +22,7 @@ import {
 import { rescheduleProjectDates } from "@/lib/reschedule";
 import { createEmptyGlassPurchaseOrderForProject } from "@/lib/glass";
 import { PROCUREMENT_STAGES } from "@/lib/project-filters";
+import { markTaskReviewed } from "@/lib/task-reviews";
 
 // 2A, 2D1 and 2F are derived from procurement_items — never manually settable.
 export const DERIVED_STEP_CODES = new Set(["2A", "2D1", "2F"]);
@@ -433,6 +434,12 @@ export async function skipToPhase(
     );
   }
 
+  // Backfilled history has nothing for the operation manager to actually review — it's data
+  // entry standing in for work that (per the owner, who's the one triggering this) already
+  // happened, not something that just got completed live. Auto-reviewing every step/stage this
+  // skip touches keeps it out of their review queue instead of dumping years of history on them.
+  const SKIP_REVIEW_NOTE = `Auto-reviewed — backfilled by phase skip (as of ${asOfDate.toDateString()})`;
+
   const completeStepBackfilled = async (step: { id: string; status: StepStatus; actualStartDate: Date | null }) => {
     await prisma.phaseStep.update({
       where: { id: step.id },
@@ -453,6 +460,7 @@ export async function skipToPhase(
         reason: `Phase skipped by owner — backfilled as of ${asOfDate.toDateString()}`,
       },
     });
+    await markTaskReviewed(`phase_step:${step.id}`, SKIP_REVIEW_NOTE, true);
   };
 
   if (project.currentPhase === "phase_1") {
@@ -476,6 +484,9 @@ export async function skipToPhase(
         data[stage.field as string] = asOfDate;
       }
       await prisma.procurementItem.update({ where: { id: item.id }, data });
+      for (const stage of PROCUREMENT_STAGES[item.itemType]) {
+        await markTaskReviewed(`procurement_stage:${item.id}:${String(stage.field)}`, SKIP_REVIEW_NOTE, true);
+      }
     }
     for (const code of ["2A", "2D1", "2F"] as const) {
       await syncDerivedStepStatus(projectId, code, actorId);

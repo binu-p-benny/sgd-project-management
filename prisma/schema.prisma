@@ -778,6 +778,14 @@ model TaskReview {
   contextName String   @map("context_name")
   projectId   String   @map("project_id")
 
+  // True for a review row skipToPhase writes for itself (backfilled history has nothing for the
+  // operation manager to actually review) rather than one a human submitted through /my-tasks.
+  // Keeps the row out of getReviewQueueTasks exactly like any other review, but
+  // department-kpi-report.ts's getCompletedUnits excludes these from the "review" source
+  // entirely — crediting or penalizing operations_manager for a review that never happened would
+  // just replace "OM has too many reviews" with "OM's KPI is wrong," which isn't the ask.
+  autoReviewed Boolean @default(false) @map("auto_reviewed")
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@map("task_reviews")

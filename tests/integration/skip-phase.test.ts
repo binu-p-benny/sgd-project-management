@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { Department } from "@prisma/client";
 import { skipToPhase, StepActionError } from "@/lib/step-actions";
-import { createTestProject, ensureTestUsers, cleanupTestProjects, getStep, getProject, getProcurementItems } from "../helpers/db";
+import { getReviewQueueTasks } from "@/lib/task-reviews";
+import { resolvePeriodRange } from "@/lib/department-kpi";
+import { getCompletedUnits } from "@/lib/department-kpi-report";
+import { createTestProject, ensureTestUsers, cleanupTestProjects, getStep, getProject, getProcurementItems, prisma } from "../helpers/db";
 import { advanceThroughPhase1 } from "../helpers/scenarios";
 
 let users: Record<Department, string>;
@@ -82,5 +85,38 @@ describe("skipToPhase", () => {
     expect(afterPhase1.currentPhase).toBe("phase_2");
 
     await expect(skipToPhase(project.id, "phase_2", new Date(), users.owner_admin)).rejects.toThrow(StepActionError);
+  });
+
+  it("auto-reviews every step and procurement stage it backfills, so none of it lands on the operation manager's review queue", async () => {
+    const project = await createTestProject();
+    // Deliberately far in the past — the bug this guards against only shows up when
+    // completedAt (asOfDate) and reviewedAt (whenever the skip actually runs) are far apart.
+    const asOfDate = new Date("2024-03-01T00:00:00.000Z");
+
+    await skipToPhase(project.id, "phase_3", asOfDate, users.owner_admin);
+
+    const queue = await getReviewQueueTasks();
+    const queuedForThisProject = queue.filter((t) => t.project.id === project.id);
+    expect(queuedForThisProject).toHaveLength(0);
+
+    const oneA = await getStep(project.id, "1A");
+    const stepReview = await prisma.taskReview.findUniqueOrThrow({ where: { taskId: `phase_step:${oneA.id}` } });
+    expect(stepReview.autoReviewed).toBe(true);
+    expect(stepReview.reviewNote).toContain("Auto-reviewed");
+    expect(stepReview.completedAt.toISOString()).toBe(asOfDate.toISOString());
+
+    const items = await getProcurementItems(project.id);
+    const sectionItem = items.find((i) => i.itemType === "section")!;
+    const stageReview = await prisma.taskReview.findUniqueOrThrow({
+      where: { taskId: `procurement_stage:${sectionItem.id}:requirementCreatedAt` },
+    });
+    expect(stageReview.autoReviewed).toBe(true);
+
+    // Auto-reviews must not show up as the operation manager's own completed review work —
+    // reviewedAt (now) vs. completedAt (asOfDate, 2024) would otherwise read as wildly late and
+    // tank their KPI for something they never actually reviewed.
+    const units = await getCompletedUnits(resolvePeriodRange("all_time"));
+    const reviewUnitsForProject = units.filter((u) => u.projectId === project.id && u.source === "review");
+    expect(reviewUnitsForProject).toHaveLength(0);
   });
 });
