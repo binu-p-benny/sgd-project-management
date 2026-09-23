@@ -11,6 +11,7 @@ import { PaymentEditor } from "@/components/projects/PaymentEditor";
 import { PhaseReviewCard } from "@/components/projects/PhaseReviewCard";
 import { InstallationWindowCard } from "@/components/projects/InstallationWindowCard";
 import { AdditionalWorks, type WorkBlockData } from "@/components/projects/AdditionalWorks";
+import { ProductionMaterialDeliveryTracker } from "@/components/projects/ProductionMaterialDeliveryTracker";
 import { StepProgressBar } from "@/components/projects/StepProgressBar";
 import { TaskCard } from "@/components/my-tasks/TaskCard";
 import { getMyTasks, type MyTaskItem } from "@/lib/my-tasks";
@@ -30,7 +31,12 @@ import {
   withLiveExpectedArrivalDates,
 } from "@/lib/procurement";
 import { findUpstreamDelay } from "@/lib/reschedule";
-import { maybeEarlyUnlockPhase3 } from "@/lib/step-actions";
+import {
+  maybeEarlyUnlockPhase3,
+  ensureProductionMaterialDeliveryBlock,
+  PRODUCTION_MATERIAL_DELIVERY_LABEL,
+  PRODUCTION_MATERIAL_DELIVERY_TASKS,
+} from "@/lib/step-actions";
 import {
   PHASE_LABELS,
   OVERALL_STATUS_LABELS,
@@ -80,6 +86,7 @@ const PHASE_ORDER: StepPhase[] = ["phase_1", "phase_2", "phase_3"];
 function EditablePhaseGroup({
   phase,
   items,
+  leadingContent,
   insertBeforeStepCode,
   insertContent,
   appendToBeforeGrid,
@@ -87,6 +94,11 @@ function EditablePhaseGroup({
 }: {
   phase: StepPhase;
   items: MyTaskItem[];
+  /** Rendered right after this phase's own heading, before any of its step cards — for content
+   *  that belongs to the phase as a whole rather than any one step (e.g. Production material
+   *  Delivery on phase_3), unlike insertContent/appendTo*Grid below, which all anchor to a
+   *  specific step's position within the grid. */
+  leadingContent?: ReactNode;
   /** Step code to split this phase's cards at, so e.g. Procurement can sit between 2A and 2D1. */
   insertBeforeStepCode?: string;
   insertContent?: ReactNode;
@@ -108,6 +120,7 @@ function EditablePhaseGroup({
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-2">
         <h3 className="text-[11px] font-semibold uppercase tracking-wider text-fg-subtle">{PHASE_LABELS[phase]}</h3>
+        {leadingContent}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {before.map((item) => (
             <TaskCard key={item.id} item={item} canEditDates canRevert showDepartment />
@@ -171,12 +184,16 @@ function ReadOnlyStepRow({ step }: { step: PhaseStep }) {
 function ReadOnlyPhaseGroup({
   phase,
   steps,
+  leadingContent,
   insertBeforeStepCode,
   insertContent,
   trailingContent,
 }: {
   phase: StepPhase;
   steps: PhaseStep[];
+  /** Same idea as EditablePhaseGroup's own leadingContent — rendered right after this phase's
+   *  heading, before its step rows. */
+  leadingContent?: ReactNode;
   /** Step code to split this phase's cards at, so e.g. Procurement can sit between 2A and 2D1. */
   insertBeforeStepCode?: string;
   insertContent?: ReactNode;
@@ -195,6 +212,7 @@ function ReadOnlyPhaseGroup({
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-2">
         <h3 className="text-[11px] font-semibold uppercase tracking-wider text-fg-subtle">{PHASE_LABELS[phase]}</h3>
+        {leadingContent}
         <div className="flex flex-col divide-y divide-edge rounded-xl border border-edge bg-surface">
           {before.map((step) => (
             <ReadOnlyStepRow key={step.id} step={step} />
@@ -236,6 +254,9 @@ export default async function ProjectDetailPage({
   // arrived 2+ days ago (see maybeEarlyUnlockPhase3). Runs before the query below so a newly
   // unlocked phase 3 shows up in this same request, not just on the next page load.
   await maybeEarlyUnlockPhase3(id);
+  // Same opportunistic shape, one step later — the Production material Delivery checklist only
+  // has somewhere to show once Phase 3 (just possibly seeded above) is real.
+  await ensureProductionMaterialDeliveryBlock(id);
 
   const project = await prisma.project.findUnique({
     where: { id },
@@ -267,10 +288,8 @@ export default async function ProjectDetailPage({
     orderBy: { createdAt: "asc" },
     include: { tasks: { orderBy: { createdAt: "asc" } } },
   });
-  const additionalWorkBlocks: WorkBlockData[] = workBlocks.map((block) => ({
-    id: block.id,
-    label: block.label,
-    tasks: block.tasks.map((task) => ({
+  function mapWorkTasks(tasks: (typeof workBlocks)[number]["tasks"]) {
+    return tasks.map((task) => ({
       id: task.id,
       taskLabel: task.taskLabel,
       department: task.department,
@@ -282,8 +301,26 @@ export default async function ProjectDetailPage({
       overrun: isProcurementStageOverrun(task.plannedDate, task.actualDate),
       // Additional works aren't part of the operation manager's review queue (see task-reviews.ts).
       reviewed: false,
-    })),
-  }));
+    }));
+  }
+  // The Production material Delivery block (see ensureProductionMaterialDeliveryBlock) gets its
+  // own dedicated card under Phase 3 · Installation instead — pulled out here so it never also
+  // shows up in the generic Additional works list below.
+  const additionalWorkBlocks: WorkBlockData[] = workBlocks
+    .filter((block) => block.label !== PRODUCTION_MATERIAL_DELIVERY_LABEL)
+    .map((block) => ({ id: block.id, label: block.label, tasks: mapWorkTasks(block.tasks) }));
+  // Sorted back into PRODUCTION_MATERIAL_DELIVERY_TASKS' own fixed order — see that const's own
+  // comment for why createdAt asc alone (mapWorkTasks' own tasks query) can't be trusted here.
+  const productionMaterialDeliveryTaskOrder = new Map(
+    PRODUCTION_MATERIAL_DELIVERY_TASKS.map((t, index) => [t.taskLabel, index])
+  );
+  const productionMaterialDeliveryTasks = mapWorkTasks(
+    workBlocks.find((block) => block.label === PRODUCTION_MATERIAL_DELIVERY_LABEL)?.tasks ?? []
+  ).sort(
+    (a, b) =>
+      (productionMaterialDeliveryTaskOrder.get(a.taskLabel) ?? 0) -
+      (productionMaterialDeliveryTaskOrder.get(b.taskLabel) ?? 0)
+  );
 
   // Every reviewable unit's own composite id (see task-reviews.ts), fetched once here rather
   // than per-tracker — the procurement/glass-PO stage fields, plus every action-item row across
@@ -320,10 +357,9 @@ export default async function ProjectDetailPage({
   ];
   const reviewedTaskIds = new Set((await getTaskReviewsByIds(reviewCandidateIds)).keys());
 
-  // Overdue detection reads each item's *live* planned arrival (same chain ProcurementTracker
-  // displays), not the frozen expectedArrivalDate column straight off project.procurementItems —
-  // see withLiveExpectedArrivalDates. Everything else on this page still reads
-  // project.procurementItems directly; only this effectiveStatus badge uses it.
+  // See withLiveExpectedArrivalDates' own doc comment in procurement.ts — projectHasOverrun
+  // needs each item's *live* stage-by-stage chain, not the frozen legacy expected_arrival_date
+  // column procurementItems carries straight off the query above.
   const oneDForOverrun = project.phaseSteps.find((s) => s.stepCode === "1D");
   const effectiveStatus = getEffectiveOverallStatus(
     project.overallStatus,
@@ -483,12 +519,10 @@ export default async function ProjectDetailPage({
 
   // Preview card between Phase 1 and Phase 2 — see InstallationWindowCard. Each item's QC planned
   // date comes from the same computeAllProcurementPlannedDates the tracker's own "QC checked" row
-  // is kept in sync with (unified-tasks and the KPI report read it too), not re-derived here. Only
-  // shown before the real Phase 3 exists — once it does, the real Step timeline's Phase 3 section
-  // (with 3C2's own dates now kept in sync with this exact computation — see reschedule.ts) takes
-  // over, and this preview would just be a redundant, stale-looking duplicate of it.
-  const hasRealPhase3 = (canEditEverything ? editablePhase3Only : phase3Only).length > 0;
-  const installationWindowCard = hasRealPhase3 ? null : (
+  // is kept in sync with (unified-tasks and the KPI report read it too), not re-derived here.
+  // Always shown, even once the real Phase 3 section exists (its 3C2 row is kept in sync with this
+  // exact computation by default — see reschedule.ts — unless an admin has since overridden it).
+  const installationWindowCard = (
     <InstallationWindowCard
       plannedWindow={computeInstallationPlannedWindow(
         project.procurementItems.map((item) => computeAllProcurementPlannedDates(item, phase2PlanAnchor, sectionQCPlanned).qc)
@@ -908,6 +942,9 @@ export default async function ProjectDetailPage({
       }))}
     />
   ) : null;
+  const productionMaterialDeliveryCard = (
+    <ProductionMaterialDeliveryTracker tasks={productionMaterialDeliveryTasks} canEdit={canEditEverything} />
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -1027,6 +1064,7 @@ export default async function ProjectDetailPage({
                   key={phase}
                   phase={phase}
                   items={items}
+                  leadingContent={productionMaterialDeliveryCard}
                   insertBeforeStepCode="3B"
                   insertContent={glassTracker}
                   appendToAfterGrid={phase3TrailingContent}
@@ -1037,6 +1075,7 @@ export default async function ProjectDetailPage({
                   key={phase}
                   phase={phase}
                   steps={steps}
+                  leadingContent={productionMaterialDeliveryCard}
                   insertBeforeStepCode="3B"
                   insertContent={glassTracker}
                   trailingContent={phase3TrailingContent}

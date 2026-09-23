@@ -20,15 +20,13 @@ function DateTile({ label, date, basis }: { label: string; date: Date; basis: st
 
 /**
  * A read-only preview of Phase 3, shown between Phase 1 and Phase 2 on the project detail page
- * once it's forecastable — before Phase 3 actually exists (its real steps only get seeded once
- * 2F completes, or the arrival-based early unlock — see maybeEarlyUnlockPhase3 in step-actions.ts)
- * — so the team can see roughly when installation (3C2) will run well ahead of Phase 2 actually
- * finishing. Renders nothing at all until then: `plannedWindow` is null until procurement's QC
- * checked planned date exists (right after 1D completes — see computeInstallationPlannedWindow),
- * in which case there is nothing yet worth calling "Phase 3" for. Once the real Phase 3 section
- * exists, the project detail page stops rendering this preview — that section takes over, now
- * showing 3C2 with these exact same dates (see rescheduleProjectDates's own 3C2 handling), so
- * there's never a moment where both are visible at once.
+ * once it's forecastable — so the team can see roughly when installation (3C2) will run well
+ * ahead of Phase 2 actually finishing. Renders nothing at all until then: `plannedWindow` is null
+ * until procurement's QC checked planned date exists (right after 1D completes — see
+ * computeInstallationPlannedWindow), in which case there is nothing yet worth calling "Phase 3"
+ * for. Kept visible even once the real Phase 3 section exists (with 3C2 showing these same dates
+ * by default — see rescheduleProjectDates's own 3C2 handling) so this stays a quick, no-scrolling
+ * reference — 3C2's own row is the source of truth if an admin has since overridden its dates.
  */
 export function InstallationWindowCard({ plannedWindow }: { plannedWindow: InstallationPlannedWindow | null }) {
   if (!plannedWindow) return null;
@@ -50,8 +48,8 @@ export function InstallationWindowCard({ plannedWindow }: { plannedWindow: Insta
             </span>
           </div>
           <p className="text-xs text-fg-muted">
-            Phase 3 hasn&rsquo;t started yet — this is when Installation (3C2) is expected to run, forecast from
-            procurement&rsquo;s QC checked planned date. Not editable here; updates automatically.
+            When Installation (3C2) is expected to run, forecast from procurement&rsquo;s QC checked planned date.
+            Not editable here; updates automatically.
           </p>
         </div>
       </div>

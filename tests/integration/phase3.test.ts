@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { updateStepStatus, revertStep, syncGlassPOStepStatus, maybeEarlyUnlockPhase3 } from "@/lib/step-actions";
+import {
+  updateStepStatus,
+  revertStep,
+  syncGlassPOStepStatus,
+  maybeEarlyUnlockPhase3,
+  ensureProductionMaterialDeliveryBlock,
+  PRODUCTION_MATERIAL_DELIVERY_LABEL,
+  PRODUCTION_MATERIAL_DELIVERY_TASKS,
+} from "@/lib/step-actions";
 import { checkDependencyGate } from "@/lib/dependency-gate";
 import {
   createTestProject,
@@ -558,5 +566,98 @@ describe("maybeEarlyUnlockPhase3 — every item arriving 2+ days ago unlocks pha
     expect(await prisma.phaseStep.count({ where: { projectId: project.id, phase: "phase_3" } })).toBe(stepsBefore);
     expect(await prisma.glassPurchaseOrder.count({ where: { projectId: project.id } })).toBe(1);
     expect((await getProject(project.id)).currentPhase).toBe("phase_3");
+  });
+});
+
+describe("ensureProductionMaterialDeliveryBlock — the fixed 'Production material Delivery' checklist", () => {
+  it("does nothing before Phase 3 exists", async () => {
+    const project = await createTestProject();
+    await advanceThroughPhase1(project.id, users, "emergency");
+
+    await ensureProductionMaterialDeliveryBlock(project.id);
+
+    expect(
+      await prisma.workBlock.count({ where: { projectId: project.id, label: PRODUCTION_MATERIAL_DELIVERY_LABEL } })
+    ).toBe(0);
+  });
+
+  it("seeds exactly PRODUCTION_MATERIAL_DELIVERY_TASKS' 5 rows once Phase 3 is real", async () => {
+    const project = await projectAtPhase3();
+
+    await ensureProductionMaterialDeliveryBlock(project.id);
+
+    const block = await prisma.workBlock.findFirst({
+      where: { projectId: project.id, label: PRODUCTION_MATERIAL_DELIVERY_LABEL },
+      include: { tasks: true },
+    });
+    expect(block).not.toBeNull();
+    expect(block!.tasks).toHaveLength(PRODUCTION_MATERIAL_DELIVERY_TASKS.length);
+    for (const expected of PRODUCTION_MATERIAL_DELIVERY_TASKS) {
+      const row = block!.tasks.find((t) => t.taskLabel === expected.taskLabel);
+      expect(row, `${expected.taskLabel} row`).toBeDefined();
+      expect(row!.department).toBe(expected.department);
+      expect(row!.actualDate).toBeNull();
+      expect(row!.plannedDate).not.toBeNull();
+    }
+  });
+
+  it("also seeds it the opportunistic way maybeEarlyUnlockPhase3 unlocks Phase 3 — same page-load pairing the project detail page uses", async () => {
+    const project = await createTestProject();
+    await advanceThroughPhase1(project.id, users, "emergency");
+    await markAllRequirementsCreated(project.id, users.design_engineer);
+    const arrivedAt = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    for (const itemType of ["section", "hardware", "gasket"] as ItemType[]) {
+      await patchProcurementItem(project.id, itemType, users.purchase, { actualArrivalDate: arrivedAt });
+    }
+    await maybeEarlyUnlockPhase3(project.id);
+
+    await ensureProductionMaterialDeliveryBlock(project.id);
+
+    expect(
+      await prisma.workBlock.count({ where: { projectId: project.id, label: PRODUCTION_MATERIAL_DELIVERY_LABEL } })
+    ).toBe(1);
+  });
+
+  it("is idempotent — calling it again never duplicates the block or its rows", async () => {
+    const project = await projectAtPhase3();
+    await ensureProductionMaterialDeliveryBlock(project.id);
+    await ensureProductionMaterialDeliveryBlock(project.id);
+    await ensureProductionMaterialDeliveryBlock(project.id);
+
+    expect(
+      await prisma.workBlock.count({ where: { projectId: project.id, label: PRODUCTION_MATERIAL_DELIVERY_LABEL } })
+    ).toBe(1);
+    const block = await prisma.workBlock.findFirstOrThrow({
+      where: { projectId: project.id, label: PRODUCTION_MATERIAL_DELIVERY_LABEL },
+      include: { tasks: true },
+    });
+    expect(block.tasks).toHaveLength(PRODUCTION_MATERIAL_DELIVERY_TASKS.length);
+  });
+
+  it("never touches a project's own freeform Additional works blocks", async () => {
+    const project = await projectAtPhase3();
+    const ownBlock = await prisma.workBlock.create({ data: { projectId: project.id, label: "Extra balcony railing" } });
+
+    await ensureProductionMaterialDeliveryBlock(project.id);
+
+    expect(await prisma.workBlock.findUnique({ where: { id: ownBlock.id } })).not.toBeNull();
+    expect(await prisma.workBlock.count({ where: { projectId: project.id } })).toBe(2);
+  });
+
+  it("completing a row leaves it out of a fresh call's untouched set — re-running never resurrects it or resets its actual date", async () => {
+    const project = await projectAtPhase3();
+    await ensureProductionMaterialDeliveryBlock(project.id);
+    const block = await prisma.workBlock.findFirstOrThrow({
+      where: { projectId: project.id, label: PRODUCTION_MATERIAL_DELIVERY_LABEL },
+      include: { tasks: true },
+    });
+    const sectionRow = block.tasks.find((t) => t.taskLabel === "Section")!;
+    const completedAt = new Date();
+    await prisma.workTask.update({ where: { id: sectionRow.id }, data: { actualDate: completedAt } });
+
+    await ensureProductionMaterialDeliveryBlock(project.id);
+
+    const after = await prisma.workTask.findUniqueOrThrow({ where: { id: sectionRow.id } });
+    expect(after.actualDate).toEqual(completedAt);
   });
 });

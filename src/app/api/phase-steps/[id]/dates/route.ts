@@ -7,7 +7,7 @@ import {
   cascadeActualStart,
   DERIVED_STEP_CODES,
   MANUAL_PLANNED_DATE_STEP_CODES,
-  INSTALLATION_OVERRIDE_STEP_CODE,
+  COMPUTED_PLANNED_DATE_OVERRIDE_STEP_CODES,
 } from "@/lib/step-actions";
 
 const dateOrNull = z
@@ -26,18 +26,19 @@ const updateDatesSchema = z.object({
 });
 
 /**
- * Direct date overrides on a step — an admin-only escape hatch (owner_admin or HR & Admin) for
- * correcting history by hand, e.g. backfilling or fixing a data-entry mistake, plus 3C1/3E's own
- * manual Planned dates (see MANUAL_PLANNED_DATE_STEP_CODES and its Save CTA in TaskCard.tsx).
- * 3C2 ("Installation") is accepted here too, but handled differently from those two: its planned
- * start/end are a computed default (the Installation planned window) an admin can override, not a
- * plain hand-typed field — see INSTALLATION_OVERRIDE_STEP_CODE — so a write here goes to
- * plannedStartDateOverride/plannedEndDateOverride instead of the plain columns, and the reschedule
- * call below is what then folds that into plannedStartDate/plannedEndDate for display. Every other
- * step's planned dates are fully system-computed and stay rejected here — see
- * step-template.ts/reschedule.ts. Regular department PATCH /api/phase-steps/:id never touches any
- * of these fields either; status transitions are what normally drive actual dates. Any edit here
- * triggers a project-wide reschedule so downstream planned dates stay consistent with the new
+ * Direct date overrides on a step — an admin-only escape hatch (owner_admin, HR & Admin, or
+ * Operations Manager) for correcting history by hand, e.g. backfilling or fixing a data-entry
+ * mistake, plus 3C1/3E's own manual Planned dates (see MANUAL_PLANNED_DATE_STEP_CODES and its
+ * Save CTA in TaskCard.tsx). 3C2 ("Installation") and 2D2 ("Final tight measurement at site") are
+ * accepted here too, but handled differently from those two: each has a computed default (the
+ * Installation planned window, or Section's Order-confirmed date + 18 working days) an admin can
+ * override, not a plain hand-typed field — see COMPUTED_PLANNED_DATE_OVERRIDE_STEP_CODES — so a
+ * write here goes to plannedStartDateOverride/plannedEndDateOverride instead of the plain columns,
+ * and the reschedule call below is what then folds that into plannedStartDate/plannedEndDate for
+ * display. Every other step's planned dates are fully system-computed and stay rejected here —
+ * see step-template.ts/reschedule.ts. Regular department PATCH /api/phase-steps/:id never touches
+ * any of these fields either; status transitions are what normally drive actual dates. Any edit
+ * here triggers a project-wide reschedule so downstream planned dates stay consistent with the new
  * actual end date. 2A/2D1/2F (DERIVED_STEP_CODES) are rejected outright — their actual dates come
  * only from procurement_items via syncDerivedStepStatus, so a manual date here would just be a
  * stray value nothing else reads, sitting inconsistently alongside the real derivation. 3C1's
@@ -74,11 +75,11 @@ export async function PATCH(
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const isInstallationOverride = step.stepCode === INSTALLATION_OVERRIDE_STEP_CODE;
+  const isComputedOverride = COMPUTED_PLANNED_DATE_OVERRIDE_STEP_CODES.has(step.stepCode);
   if (
     (parsed.data.plannedStartDate !== undefined || parsed.data.plannedEndDate !== undefined) &&
     !MANUAL_PLANNED_DATE_STEP_CODES.has(step.stepCode) &&
-    !isInstallationOverride
+    !isComputedOverride
   ) {
     return NextResponse.json(
       { error: `${step.stepCode}'s planned dates are system-computed and can't be edited directly` },
@@ -86,11 +87,12 @@ export async function PATCH(
     );
   }
   const { note, plannedStartDate, plannedEndDate, ...actualDateFields } = parsed.data;
-  // 3C2's own planned dates are a computed default the admin can override (see
-  // INSTALLATION_OVERRIDE_STEP_CODE) — writing here goes to the override columns, never the plain
-  // ones, so rescheduleProjectDates below is left to fold it into plannedStartDate/plannedEndDate
-  // the same way it folds in the Installation planned window when there's no override yet.
-  const plannedDateFields = isInstallationOverride
+  // 3C2/2D2's own planned dates are a computed default the admin can override (see
+  // COMPUTED_PLANNED_DATE_OVERRIDE_STEP_CODES) — writing here goes to the override columns, never
+  // the plain ones, so rescheduleProjectDates below is left to fold it into
+  // plannedStartDate/plannedEndDate the same way it folds in each one's own computed default when
+  // there's no override yet.
+  const plannedDateFields = isComputedOverride
     ? {
         ...(plannedStartDate !== undefined ? { plannedStartDateOverride: plannedStartDate } : {}),
         ...(plannedEndDate !== undefined ? { plannedEndDateOverride: plannedEndDate } : {}),

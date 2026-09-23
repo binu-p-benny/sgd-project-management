@@ -76,17 +76,34 @@ const GLASS_PO_HINT: Record<string, string> = {
 // exclusion) — 3C1 and 3E are the steps that still get a manual Planned date each, filled in by
 // hand via their own small Save CTA, same "plain freeform field, not a forecast" idea as the
 // Glass PO tracker's Planned column. Once set, the inputs lock — see plannedDatesLocked below.
-// 3C2 ("Installation") is the one Phase 3 step that IS computed — from the Installation planned
-// window (see computeInstallationPlannedWindow in procurement.ts) — so it's deliberately left out
-// of this set and falls through to the same read-only planned-date display every other computed
-// step gets. Kept local rather than imported from step-actions.ts's own copy of this same set,
-// for the same reason DELAY_CATEGORY_STEP_CODES above is — that file pulls in the Prisma client.
+// 3C2 ("Installation") and 2D2 ("Final tight measurement at site") are computed instead — from
+// the Installation planned window and Section's own Order-confirmed date + 18 working days
+// respectively (see computeInstallationPlannedWindow/computeExpectedFinalMeasurementDate in
+// procurement.ts) — so both are deliberately left out of this set; see
+// COMPUTED_PLANNED_DATE_OVERRIDE_STEP_CODES below for their own editor. Kept local rather than
+// imported from step-actions.ts's own copy of this same set, for the same reason
+// DELAY_CATEGORY_STEP_CODES above is — that file pulls in the Prisma client.
 const MANUAL_PLANNED_DATE_STEP_CODES = new Set(["3C1", "3E"]);
 
-// Of those, 3E only gets a Planned *end* — a single on-site QC check has no meaningful planned
-// start to fill in separately (same reasoning as its Actual date being end-only, just above).
-// 3C1 keeps the full start+end pair since that's a genuinely multi-day span of work.
-const MANUAL_PLANNED_END_ONLY_STEP_CODES = new Set(["3E"]);
+// Steps whose planned-date editor only ever shows a single "Planned end" field, no separate
+// start — a one-day site visit or QC check has no meaningful start of its own to fill in (same
+// reasoning as each one's Actual date already being end-only, just above). Spans both the
+// fully-manual family above (3E) and the computed-with-override family below (2D2) — orthogonal
+// to which of those two a step belongs to. 3C1 keeps the full start+end pair since that's a
+// genuinely multi-day span of work.
+const MANUAL_PLANNED_END_ONLY_STEP_CODES = new Set(["3E", "2D2"]);
+
+// 3C2 ("Installation") and 2D2 ("Final tight measurement at site") — see
+// COMPUTED_PLANNED_DATE_OVERRIDE_STEP_CODES in step-actions.ts (kept local for the usual reason:
+// that file pulls in the Prisma client). Deliberately not part of MANUAL_PLANNED_DATE_STEP_CODES
+// above: neither step's planned dates are ever empty (each defaults to its own computed value)
+// and neither locks — the edit form below stays open the whole time, unlike 3C1/3E's.
+const COMPUTED_PLANNED_DATE_OVERRIDE_STEP_CODES = new Set(["3C2", "2D2"]);
+// Per-step hint shown above that editor, naming what the computed default actually is.
+const COMPUTED_PLANNED_DATE_OVERRIDE_HINT: Record<string, string> = {
+  "3C2": "Prefilled from the Installation planned window — a rough default, not a fixed plan. Edit and save to override it; Reset goes back to tracking the window automatically.",
+  "2D2": "Prefilled from Section's Order confirmed date + 18 working days — a rough default, not a fixed plan. Edit and save to override it; Reset goes back to tracking it automatically.",
+};
 
 // 3C1 ("Aluminum framework") only, for now — which crew is fabricating it, chosen alongside that
 // step's own manual Planned start/end in the same Save CTA and locked in with them. A subset of
@@ -561,8 +578,9 @@ export function TaskCard({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          // 3E never had a Planned start field to begin with — leaving the key out entirely
-          // keeps this a no-op on that column instead of writing null over nothing.
+          // End-only steps (3E/2D2) never had a Planned start field to begin with — leaving the
+          // key out entirely keeps this a no-op on that column instead of writing null over
+          // nothing.
           ...(plannedDatesEndOnly
             ? {}
             : {
@@ -686,11 +704,7 @@ export function TaskCard({
   const needsDelayCategory = needsDelayCategoryChoice && !delayCategory;
   const isGlassPO = GLASS_PO_STEP_CODES.has(item.stepCode);
   const hasManualPlannedDates = MANUAL_PLANNED_DATE_STEP_CODES.has(item.stepCode);
-  // 3C2 only — see INSTALLATION_OVERRIDE_STEP_CODE in step-actions.ts (kept local for the usual
-  // reason: that file pulls in the Prisma client). Deliberately not part of hasManualPlannedDates
-  // above: this step's planned dates are never empty (they default to the Installation planned
-  // window) and never lock — the edit form below stays open the whole time, unlike 3C1/3E's.
-  const isInstallationOverride = item.stepCode === "3C2";
+  const isComputedOverrideStep = COMPUTED_PLANNED_DATE_OVERRIDE_STEP_CODES.has(item.stepCode);
   const hasManualContractor = MANUAL_CONTRACTOR_STEP_CODES.has(item.stepCode);
   const plannedDatesEndOnly = MANUAL_PLANNED_END_ONLY_STEP_CODES.has(item.stepCode);
   // Once the relevant field(s) are saved they're locked in — no more casual re-editing through
@@ -805,9 +819,16 @@ export function TaskCard({
               <span className="font-medium text-fg">{item.stepName}</span>
             </div>
             {showDepartment && (
-              <span className="mt-1 inline-block rounded-full bg-overlay px-2 py-0.5 text-[10px] font-medium text-fg-muted ring-1 ring-inset ring-edge">
-                {DEPARTMENT_LABELS[item.owningDepartment]}
-              </span>
+              <div className="mt-1 flex flex-wrap items-center gap-1">
+                <span className="inline-block rounded-full bg-overlay px-2 py-0.5 text-[10px] font-medium text-fg-muted ring-1 ring-inset ring-edge">
+                  {DEPARTMENT_LABELS[item.owningDepartment]}
+                </span>
+                {item.secondaryDepartment && (
+                  <span className="inline-block rounded-full bg-overlay px-2 py-0.5 text-[10px] font-medium text-fg-muted ring-1 ring-inset ring-edge">
+                    {DEPARTMENT_LABELS[item.secondaryDepartment]}
+                  </span>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -1266,24 +1287,23 @@ export function TaskCard({
         </div>
       )}
 
-      {canEditDates && isInstallationOverride && (
+      {canEditDates && isComputedOverrideStep && (
         <div className="flex flex-col gap-2 border-t border-edge pt-3">
-          <p className="text-xs text-fg-subtle">
-            Prefilled from the Installation planned window — a rough default, not a fixed plan. Edit and save to
-            override it; Reset goes back to tracking the window automatically.
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-fg-muted">Planned start</label>
-              <input
-                type="date"
-                value={plannedDateFields.plannedStartDate}
-                disabled={plannedDateSubmitting}
-                onChange={(e) => setPlannedDateFields((prev) => ({ ...prev, plannedStartDate: e.target.value }))}
-                onClick={openPicker}
-                className="h-10 w-full rounded-lg border border-edge bg-bg px-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-80"
-              />
-            </div>
+          <p className="text-xs text-fg-subtle">{COMPUTED_PLANNED_DATE_OVERRIDE_HINT[item.stepCode]}</p>
+          <div className={`grid gap-2 ${plannedDatesEndOnly ? "grid-cols-1" : "grid-cols-2"}`}>
+            {!plannedDatesEndOnly && (
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-fg-muted">Planned start</label>
+                <input
+                  type="date"
+                  value={plannedDateFields.plannedStartDate}
+                  disabled={plannedDateSubmitting}
+                  onChange={(e) => setPlannedDateFields((prev) => ({ ...prev, plannedStartDate: e.target.value }))}
+                  onClick={openPicker}
+                  className="h-10 w-full rounded-lg border border-edge bg-bg px-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-80"
+                />
+              </div>
+            )}
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-fg-muted">Planned end</label>
               <input

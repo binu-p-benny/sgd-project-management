@@ -1,4 +1,4 @@
-import type { BlockedReason, DelayCategory, ProjectPhase, StepStatus, VisitUrgency } from "@prisma/client";
+import type { BlockedReason, DelayCategory, Department, ProjectPhase, StepStatus, VisitUrgency } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { checkDependencyGate } from "@/lib/dependency-gate";
 import { BLOCKED_REASON_LABELS } from "@/lib/labels";
@@ -39,28 +39,34 @@ export const DELAY_CATEGORY_STEP_CODES = new Set(["1A", "1B", "1C", "1D", "2D2"]
 // worth tracking), each starting out empty and filled in by hand via their own small Save CTA —
 // normally admin-only (see /api/phase-steps/[id]/dates), or by one delegated department once
 // granted (see plannedDateEditDepartment, /api/phase-steps/[id]/planned-date(s|-permission), and
-// buildPlannedDateEditTasks in unified-tasks.ts). 3C2 ("Installation") is its own third case —
-// see INSTALLATION_OVERRIDE_STEP_CODE just below — not part of this set: unlike 3C1/3E it never
-// starts empty (it's prefilled from the Installation planned window) and never locks, so neither
-// the "starts empty, needs delegating" framing nor the once-both-are-set lock this set drives
-// actually fits it. Every OTHER step's planned_start_date/planned_end_date stays fully
-// system-computed and /dates rejects direct writes to them, same as always.
+// buildPlannedDateEditTasks in unified-tasks.ts). 3C2/2D2 are their own third case — see
+// COMPUTED_PLANNED_DATE_OVERRIDE_STEP_CODES just below — not part of this set: unlike 3C1/3E
+// neither ever starts empty (both are prefilled from their own computed default) nor locks, so
+// neither the "starts empty, needs delegating" framing nor the once-both-are-set lock this set
+// drives actually fits either of them. Every OTHER step's planned_start_date/planned_end_date
+// stays fully system-computed and /dates rejects direct writes to them, same as always.
 export const MANUAL_PLANNED_DATE_STEP_CODES = new Set(["3C1", "3E"]);
 
-// Of those, 3E only ever gets a Planned *end* — see the comment above. Mirrored locally as its own
-// copy in TaskCard.tsx/TaskTable.tsx for the usual reason ("use client" files can't import this
-// Prisma-touching module) — keep both in sync with this one by hand.
-export const MANUAL_PLANNED_END_ONLY_STEP_CODES = new Set(["3E"]);
+// Steps whose planned-date editor only ever shows a single "Planned end" field, no separate
+// start — a one-day site visit or QC check has no meaningful start of its own to fill in. Spans
+// both the fully-manual family above (3E) and the computed-with-override family below (2D2) —
+// orthogonal to which of those two a step belongs to, just about whether a start field is worth
+// showing at all. Mirrored locally as its own copy in TaskCard.tsx/TaskTable.tsx for the usual
+// reason ("use client" files can't import this Prisma-touching module) — keep all copies in sync
+// with this one by hand.
+export const MANUAL_PLANNED_END_ONLY_STEP_CODES = new Set(["3E", "2D2"]);
 
-// 3C2 ("Installation") — the one step whose planned start/end is a computed default (the
-// Installation planned window, see computeInstallationPlannedWindow) that an admin can also
-// override at any time, rather than either purely computed (like 2D1/2D2) or purely hand-typed
-// (like 3C1/3E — see MANUAL_PLANNED_DATE_STEP_CODES above). POST /api/phase-steps/[id]/dates
-// checks this alongside that set, but writes to plannedStartDateOverride/plannedEndDateOverride
-// instead of the plain columns — rescheduleProjectDates is what actually keeps
-// plannedStartDate/plannedEndDate in sync with whichever of override-or-window currently wins
-// (see its own 3C2 handling). No delegation for this one: it's always admin-only.
-export const INSTALLATION_OVERRIDE_STEP_CODE = "3C2";
+// 3C2 ("Installation") and 2D2 ("Final tight measurement at site") — the two steps whose planned
+// date already has a genuine computed default (respectively, the Installation planned window and
+// Section's own Order-confirmed date + 18 working days — see computeExpectedFinalMeasurementDate)
+// that's still worth overriding by hand once the real schedule is known, rather than either purely
+// computed (like 2D1, or 2D2 without an override set) or purely hand-typed (like 3C1/3E — see
+// MANUAL_PLANNED_DATE_STEP_CODES above). POST /api/phase-steps/[id]/dates checks this alongside
+// that set, but writes to plannedStartDateOverride/plannedEndDateOverride instead of the plain
+// columns — rescheduleProjectDates is what actually keeps plannedStartDate/plannedEndDate in sync
+// with whichever of override-or-computed-default currently wins (see its own 3C2/2D2 handling).
+// No delegation for these: always admin-only (owner_admin, HR & Admin, or Operations Manager).
+export const COMPUTED_PLANNED_DATE_OVERRIDE_STEP_CODES = new Set(["3C2", "2D2"]);
 
 // 3C1 ("Aluminum framework") only, for now — which crew is fabricating it. Its own separate
 // task from that step's manual Planned start/end, with its own Save CTA (see
@@ -360,6 +366,66 @@ export async function maybeEarlyUnlockPhase3(projectId: string): Promise<void> {
   // page-load check already runs rescheduleProjectDates — without this, the newly-seeded 3C2 would
   // sit at null planned dates until some unrelated procurement edit happened to trigger one.
   await rescheduleProjectDates(projectId);
+}
+
+/** The fixed row set for the "Production material Delivery" tracker (see
+ *  ensureProductionMaterialDeliveryBlock) — Purchase's raw-material rows first, then Design's.
+ *  Exported so the project detail page can sort the seeded WorkTask rows back into this exact
+ *  order for display: they're all created together in one nested-create call, and Postgres makes
+ *  no row-order guarantee among rows that share a createdAt millisecond (see this repo's other
+ *  "no ORDER BY guarantee" comments, e.g. projects/page.tsx), so relying on createdAt asc alone
+ *  would let the 3 Purchase rows (and separately the 2 Design ones) reorder on a whim. */
+export const PRODUCTION_MATERIAL_DELIVERY_TASKS: { taskLabel: string; department: Department }[] = [
+  { taskLabel: "Section", department: "purchase" },
+  { taskLabel: "Hardware", department: "purchase" },
+  { taskLabel: "Gasket", department: "purchase" },
+  { taskLabel: "Cutting list", department: "design_engineer" },
+  { taskLabel: "Elevation drawing", department: "design_engineer" },
+];
+
+/** The exact WorkBlock label ensureProductionMaterialDeliveryBlock seeds/looks for — also how
+ *  the project detail page tells this block apart from a project's own freeform Additional works
+ *  ones, to render it as its own dedicated tracker instead (see ProductionMaterialDeliveryTracker). */
+export const PRODUCTION_MATERIAL_DELIVERY_LABEL = "Production material Delivery";
+
+/**
+ * A separate, purely-manual checklist for the raw material each fabricated item (Section/
+ * Hardware/Gasket) needs delivered before production can start, plus the two Design Engineer
+ * drawings production needs — deliberately outside the existing procurement chain (Requirement/
+ * Quote/Payment/Order/…, see procurement.ts): nothing here is computed, gated, or read by any of
+ * that machinery, it's just a fixed WorkBlock (see WorkTask in schema.prisma) a department ticks
+ * off by hand, the same as any other Additional works row — see ProductionMaterialDeliveryTracker
+ * for the dedicated card this renders as on the project detail page, and buildWorkTaskTasks in
+ * unified-tasks.ts for how it reaches Purchase's/Design Engineer's own /my-tasks automatically.
+ *
+ * Idempotent and safe to call on every page load, same "ensure it exists, do nothing if it
+ * already does" shape as maybeEarlyUnlockPhase3 just above — seeded once Phase 3 is real (same
+ * moment its own dedicated card starts having somewhere to show), covering both a project newly
+ * reaching Phase 3 and every project already there before this feature existed.
+ */
+export async function ensureProductionMaterialDeliveryBlock(projectId: string): Promise<void> {
+  const hasPhase3 = await prisma.phaseStep.findFirst({
+    where: { projectId, phase: "phase_3" },
+    select: { id: true },
+  });
+  if (!hasPhase3) return;
+
+  const existing = await prisma.workBlock.findFirst({
+    where: { projectId, label: PRODUCTION_MATERIAL_DELIVERY_LABEL },
+    select: { id: true },
+  });
+  if (existing) return;
+
+  const seededAt = new Date();
+  await prisma.workBlock.create({
+    data: {
+      projectId,
+      label: PRODUCTION_MATERIAL_DELIVERY_LABEL,
+      tasks: {
+        create: PRODUCTION_MATERIAL_DELIVERY_TASKS.map((task) => ({ ...task, plannedDate: seededAt })),
+      },
+    },
+  });
 }
 
 /**

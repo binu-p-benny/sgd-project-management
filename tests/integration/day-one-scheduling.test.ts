@@ -355,6 +355,110 @@ describe("3C2's planned dates can be manually overridden — the window is only 
   });
 });
 
+describe("2D2's planned end date can be manually overridden — the formula is only ever a rough default", () => {
+  async function projectAtPhase2() {
+    const project = await createTestProjectDayOne({ visitUrgency: "hot" });
+    const oneA = await getStep(project.id, "1A");
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot" });
+    const oneB = await getStep(project.id, "1B");
+    await updateStepStatus(oneB.id, "completed", users.project_engineer);
+    const oneC = await getStep(project.id, "1C");
+    await updateStepStatus(oneC.id, "completed", users.design_engineer);
+    const oneD = await getStep(project.id, "1D");
+    await updateStepStatus(oneD.id, "completed", users.accounts);
+    return project;
+  }
+
+  it("an override wins outright and survives a reschedule the formula's own inputs would otherwise move", async () => {
+    const project = await projectAtPhase2();
+    const before = await getStep(project.id, "2D2");
+    const overrideEnd = addDays(before.plannedEndDate!, 100);
+
+    await prisma.phaseStep.update({ where: { id: before.id }, data: { plannedEndDateOverride: overrideEnd } });
+    await rescheduleProjectDates(project.id);
+    const overridden = await getStep(project.id, "2D2");
+    expect(overridden.plannedEndDate).toEqual(overrideEnd);
+    // The override is end-only — 2D2's planned start still follows 2A's own end, untouched.
+    expect(overridden.plannedStartDate).toEqual(before.plannedStartDate);
+
+    // Section's Order confirmed date moves — an un-overridden 2D2 would follow (see "editing
+    // Section's Order confirmed date updates 2D2's planned end" above) — but this one stays put.
+    const items = await getProcurementItems(project.id);
+    const section = items.find((i) => i.itemType === "section")!;
+    await prisma.procurementItem.update({
+      where: { id: section.id },
+      data: { orderPlannedOverride: addDays(new Date(), 200) },
+    });
+    await rescheduleProjectDates(project.id);
+
+    const after = await getStep(project.id, "2D2");
+    expect(after.plannedEndDate).toEqual(overrideEnd);
+  });
+
+  it("clearing the override goes back to tracking the formula automatically", async () => {
+    const project = await projectAtPhase2();
+    const before = await getStep(project.id, "2D2");
+    await prisma.phaseStep.update({
+      where: { id: before.id },
+      data: { plannedEndDateOverride: addDays(before.plannedEndDate!, 100) },
+    });
+    await rescheduleProjectDates(project.id);
+
+    await prisma.phaseStep.update({ where: { id: before.id }, data: { plannedEndDateOverride: null } });
+    await rescheduleProjectDates(project.id);
+
+    const after = await getStep(project.id, "2D2");
+    expect(after.plannedEndDate).toEqual(before.plannedEndDate);
+  });
+
+  it("PATCH /api/phase-steps/[id]/dates accepts 2D2's planned end now, and it sticks across an unrelated reschedule", async () => {
+    const project = await projectAtPhase2();
+    const twoD2 = await getStep(project.id, "2D2");
+    const overrideEnd = addDays(twoD2.plannedEndDate!, 30);
+
+    const res = await patchDates(twoD2.id, { plannedEndDate: overrideEnd.toISOString() });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(new Date(body.plannedEndDate)).toEqual(overrideEnd);
+
+    const items = await getProcurementItems(project.id);
+    const section = items.find((i) => i.itemType === "section")!;
+    await prisma.procurementItem.update({
+      where: { id: section.id },
+      data: { orderPlannedOverride: addDays(new Date(), 300) },
+    });
+    await rescheduleProjectDates(project.id);
+
+    const after = await getStep(project.id, "2D2");
+    expect(after.plannedEndDate).toEqual(overrideEnd);
+  });
+
+  it("PATCH .../dates with a null planned end resets 2D2 back to the current formula", async () => {
+    const project = await projectAtPhase2();
+    const twoD2 = await getStep(project.id, "2D2");
+    await patchDates(twoD2.id, { plannedEndDate: addDays(twoD2.plannedEndDate!, 30).toISOString() });
+
+    const res = await patchDates(twoD2.id, { plannedEndDate: null });
+    expect(res.status).toBe(200);
+
+    const after = await getStep(project.id, "2D2");
+    expect(after.plannedEndDate).toEqual(twoD2.plannedEndDate);
+  });
+
+  it("a Planned start sent for 2D2 has no effect — it's end-only, same as 3E, so nothing ever reads plannedStartDateOverride for it", async () => {
+    const project = await projectAtPhase2();
+    const twoD2 = await getStep(project.id, "2D2");
+    const res = await patchDates(twoD2.id, { plannedStartDate: addDays(new Date(), 5).toISOString() });
+    expect(res.status).toBe(200);
+    // 2D2's own planned start still tracks 2A's end exactly as before — rescheduleProjectDates
+    // never reads plannedStartDateOverride for 2D2 (see its own 2D2 handling), so the write above
+    // simply has nothing downstream that ever looks at it.
+    await rescheduleProjectDates(project.id);
+    const after = await getStep(project.id, "2D2");
+    expect(after.plannedStartDate).toEqual(twoD2.plannedStartDate);
+  });
+});
+
 describe("Actual-date edits cascade through the live Phase 1+2 schedule", () => {
   it("backfilling 1A's actual end date earlier pulls 1B's planned dates forward", async () => {
     const project = await createTestProjectDayOne({ visitUrgency: "hot" });

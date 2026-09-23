@@ -262,13 +262,18 @@ model PhaseStep {
   actualStartDate  DateTime? @map("actual_start_date") @db.Timestamptz(3)
   actualEndDate    DateTime? @map("actual_end_date") @db.Timestamptz(3)
 
-  // 3C2 ("Installation") only. The Installation planned window (see
-  // computeInstallationPlannedWindow, wired into rescheduleProjectDates) is only a rough
-  // default — planned_start_date/planned_end_date above track it automatically right up until
-  // an admin sets these, at which point the override wins outright and reschedule stops
-  // touching this step, the same "override always wins" rule every procurement/glass-PO stage's
-  // own xxx_planned_override column already follows (see POST /api/phase-steps/[id]/dates).
-  // Null clears the override and goes back to tracking the window. Null for every other step.
+  // 3C2 ("Installation") and 2D2 ("Final tight measurement at site") only — see
+  // COMPUTED_PLANNED_DATE_OVERRIDE_STEP_CODES. Each has its own computed default (the
+  // Installation planned window for 3C2, Section's Order-confirmed date + 18 working days for
+  // 2D2 — see computeInstallationPlannedWindow/computeExpectedFinalMeasurementDate, both wired
+  // into rescheduleProjectDates) that's only a rough default — planned_start_date/
+  // planned_end_date above track it automatically right up until an admin sets these, at which
+  // point the override wins outright and reschedule stops touching that field, the same
+  // "override always wins" rule every procurement/glass-PO stage's own xxx_planned_override
+  // column already follows (see POST /api/phase-steps/[id]/dates). 2D2 only ever uses
+  // plannedEndDateOverride (a single-day site visit has no meaningful start of its own — see
+  // MANUAL_PLANNED_END_ONLY_STEP_CODES). Null clears an override and goes back to tracking the
+  // computed default. Null for every other step.
   plannedStartDateOverride DateTime? @map("planned_start_date_override") @db.Timestamptz(3)
   plannedEndDateOverride   DateTime? @map("planned_end_date_override") @db.Timestamptz(3)
 
