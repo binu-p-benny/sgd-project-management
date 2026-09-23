@@ -27,6 +27,7 @@ import {
   computePhase2PlanAnchor,
   computeAllProcurementPlannedDates,
   computeInstallationPlannedWindow,
+  withLiveExpectedArrivalDates,
 } from "@/lib/procurement";
 import { findUpstreamDelay } from "@/lib/reschedule";
 import { maybeEarlyUnlockPhase3 } from "@/lib/step-actions";
@@ -319,9 +320,18 @@ export default async function ProjectDetailPage({
   ];
   const reviewedTaskIds = new Set((await getTaskReviewsByIds(reviewCandidateIds)).keys());
 
+  // Overdue detection reads each item's *live* planned arrival (same chain ProcurementTracker
+  // displays), not the frozen expectedArrivalDate column straight off project.procurementItems —
+  // see withLiveExpectedArrivalDates. Everything else on this page still reads
+  // project.procurementItems directly; only this effectiveStatus badge uses it.
+  const oneDForOverrun = project.phaseSteps.find((s) => s.stepCode === "1D");
   const effectiveStatus = getEffectiveOverallStatus(
     project.overallStatus,
-    projectHasOverrun(project.phaseSteps, project.procurementItems, project.glassPurchaseOrder),
+    projectHasOverrun(
+      project.phaseSteps,
+      withLiveExpectedArrivalDates(project.procurementItems, oneDForOverrun),
+      project.glassPurchaseOrder
+    ),
     project.procurementItems.some((i) => i.qcPassed === false) ||
       project.phaseSteps.some((s) => s.stepCode === "3E" && s.qcPassed === false) ||
       project.glassPurchaseOrder?.qcPassed === false
