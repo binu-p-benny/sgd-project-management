@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { isProcurementItemOverrun, isStepOverrun, getEffectiveOverallStatus, projectHasOverrun } from "@/lib/overrun";
+import { withLiveExpectedArrivalDates } from "@/lib/procurement";
 
 // Reused across every query below that needs projectHasOverrun's Glass PO argument — see its own
 // doc comment in overrun.ts for why these (unlike a ProcurementItem's other stages) are cheap:
@@ -17,6 +18,32 @@ const GLASS_PO_OVERRUN_SELECT = {
   arrivalPlannedDate: true,
   qcCheckedAt: true,
   qcPlannedDate: true,
+} as const;
+
+// A ProcurementItem's full override/actual chain — everything withLiveExpectedArrivalDates
+// needs to compute each item's *entire* live stage-by-stage lifecycle (see its own doc comment
+// in procurement.ts), reused across every query below that used to select just
+// {expectedArrivalDate, actualArrivalDate} — that frozen legacy column, and arrival-only scope,
+// both drift from what the procurement tracker itself displays as items actually progress.
+const PROCUREMENT_ITEM_OVERRUN_SELECT = {
+  itemType: true,
+  requirementCreatedAt: true,
+  quoteCreatedAt: true,
+  paymentSettledAt: true,
+  actualArrivalDate: true,
+  qcCheckedAt: true,
+  planAnchorOverride: true,
+  requirementPlannedOverride: true,
+  quotePlannedOverride: true,
+  paymentPlannedOverride: true,
+  orderPlannedOverride: true,
+  arrivalPlannedOverride: true,
+  qcPlannedOverride: true,
+  orderConfirmedAt: true,
+  materialDespatchAt: true,
+  materialDespatchPlannedOverride: true,
+  arrivedForPowderCoatingAt: true,
+  arrivedForPowderCoatingPlannedOverride: true,
 } as const;
 import { getServiceStatus, type ServiceStatus } from "@/lib/service";
 import type { Department, ItemType, OverallStatus, PaymentStatus, ProjectPhase, StepStatus } from "@prisma/client";
@@ -40,17 +67,18 @@ export async function getPhaseStatusSummary(): Promise<PhaseStatusCell[]> {
     select: {
       currentPhase: true,
       overallStatus: true,
-      phaseSteps: { select: { plannedEndDate: true, status: true } },
-      procurementItems: { select: { expectedArrivalDate: true, actualArrivalDate: true } },
+      phaseSteps: { select: { plannedEndDate: true, status: true, stepCode: true, actualEndDate: true, delayCategory: true } },
+      procurementItems: { select: PROCUREMENT_ITEM_OVERRUN_SELECT },
       glassPurchaseOrder: { select: GLASS_PO_OVERRUN_SELECT },
     },
   });
 
   const counts = new Map<string, number>();
   for (const p of projects) {
+    const oneD = p.phaseSteps.find((s) => s.stepCode === "1D");
     const status = getEffectiveOverallStatus(
       p.overallStatus,
-      projectHasOverrun(p.phaseSteps, p.procurementItems, p.glassPurchaseOrder)
+      projectHasOverrun(p.phaseSteps, withLiveExpectedArrivalDates(p.procurementItems, oneD), p.glassPurchaseOrder)
     );
     const key = `${p.currentPhase}::${status}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -80,8 +108,8 @@ export async function getProjectSituationCounts(): Promise<ProjectSituationCount
       createdAt: true,
       overallStatus: true,
       paymentStatus: true,
-      phaseSteps: { select: { plannedEndDate: true, status: true } },
-      procurementItems: { select: { expectedArrivalDate: true, actualArrivalDate: true } },
+      phaseSteps: { select: { plannedEndDate: true, status: true, stepCode: true, actualEndDate: true, delayCategory: true } },
+      procurementItems: { select: PROCUREMENT_ITEM_OVERRUN_SELECT },
       glassPurchaseOrder: { select: GLASS_PO_OVERRUN_SELECT },
     },
   });
@@ -101,9 +129,10 @@ export async function getProjectSituationCounts(): Promise<ProjectSituationCount
   };
 
   for (const p of projects) {
+    const oneD = p.phaseSteps.find((s) => s.stepCode === "1D");
     const status = getEffectiveOverallStatus(
       p.overallStatus,
-      projectHasOverrun(p.phaseSteps, p.procurementItems, p.glassPurchaseOrder)
+      projectHasOverrun(p.phaseSteps, withLiveExpectedArrivalDates(p.procurementItems, oneD), p.glassPurchaseOrder)
     );
     if (status === "on_track") counts.onTrack += 1;
     else if (status === "delayed") counts.delayed += 1;
@@ -264,15 +293,34 @@ export interface ProcurementDelayRow {
 
 export async function getProcurementDelayBreakdown(): Promise<ProcurementDelayRow[]> {
   const items = await prisma.procurementItem.findMany({
-    select: { itemType: true, expectedArrivalDate: true, actualArrivalDate: true },
+    select: {
+      projectId: true,
+      ...PROCUREMENT_ITEM_OVERRUN_SELECT,
+      project: {
+        select: { phaseSteps: { where: { stepCode: "1D" }, select: { plannedEndDate: true, actualEndDate: true, delayCategory: true } } },
+      },
+    },
   });
 
-  const byType = new Map<ItemType, { total: number; overrun: number }>();
+  // Grouped by project, same as unified-tasks.ts' buildProcurementStageTasks — sibling items in
+  // the same project share one 1D-derived anchor (see withLiveExpectedArrivalDates), so it's
+  // resolved once per project rather than once per item.
+  const itemsByProject = new Map<string, typeof items>();
   for (const item of items) {
-    const entry = byType.get(item.itemType) ?? { total: 0, overrun: 0 };
-    entry.total += 1;
-    if (isProcurementItemOverrun(item.expectedArrivalDate, item.actualArrivalDate)) entry.overrun += 1;
-    byType.set(item.itemType, entry);
+    const list = itemsByProject.get(item.projectId) ?? [];
+    list.push(item);
+    itemsByProject.set(item.projectId, list);
+  }
+
+  const byType = new Map<ItemType, { total: number; overrun: number }>();
+  for (const [, projectItems] of itemsByProject) {
+    const oneD = projectItems[0]?.project.phaseSteps[0];
+    for (const item of withLiveExpectedArrivalDates(projectItems, oneD)) {
+      const entry = byType.get(item.itemType) ?? { total: 0, overrun: 0 };
+      entry.total += 1;
+      if (isProcurementItemOverrun(item.expectedArrivalDate, item.actualArrivalDate)) entry.overrun += 1;
+      byType.set(item.itemType, entry);
+    }
   }
 
   const order: ItemType[] = ["section", "hardware", "gasket"];
@@ -387,17 +435,18 @@ export async function getProjectProgressList(
       name: true,
       currentPhase: true,
       overallStatus: true,
-      phaseSteps: { select: { status: true, plannedEndDate: true } },
-      procurementItems: { select: { expectedArrivalDate: true, actualArrivalDate: true } },
+      phaseSteps: { select: { status: true, plannedEndDate: true, stepCode: true, actualEndDate: true, delayCategory: true } },
+      procurementItems: { select: PROCUREMENT_ITEM_OVERRUN_SELECT },
       glassPurchaseOrder: { select: GLASS_PO_OVERRUN_SELECT },
     },
   });
 
   const rows: ProjectProgressRow[] = projects.map((p) => {
     const completedSteps = p.phaseSteps.filter((s) => s.status === "completed").length;
+    const oneD = p.phaseSteps.find((s) => s.stepCode === "1D");
     const effectiveStatus = getEffectiveOverallStatus(
       p.overallStatus,
-      projectHasOverrun(p.phaseSteps, p.procurementItems, p.glassPurchaseOrder)
+      projectHasOverrun(p.phaseSteps, withLiveExpectedArrivalDates(p.procurementItems, oneD), p.glassPurchaseOrder)
     );
     return {
       projectId: p.id,

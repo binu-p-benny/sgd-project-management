@@ -255,18 +255,21 @@ export function matchesPhaseProgressFilter(
  * a project whose install window spans the whole range should still surface even if it actually
  * started before `from`, since it's still installing somewhere inside the chosen window.
  *
- * False for a project that hasn't reached 3C2 yet, or has it but with no planned dates recorded
- * (shouldn't happen in practice — every Phase 3 step gets planned dates on creation — but a
- * missing bound can't overlap anything, so treating it as a non-match is the safe default).
+ * Falls back to `forecast` (see computeProjectInstallationForecast) when 3C2 doesn't exist yet as
+ * a real step, or exists but has no planned dates recorded (shouldn't happen in practice — every
+ * Phase 3 step gets planned dates on creation) — same as InstallationWindowCard staying visible
+ * on the project detail page before 3C2 is seeded. False when neither is available.
  */
 export function matchesInstallationWindowFilter(
   steps: { stepCode: string; plannedStartDate: Date | null; plannedEndDate: Date | null }[],
+  forecast: { start: Date; end: Date } | null,
   from: Date | null,
   to: Date | null
 ): boolean {
   const step = steps.find((s) => s.stepCode === "3C2");
-  if (!step || !step.plannedStartDate || !step.plannedEndDate) return false;
-  if (from && step.plannedEndDate < from) return false;
-  if (to && step.plannedStartDate > to) return false;
+  const window = step?.plannedStartDate && step?.plannedEndDate ? { start: step.plannedStartDate, end: step.plannedEndDate } : forecast;
+  if (!window) return false;
+  if (from && window.end < from) return false;
+  if (to && window.start > to) return false;
   return true;
 }

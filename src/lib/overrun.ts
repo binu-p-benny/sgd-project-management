@@ -110,25 +110,39 @@ function overdueGlassPOStage(
   return found ? { label: found.label, plannedDate: found.planned! } : null;
 }
 
+/** Same idea as overdueGlassPOStage, for one ProcurementItem's own stage list (see
+ *  procurement.ts's procurementItemStages, embedded on each item as `.stages` by
+ *  withLiveExpectedArrivalDates) — the first of *any* of its stages that's overdue, not just
+ *  Actual arrival. */
+function overdueProcurementItemStage(
+  stages: { label: string; planned: Date | null; actual: Date | null }[]
+): { label: string; plannedDate: Date } | null {
+  const found = stages.find((s) => isProcurementStageOverrun(s.planned, s.actual));
+  return found ? { label: found.label, plannedDate: found.planned! } : null;
+}
+
 /**
- * Whether anything on this project is currently overdue — a phase step past its planned end, a
- * procurement item's arrival past its expected date, or (see overdueGlassPOStage) any of the
- * Glass PO's own 6 stages past its own planned date. That last one used to be missed entirely —
- * a project could sit at "On track" while its Glass PO's Requirement created (say) was genuinely
- * overdue, since this function never looked at glassPurchaseOrder at all. A ProcurementItem's
- * *other* stages (Requirement/Quote/Payment/Order/etc.) stay out of scope here on purpose: unlike
- * the Glass PO, they have no stored planned-date column of their own — their planned dates are
- * computed live from the project's phase-2 anchor and each item's own overrides (see
- * procurement.ts), which isn't cheap to redo for every project on a list/dashboard page.
+ * Whether anything on this project is currently overdue — a phase step past its planned end, any
+ * stage of a procurement item's own lifecycle past its (live-computed) planned date, or (see
+ * overdueGlassPOStage) any of the Glass PO's own 6 stages past its own planned date. The Glass PO
+ * check used to be missed entirely — a project could sit at "On track" while its Requirement
+ * created (say) was genuinely overdue, since this function never looked at glassPurchaseOrder at
+ * all — and a ProcurementItem's own non-arrival stages (Quote/Payment/Order/etc.) were left out
+ * on purpose for the same reason a while after that: unlike the Glass PO, they have no stored
+ * planned-date column of their own, and redoing the live anchor+chain computation for every item
+ * on every project was assumed too expensive for a list/dashboard page to check just for this.
+ * That's no longer true — every caller already runs that computation to get a live (not frozen)
+ * arrival date via withLiveExpectedArrivalDates, so checking the item's other stages costs
+ * nothing extra; `.stages` is that same call's by-product (see procurement.ts).
  */
 export function projectHasOverrun(
   steps: { plannedEndDate: Date | null; status: "not_started" | "in_progress" | "blocked" | "completed" }[],
-  procurementItems: { expectedArrivalDate: Date | null; actualArrivalDate: Date | null }[],
+  procurementItems: { stages: { label: string; planned: Date | null; actual: Date | null }[] }[],
   glassPurchaseOrder: GlassPurchaseOrderOverrunFields | null
 ): boolean {
   return (
     steps.some((s) => isStepOverrun(s.plannedEndDate, s.status)) ||
-    procurementItems.some((i) => isProcurementItemOverrun(i.expectedArrivalDate, i.actualArrivalDate)) ||
+    procurementItems.some((i) => overdueProcurementItemStage(i.stages) !== null) ||
     (!!glassPurchaseOrder && overdueGlassPOStage(glassPurchaseOrder) !== null)
   );
 }
@@ -143,49 +157,65 @@ export function getProjectBlockedStep<
   return [...steps].sort((a, b) => a.stepCode.localeCompare(b.stepCode)).find((s) => s.status === "blocked") ?? null;
 }
 
-/** The first concrete cause behind a "delayed" effective status — the exact same signals
- *  projectHasOverrun checks (a step past its planned end, an item's arrival past its expected
- *  date, or a Glass PO stage past its own planned date), so this only ever needs calling once
- *  that's already true. Steps checked first, earliest by step_code, so the earliest hold-up in
- *  workflow order wins over a procurement item's arrival slip or a Glass PO stage slip; between
- *  those last two, the procurement item wins (arbitrary but stable — matches this function's
- *  existing order from before Glass PO was added here). Raw data only — no label text — so
- *  callers stay free to word it however their screen wants (see /projects' getStatusReasonText). */
+/** Every concrete cause behind a "delayed" effective status — the exact same signals
+ *  projectHasOverrun checks (a step past its planned end, a procurement item's own stage past
+ *  its planned date, or a Glass PO stage past its own planned date), except this collects *all*
+ *  of them rather than stopping at the first: two procurement items (say Hardware and Gasket)
+ *  can genuinely be overdue on different stages at the same time, and a project reading only one
+ *  of them under-reports what's actually holding it up. Steps first, earliest by step_code; then
+ *  one entry per procurement item (its own earliest overdue stage — an item can only ever be
+ *  stuck at one stage at a time, since each depends on the one before it), in itemType order;
+ *  then the Glass PO if its own earliest stage is overdue. Raw data only — no label text — so
+ *  callers stay free to word it however their screen wants (see /projects' getStatusReasonText).
+ */
 export type ProjectDelayReason =
   | { kind: "step"; stepCode: string; stepName: string; plannedEndDate: Date }
-  | { kind: "item"; itemType: string; expectedArrivalDate: Date }
+  | { kind: "item"; itemType: string; stageLabel: string; plannedDate: Date }
   | { kind: "glass_po"; stageLabel: string; plannedDate: Date };
 
-export function getProjectDelayReason(
+export function getProjectDelayReasons(
   steps: {
     stepCode: string;
     stepName: string;
     plannedEndDate: Date | null;
     status: "not_started" | "in_progress" | "blocked" | "completed";
   }[],
-  procurementItems: { itemType: string; expectedArrivalDate: Date | null; actualArrivalDate: Date | null }[],
+  procurementItems: { itemType: string; stages: { label: string; planned: Date | null; actual: Date | null }[] }[],
   glassPurchaseOrder: GlassPurchaseOrderOverrunFields | null
-): ProjectDelayReason | null {
-  const overdueStep = [...steps]
+): ProjectDelayReason[] {
+  const reasons: ProjectDelayReason[] = [];
+
+  const overdueSteps = [...steps]
     .sort((a, b) => a.stepCode.localeCompare(b.stepCode))
-    .find((s) => isStepOverrun(s.plannedEndDate, s.status));
-  if (overdueStep) {
-    return {
-      kind: "step",
-      stepCode: overdueStep.stepCode,
-      stepName: overdueStep.stepName,
-      plannedEndDate: overdueStep.plannedEndDate!,
-    };
+    .filter((s) => isStepOverrun(s.plannedEndDate, s.status));
+  for (const step of overdueSteps) {
+    reasons.push({ kind: "step", stepCode: step.stepCode, stepName: step.stepName, plannedEndDate: step.plannedEndDate! });
   }
-  const overdueItem = procurementItems.find((i) => isProcurementItemOverrun(i.expectedArrivalDate, i.actualArrivalDate));
-  if (overdueItem) {
-    return { kind: "item", itemType: overdueItem.itemType, expectedArrivalDate: overdueItem.expectedArrivalDate! };
+
+  for (const item of procurementItems) {
+    const stage = overdueProcurementItemStage(item.stages);
+    if (stage) {
+      reasons.push({ kind: "item", itemType: item.itemType, stageLabel: stage.label, plannedDate: stage.plannedDate });
+    }
   }
+
   const glassStage = glassPurchaseOrder ? overdueGlassPOStage(glassPurchaseOrder) : null;
   if (glassStage) {
-    return { kind: "glass_po", stageLabel: glassStage.label, plannedDate: glassStage.plannedDate };
+    reasons.push({ kind: "glass_po", stageLabel: glassStage.label, plannedDate: glassStage.plannedDate });
   }
-  return null;
+
+  return reasons;
+}
+
+/** The single highest-priority reason — same priority order getProjectDelayReasons already
+ *  returns them in (steps, then procurement items, then Glass PO), just the first one. Kept
+ *  alongside the plural version for a caller that only needs "the" reason, not every one. */
+export function getProjectDelayReason(
+  steps: Parameters<typeof getProjectDelayReasons>[0],
+  procurementItems: Parameters<typeof getProjectDelayReasons>[1],
+  glassPurchaseOrder: Parameters<typeof getProjectDelayReasons>[2]
+): ProjectDelayReason | null {
+  return getProjectDelayReasons(steps, procurementItems, glassPurchaseOrder)[0] ?? null;
 }
 
 /** The first concrete cause behind a "qc_failed" effective status — same signals

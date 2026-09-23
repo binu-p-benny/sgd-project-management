@@ -11,12 +11,16 @@ import {
   getEffectiveOverallStatus,
   getProjectBlockedStep,
   getProjectDelayReason,
+  getProjectDelayReasons,
   getProjectQcFailureReason,
   type GlassPurchaseOrderOverrunFields,
 } from "@/lib/overrun";
 
 const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
 const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+function daysBefore(n: number): Date {
+  return new Date(Date.now() - n * 24 * 60 * 60 * 1000);
+}
 // Midnight today — how every planned date in this app is actually stored (a date input, not a
 // time). Regressing to a raw "now > expected" comparison would make this read as overdue the
 // moment the clock ticks past 00:00:00, which is the exact bug this whole file guards against.
@@ -158,16 +162,43 @@ describe("projectHasOverrun", () => {
       projectHasOverrun([{ plannedEndDate: yesterday, status: "in_progress" }], [], null)
     ).toBe(true);
   });
-  it("true if any procurement item is overrun", () => {
+  it("true if a procurement item's arrival is overrun", () => {
     expect(
-      projectHasOverrun([], [{ expectedArrivalDate: yesterday, actualArrivalDate: null }], null)
+      projectHasOverrun(
+        [],
+        [{ stages: [{ label: "Actual arrival", planned: yesterday, actual: null }] }],
+        null
+      )
+    ).toBe(true);
+  });
+  // Regression for the real DIJIL project: Hardware/Gasket's Payment done and Order confirmed
+  // were overdue while Section's own Actual arrival wasn't — projectHasOverrun used to check
+  // arrival alone, so a project like this read "On track" despite genuinely overdue work.
+  it("true if a procurement item's *non-arrival* stage (e.g. Payment done) is overrun, even with arrival itself not due yet", () => {
+    expect(
+      projectHasOverrun(
+        [],
+        [
+          {
+            stages: [
+              { label: "Requirement created", planned: yesterday, actual: yesterday },
+              { label: "Quote created", planned: yesterday, actual: yesterday },
+              { label: "Payment done", planned: yesterday, actual: null },
+              { label: "Order confirmed", planned: null, actual: null },
+              { label: "Actual arrival", planned: tomorrow, actual: null },
+              { label: "QC checked", planned: null, actual: null },
+            ],
+          },
+        ],
+        null
+      )
     ).toBe(true);
   });
   it("false if nothing is overrun", () => {
     expect(
       projectHasOverrun(
         [{ plannedEndDate: tomorrow, status: "in_progress" }],
-        [{ expectedArrivalDate: tomorrow, actualArrivalDate: null }],
+        [{ stages: [{ label: "Actual arrival", planned: tomorrow, actual: null }] }],
         null
       )
     ).toBe(false);
@@ -247,7 +278,7 @@ describe("getProjectDelayReason", () => {
     expect(
       getProjectDelayReason(
         [{ stepCode: "1B", stepName: "Site visit", plannedEndDate: tomorrow, status: "in_progress" }],
-        [{ itemType: "hardware", expectedArrivalDate: tomorrow, actualArrivalDate: null }],
+        [{ itemType: "hardware", stages: [{ label: "Actual arrival", planned: tomorrow, actual: null }] }],
         null
       )
     ).toBeNull();
@@ -266,15 +297,37 @@ describe("getProjectDelayReason", () => {
   it("falls back to an overdue procurement item's arrival once no step is overrun", () => {
     const reason = getProjectDelayReason(
       [{ stepCode: "1B", stepName: "Site visit", plannedEndDate: tomorrow, status: "in_progress" }],
-      [{ itemType: "hardware", expectedArrivalDate: yesterday, actualArrivalDate: null }],
+      [{ itemType: "hardware", stages: [{ label: "Actual arrival", planned: yesterday, actual: null }] }],
       null
     );
-    expect(reason).toEqual({ kind: "item", itemType: "hardware", expectedArrivalDate: yesterday });
+    expect(reason).toEqual({ kind: "item", itemType: "hardware", stageLabel: "Actual arrival", plannedDate: yesterday });
+  });
+  // Regression for the real DIJIL project (see projectHasOverrun's own test above) — the reason
+  // text should name whichever stage is actually overdue, not always say "arrival".
+  it("names a procurement item's own earliest overdue *non-arrival* stage, in that item's fixed stage order", () => {
+    const reason = getProjectDelayReason(
+      [{ stepCode: "1B", stepName: "Site visit", plannedEndDate: tomorrow, status: "in_progress" }],
+      [
+        {
+          itemType: "hardware",
+          stages: [
+            { label: "Requirement created", planned: yesterday, actual: yesterday },
+            { label: "Quote created", planned: yesterday, actual: yesterday },
+            { label: "Payment done", planned: yesterday, actual: null },
+            { label: "Order confirmed", planned: null, actual: null },
+            { label: "Actual arrival", planned: tomorrow, actual: null },
+            { label: "QC checked", planned: null, actual: null },
+          ],
+        },
+      ],
+      null
+    );
+    expect(reason).toEqual({ kind: "item", itemType: "hardware", stageLabel: "Payment done", plannedDate: yesterday });
   });
   it("falls back to an overdue Glass PO stage once no step or procurement item is overrun", () => {
     const reason = getProjectDelayReason(
       [{ stepCode: "1B", stepName: "Site visit", plannedEndDate: tomorrow, status: "in_progress" }],
-      [{ itemType: "hardware", expectedArrivalDate: tomorrow, actualArrivalDate: null }],
+      [{ itemType: "hardware", stages: [{ label: "Actual arrival", planned: tomorrow, actual: null }] }],
       emptyGlassPO({ requirementPlannedDate: yesterday })
     );
     expect(reason).toEqual({ kind: "glass_po", stageLabel: "Requirement created", plannedDate: yesterday });
@@ -286,6 +339,75 @@ describe("getProjectDelayReason", () => {
       emptyGlassPO({ requirementPlannedDate: yesterday, requirementCreatedAt: yesterday, quotePlannedDate: yesterday })
     );
     expect(reason).toEqual({ kind: "glass_po", stageLabel: "Quote created", plannedDate: yesterday });
+  });
+});
+
+describe("getProjectDelayReasons", () => {
+  it("empty array when nothing is overrun", () => {
+    expect(
+      getProjectDelayReasons(
+        [{ stepCode: "1B", stepName: "Site visit", plannedEndDate: tomorrow, status: "in_progress" }],
+        [{ itemType: "hardware", stages: [{ label: "Actual arrival", planned: tomorrow, actual: null }] }],
+        null
+      )
+    ).toEqual([]);
+  });
+  // Regression for the real DIJIL project: Hardware's Payment done and Gasket's Quote created
+  // were overdue at the same time — the old single-reason function only ever reported one of
+  // them, under-stating what was actually holding the project up.
+  it("lists every simultaneously overdue procurement item, not just the first one found", () => {
+    const eightDaysAgo = daysBefore(8);
+    const reasons = getProjectDelayReasons(
+      [],
+      [
+        {
+          itemType: "hardware",
+          stages: [
+            { label: "Requirement created", planned: eightDaysAgo, actual: eightDaysAgo },
+            { label: "Quote created", planned: eightDaysAgo, actual: eightDaysAgo },
+            { label: "Payment done", planned: yesterday, actual: null },
+            { label: "Order confirmed", planned: null, actual: null },
+            { label: "Actual arrival", planned: tomorrow, actual: null },
+            { label: "QC checked", planned: null, actual: null },
+          ],
+        },
+        {
+          itemType: "gasket",
+          stages: [
+            { label: "Requirement created", planned: eightDaysAgo, actual: eightDaysAgo },
+            { label: "Quote created", planned: eightDaysAgo, actual: null },
+            { label: "Payment done", planned: null, actual: null },
+            { label: "Order confirmed", planned: null, actual: null },
+            { label: "Actual arrival", planned: null, actual: null },
+            { label: "QC checked", planned: null, actual: null },
+          ],
+        },
+      ],
+      null
+    );
+    expect(reasons).toEqual([
+      { kind: "item", itemType: "hardware", stageLabel: "Payment done", plannedDate: yesterday },
+      { kind: "item", itemType: "gasket", stageLabel: "Quote created", plannedDate: eightDaysAgo },
+    ]);
+  });
+  it("lists every overdue step too, alongside overdue procurement items", () => {
+    const reasons = getProjectDelayReasons(
+      [
+        { stepCode: "1B", stepName: "Site visit", plannedEndDate: yesterday, status: "in_progress" },
+        { stepCode: "1D", stepName: "Revised quote and payment", plannedEndDate: tomorrow, status: "not_started" },
+      ],
+      [{ itemType: "hardware", stages: [{ label: "Payment done", planned: yesterday, actual: null }] }],
+      null
+    );
+    expect(reasons).toEqual([
+      { kind: "step", stepCode: "1B", stepName: "Site visit", plannedEndDate: yesterday },
+      { kind: "item", itemType: "hardware", stageLabel: "Payment done", plannedDate: yesterday },
+    ]);
+  });
+  it("getProjectDelayReason (singular) is just this list's first entry", () => {
+    const steps = [{ stepCode: "1B", stepName: "Site visit", plannedEndDate: yesterday, status: "in_progress" as const }];
+    const items = [{ itemType: "hardware", stages: [{ label: "Payment done", planned: yesterday, actual: null }] }];
+    expect(getProjectDelayReason(steps, items, null)).toEqual(getProjectDelayReasons(steps, items, null)[0]);
   });
 });
 

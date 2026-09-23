@@ -4,9 +4,7 @@ import {
   computePhase2PlanAnchor,
   computeSectionOrderConfirmedPlanned,
   computeExpectedFinalMeasurementDate,
-  computeSectionQCPlanned,
-  computeAllProcurementPlannedDates,
-  computeInstallationPlannedWindow,
+  computeProjectInstallationForecast,
 } from "@/lib/procurement";
 
 function addDays(date: Date, days: number): Date {
@@ -86,10 +84,13 @@ export function findUpstreamDelay(
  * Section/hardware/gasket's own "Actual arrival" planned dates (see computeItemArrivalPlanned),
  * since 2D1 can't be done until every item has arrived. 2D2's is Section's own "Order confirmed"
  * planned date + 18 working days (see computeSectionOrderConfirmedPlanned /
- * computeExpectedFinalMeasurementDate). Both steps' planned *start* still follows the generic
- * dependsOn rule (2A's end). Before procurement items exist yet (pre-1D, day one), or while the
- * relevant item(s) don't resolve to a date, each falls back to the same start+duration estimate
- * every other step uses, so it still gets an immediate day-one forecast rather than sitting blank.
+ * computeExpectedFinalMeasurementDate) — unless an admin's own override (see
+ * COMPUTED_PLANNED_DATE_OVERRIDE_STEP_CODES, plannedEndDateOverride) is set, which always wins
+ * over that formula, same rule 3C2's own override follows. Both steps' planned *start* still
+ * follows the generic dependsOn rule (2A's end). Before procurement items exist yet (pre-1D, day
+ * one), or while the relevant item(s) don't resolve to a date, each falls back to the same
+ * start+duration estimate every other step uses, so it still gets an immediate day-one forecast
+ * rather than sitting blank — an override set before then simply has nothing to win over yet.
  */
 export async function rescheduleProjectDates(projectId: string): Promise<void> {
   const steps = await prisma.phaseStep.findMany({
@@ -105,6 +106,11 @@ export async function rescheduleProjectDates(projectId: string): Promise<void> {
       plannedEndDate: true,
       actualEndDate: true,
       delayCategory: true,
+      // 2D2 only (see COMPUTED_PLANNED_DATE_OVERRIDE_STEP_CODES) — 2D2 is the one Phase 1/2 step
+      // with an admin override, so it's read here in the main query rather than a separate
+      // findFirst the way 3C2's own override is (3C2 sits entirely outside this query, excluded
+      // by the phase filter above; 2D2 is already in `steps`, so this is simpler).
+      plannedEndDateOverride: true,
     },
   });
 
@@ -145,17 +151,13 @@ export async function rescheduleProjectDates(projectId: string): Promise<void> {
     ? computeExpectedFinalMeasurementDate(sectionOrderConfirmedPlanned)
     : null;
 
-  // 3C2 ("Installation")'s own planned start/end — see computeInstallationPlannedWindow. Reuses
-  // the exact same procurementItems/phase2PlanAnchor this function already loaded above, so this
-  // can never drift from what the project detail page's own Installation planned window card
-  // shows. Resolves to a forecast as soon as phase2PlanAnchor does (1D completing), well before
-  // 3C2 itself exists — harmless: the update below only ever applies once there's a real 3C2 row
-  // to apply it to.
-  const sectionQCPlanned = sectionItem ? computeSectionQCPlanned(sectionItem, phase2PlanAnchor) : null;
-  const itemQCPlannedDates = procurementItems.map(
-    (item) => computeAllProcurementPlannedDates(item, phase2PlanAnchor, sectionQCPlanned).qc
-  );
-  const installationWindow = computeInstallationPlannedWindow(itemQCPlannedDates);
+  // 3C2 ("Installation")'s own planned start/end — see computeProjectInstallationForecast. Reuses
+  // the exact same procurementItems/oneD this function already loaded above, so this can never
+  // drift from what the project detail page's own Installation planned window card (and the
+  // /projects installation filter/schedule export, which read the same function) show. Resolves
+  // to a forecast as soon as 1D completes, well before 3C2 itself exists — harmless: the update
+  // below only ever applies once there's a real 3C2 row to apply it to.
+  const installationWindow = computeProjectInstallationForecast(procurementItems, oneD);
 
   // Ground truth for a step's "end", for the purposes of scheduling what comes after it:
   // a completed step's actual end date if known, else its current planned end date. A step
@@ -202,11 +204,17 @@ export async function rescheduleProjectDates(projectId: string): Promise<void> {
           ? null
           : step.stepCode === "2D1" && materialsArrivedPlanned !== null
             ? materialsArrivedPlanned
-            : step.stepCode === "2D2" && finalMeasurementPlanned !== null
-              ? finalMeasurementPlanned
-              : step.plannedDurationDays !== null
-                ? addDays(newStart, step.plannedDurationDays)
-                : null;
+            : // An admin's own override (see COMPUTED_PLANNED_DATE_OVERRIDE_STEP_CODES) always wins
+              // over the computed default, same "override always wins" rule 3C2's own handling
+              // below follows — the formula is only ever a rough default for whichever half hasn't
+              // been overridden.
+              step.stepCode === "2D2" && step.plannedEndDateOverride !== null
+              ? step.plannedEndDateOverride
+              : step.stepCode === "2D2" && finalMeasurementPlanned !== null
+                ? finalMeasurementPlanned
+                : step.plannedDurationDays !== null
+                  ? addDays(newStart, step.plannedDurationDays)
+                  : null;
 
       const prevStart = updates.get(step.stepCode)?.plannedStartDate ?? step.plannedStartDate;
       const prevEnd = updates.get(step.stepCode)?.plannedEndDate ?? step.plannedEndDate;

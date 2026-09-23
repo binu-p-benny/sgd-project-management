@@ -19,7 +19,9 @@ import {
   computeItemArrivalPlanned,
   computeSectionQCPlanned,
   computeAllProcurementPlannedDates,
+  withLiveExpectedArrivalDates,
   computeInstallationPlannedWindow,
+  computeProjectInstallationForecast,
   INSTALLATION_WINDOW_START_OFFSET_DAYS,
   INSTALLATION_WINDOW_END_OFFSET_DAYS,
   type ProcurementItemArrivalInputs,
@@ -521,6 +523,92 @@ describe("computeAllProcurementPlannedDates: every stage's Planned date for one 
   });
 });
 
+describe("withLiveExpectedArrivalDates: overdue detection reads each item's live planned arrival, not the frozen legacy column", () => {
+  const oneD = {
+    plannedEndDate: new Date("2026-08-23T00:00:00.000Z"),
+    actualEndDate: new Date("2026-08-23T00:00:00.000Z"),
+    delayCategory: null,
+  };
+  const emptyFields: Omit<ProcurementItemArrivalInputs, "itemType"> & {
+    requirementCreatedAt: Date | null;
+    quoteCreatedAt: Date | null;
+    paymentSettledAt: Date | null;
+    qcCheckedAt: Date | null;
+  } = {
+    planAnchorOverride: null,
+    requirementPlannedOverride: null,
+    quotePlannedOverride: null,
+    paymentPlannedOverride: null,
+    orderPlannedOverride: null,
+    arrivalPlannedOverride: null,
+    qcPlannedOverride: null,
+    orderConfirmedAt: null,
+    materialDespatchAt: null,
+    materialDespatchPlannedOverride: null,
+    arrivedForPowderCoatingAt: null,
+    arrivedForPowderCoatingPlannedOverride: null,
+    requirementCreatedAt: null,
+    quoteCreatedAt: null,
+    paymentSettledAt: null,
+    qcCheckedAt: null,
+  };
+
+  // Regression for the real DIJIL project: Requirement was created back when a naive
+  // requirement+21-day estimate (computeExpectedArrivalDate, the legacy stored column) would
+  // already have passed, but the item has since actually reached Arrived for powder coating —
+  // its *live* planned arrival (7 working days after that real date, same as the tracker itself
+  // shows) lands well after today, not overdue at all.
+  it("a section item already through despatch and powder coating gets its live arrival, not a frozen expected_arrival_date", () => {
+    const arrivedForPowderCoatingAt = new Date("2026-09-17T00:00:00.000Z");
+    const item = {
+      itemType: "section" as const,
+      ...emptyFields,
+      actualArrivalDate: null,
+      orderConfirmedAt: new Date("2026-08-25T00:00:00.000Z"),
+      materialDespatchAt: new Date("2026-09-01T00:00:00.000Z"),
+      arrivedForPowderCoatingAt,
+    };
+
+    const [result] = withLiveExpectedArrivalDates([item], oneD);
+
+    expect(result.expectedArrivalDate).toEqual(computeExpectedSectionArrivalDate(arrivedForPowderCoatingAt));
+    // The legacy anchor-off-Requirement formula this replaces would have put it 21 days after a
+    // Requirement date months earlier — well before today; the live one lands after the actual
+    // powder-coating date it's chained from.
+    expect(result.expectedArrivalDate!.getTime()).toBeGreaterThan(arrivedForPowderCoatingAt.getTime());
+  });
+
+  it("hardware/gasket items in the same project each get their own live arrival, independent of section's", () => {
+    const sectionItem = {
+      itemType: "section" as const,
+      ...emptyFields,
+      actualArrivalDate: null,
+      orderConfirmedAt: new Date("2026-08-25T00:00:00.000Z"),
+      materialDespatchAt: new Date("2026-09-01T00:00:00.000Z"),
+      arrivedForPowderCoatingAt: new Date("2026-09-17T00:00:00.000Z"),
+    };
+    const hardwareItem = { itemType: "hardware" as const, ...emptyFields, actualArrivalDate: null };
+
+    const [, hardwareResult] = withLiveExpectedArrivalDates([sectionItem, hardwareItem], oneD);
+
+    const phase2PlanAnchor = computePhase2PlanAnchor(oneD.plannedEndDate, oneD.actualEndDate, oneD.delayCategory);
+    expect(hardwareResult.expectedArrivalDate).toEqual(computeItemArrivalPlanned(hardwareItem, phase2PlanAnchor));
+  });
+
+  it("preserves every other field on the item (e.g. qcPassed) untouched", () => {
+    const item = { itemType: "gasket" as const, ...emptyFields, actualArrivalDate: null, qcPassed: false };
+    const [result] = withLiveExpectedArrivalDates<typeof item>([item], oneD);
+    expect(result.qcPassed).toBe(false);
+    expect(result.itemType).toBe("gasket");
+  });
+
+  it("falls back to no live anchor (null expectedArrivalDate) when 1D hasn't completed yet", () => {
+    const item = { itemType: "hardware" as const, ...emptyFields, actualArrivalDate: null };
+    const [result] = withLiveExpectedArrivalDates([item], undefined);
+    expect(result.expectedArrivalDate).toBeNull();
+  });
+});
+
 describe("computeInstallationPlannedWindow: QC checked planned date + 10 days (start) / + 22 days (end), Sundays not counted", () => {
   const phase2PlanAnchor = new Date("2026-08-24T00:00:00.000Z"); // Monday
   const emptyFields: Omit<ProcurementItemArrivalInputs, "itemType"> = {
@@ -617,5 +705,53 @@ describe("computeInstallationPlannedWindow: QC checked planned date + 10 days (s
     ])!;
 
     expect(result.qcPlanned).toEqual(overrideQC);
+  });
+});
+
+describe("computeProjectInstallationForecast: the same forecast collapsed into one call from raw procurement items + 1D, for callers that don't already have phase2PlanAnchor/sectionQCPlanned in scope (the /projects installation filter, the schedule export)", () => {
+  const oneD = {
+    plannedEndDate: new Date("2026-08-23T00:00:00.000Z"),
+    actualEndDate: new Date("2026-08-23T00:00:00.000Z"),
+    delayCategory: null,
+  };
+  const emptyFields: Omit<ProcurementItemArrivalInputs, "itemType"> = {
+    planAnchorOverride: null,
+    requirementPlannedOverride: null,
+    quotePlannedOverride: null,
+    paymentPlannedOverride: null,
+    orderPlannedOverride: null,
+    arrivalPlannedOverride: null,
+    qcPlannedOverride: null,
+    orderConfirmedAt: null,
+    materialDespatchAt: null,
+    materialDespatchPlannedOverride: null,
+    arrivedForPowderCoatingAt: null,
+    arrivedForPowderCoatingPlannedOverride: null,
+  };
+
+  it("matches the manual phase2PlanAnchor -> sectionQCPlanned -> computeAllProcurementPlannedDates chain exactly", () => {
+    const items = (["section", "hardware", "gasket"] as const).map((itemType) => ({ itemType, ...emptyFields }));
+    const phase2PlanAnchor = computePhase2PlanAnchor(oneD.plannedEndDate, oneD.actualEndDate, oneD.delayCategory);
+    const sectionQCPlanned = computeSectionQCPlanned(items[0], phase2PlanAnchor);
+    const expected = computeInstallationPlannedWindow(
+      items.map((item) => computeAllProcurementPlannedDates(item, phase2PlanAnchor, sectionQCPlanned).qc)
+    );
+
+    expect(computeProjectInstallationForecast(items, oneD)).toEqual(expected);
+  });
+
+  it("null when 1D hasn't completed yet — nothing forecastable before the shared plan anchor exists", () => {
+    const items = (["section", "hardware", "gasket"] as const).map((itemType) => ({ itemType, ...emptyFields }));
+    expect(computeProjectInstallationForecast(items, undefined)).toBeNull();
+  });
+
+  it("a hardware QC override later than Section's still pulls the whole forecast out to it", () => {
+    const overrideQC = new Date("2027-03-01T00:00:00.000Z");
+    const items = [
+      { itemType: "section" as const, ...emptyFields },
+      { itemType: "hardware" as const, ...emptyFields, qcPlannedOverride: overrideQC },
+    ];
+
+    expect(computeProjectInstallationForecast(items, oneD)!.qcPlanned).toEqual(overrideQC);
   });
 });

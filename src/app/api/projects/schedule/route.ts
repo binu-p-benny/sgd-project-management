@@ -3,6 +3,7 @@ import ExcelJS from "exceljs";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { matchesInstallationWindowFilter } from "@/lib/project-filters";
+import { computeProjectInstallationForecast } from "@/lib/procurement";
 
 // 3C1 and 3C2 are the only phase steps this sheet needs directly — everything else comes off
 // the project's Glass PO row (see COLUMNS below). Kept as a typed tuple so the prisma `in` filter
@@ -146,8 +147,9 @@ function buildWorkbook(
 
 /** Human label for the currently-applied window, for the sheet's own title band — e.g. "Sep 2026"
  *  for a single-month range, "Jul–Sep 2026" spanning months, or a generic fallback with no range
- *  applied at all (the export then covers every project that's reached 3C2, same as the
- *  /projects list itself shows with the filter cleared). */
+ *  applied at all (the export then covers every project that's reached 3C2 or already has a
+ *  computable installation forecast, same as the /projects list itself shows with the filter
+ *  cleared). */
 function describeWindow(from: Date | null, to: Date | null): string {
   if (!from && !to) return "Installation Schedule — All Projects";
   const fmt = (d: Date) => `${MONTH_SHORT[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
@@ -174,8 +176,10 @@ export async function GET(request: NextRequest) {
   const projects = await prisma.project.findMany({
     include: {
       client: { select: { name: true } },
+      // "1D" is fetched alongside 3C1/3C2 purely to resolve computeProjectInstallationForecast's
+      // anchor below — not shown in the sheet itself.
       phaseSteps: {
-        where: { stepCode: { in: [...SCHEDULE_STEP_CODES] } },
+        where: { stepCode: { in: [...SCHEDULE_STEP_CODES, "1D"] } },
         select: {
           stepCode: true,
           status: true,
@@ -183,8 +187,28 @@ export async function GET(request: NextRequest) {
           plannedEndDate: true,
           actualStartDate: true,
           actualEndDate: true,
+          delayCategory: true,
           contractorId: true,
           contractor: { select: { name: true } },
+        },
+      },
+      // Every field computeProjectInstallationForecast needs — same select shape /projects' own
+      // list page uses for the identical computation.
+      procurementItems: {
+        select: {
+          itemType: true,
+          planAnchorOverride: true,
+          requirementPlannedOverride: true,
+          quotePlannedOverride: true,
+          paymentPlannedOverride: true,
+          orderPlannedOverride: true,
+          arrivalPlannedOverride: true,
+          qcPlannedOverride: true,
+          orderConfirmedAt: true,
+          materialDespatchAt: true,
+          materialDespatchPlannedOverride: true,
+          arrivedForPowderCoatingAt: true,
+          arrivedForPowderCoatingPlannedOverride: true,
         },
       },
       glassPurchaseOrder: { select: { requirementCreatedAt: true, actualArrivalDate: true } },
@@ -194,12 +218,18 @@ export async function GET(request: NextRequest) {
   const groupsByContractor = new Map<string | null, ScheduleRow[]>();
 
   for (const project of projects) {
-    // No range applied: every project that's reached 3C2 at all, dated or not — same as the
-    // /projects list itself shows with this filter cleared. A range applied means an actual
-    // overlap is required (matchesInstallationWindowFilter needs real planned dates for that).
-    const hasReachedInstallation = project.phaseSteps.some((s) => s.stepCode === "3C2");
+    const oneD = project.phaseSteps.find((s) => s.stepCode === "1D");
+    // Same forecast InstallationWindowCard shows on the project detail page (always visible there
+    // once computable) — lets a project into this sheet, with its planned Installation columns
+    // filled in, before 3C2 exists as a real step, not just once it's been seeded.
+    const installationForecast = computeProjectInstallationForecast(project.procurementItems, oneD);
+
+    // No range applied: every project that's reached 3C2, or already has a computable forecast —
+    // same as the /projects list itself shows with this filter cleared. A range applied means an
+    // actual overlap is required (matchesInstallationWindowFilter falls back to the forecast too).
+    const hasReachedInstallation = project.phaseSteps.some((s) => s.stepCode === "3C2") || installationForecast !== null;
     if (!hasReachedInstallation) continue;
-    if ((installFrom || installTo) && !matchesInstallationWindowFilter(project.phaseSteps, installFrom, installTo)) {
+    if ((installFrom || installTo) && !matchesInstallationWindowFilter(project.phaseSteps, installationForecast, installFrom, installTo)) {
       continue;
     }
 
@@ -214,15 +244,20 @@ export async function GET(request: NextRequest) {
       frameWork?.plannedEndDate ?? null,
       frameWork?.actualStartDate ?? null,
       frameWork?.actualEndDate ?? null,
-      install?.plannedStartDate ?? null,
-      install?.plannedEndDate ?? null,
+      install?.plannedStartDate ?? installationForecast?.start ?? null,
+      install?.plannedEndDate ?? installationForecast?.end ?? null,
       install?.actualStartDate ?? null,
       install?.actualEndDate ?? null,
     ];
 
     const contractorName = frameWork?.contractor?.name ?? null;
     const sortDate =
-      install?.plannedStartDate ?? install?.actualStartDate ?? install?.plannedEndDate ?? install?.actualEndDate ?? null;
+      install?.plannedStartDate ??
+      install?.actualStartDate ??
+      install?.plannedEndDate ??
+      install?.actualEndDate ??
+      installationForecast?.start ??
+      null;
     const row: ScheduleRow = { customer: project.client.name, dates, sortDate };
 
     const list = groupsByContractor.get(contractorName) ?? [];

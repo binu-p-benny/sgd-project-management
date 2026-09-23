@@ -542,6 +542,101 @@ export function computeAllProcurementPlannedDates(
   };
 }
 
+// One item's full lifecycle, live-planned-date-vs-actual, in the same {label, planned, actual}
+// shape overdueGlassPOStage already uses for the Glass PO's own 6 stages — so overrun.ts can
+// check a ProcurementItem's *entire* chain the same cheap way, not just its Actual arrival.
+// Requirement/Quote/Payment/Order are every item's; despatch/powder-coating are section-only
+// (hardware/gasket skip straight from Order to Arrival, same as PROCUREMENT_STAGES elsewhere).
+export interface ProcurementItemStage {
+  label: string;
+  planned: Date | null;
+  actual: Date | null;
+}
+
+function procurementItemStages(
+  item: ProcurementItemArrivalInputs & {
+    requirementPlannedOverride: Date | null;
+    requirementCreatedAt: Date | null;
+    quoteCreatedAt: Date | null;
+    paymentSettledAt: Date | null;
+    actualArrivalDate: Date | null;
+    qcCheckedAt: Date | null;
+  },
+  phase2PlanAnchor: Date | null,
+  sectionQCPlanned: Date | null
+): ProcurementItemStage[] {
+  const planned = computeAllProcurementPlannedDates(item, phase2PlanAnchor, sectionQCPlanned);
+  const stages: ProcurementItemStage[] = [
+    { label: "Requirement created", planned: planned.requirement, actual: item.requirementCreatedAt },
+    { label: "Quote created", planned: planned.quote, actual: item.quoteCreatedAt },
+    { label: "Payment done", planned: planned.payment, actual: item.paymentSettledAt },
+    { label: "Order confirmed", planned: planned.order, actual: item.orderConfirmedAt },
+  ];
+  if (item.itemType === "section") {
+    stages.push(
+      { label: "Material despatch", planned: planned.materialDespatch, actual: item.materialDespatchAt },
+      { label: "Arrived for powder coating", planned: planned.arrivedForPowderCoating, actual: item.arrivedForPowderCoatingAt }
+    );
+  }
+  stages.push(
+    { label: "Actual arrival", planned: planned.arrival, actual: item.actualArrivalDate },
+    { label: "QC checked", planned: planned.qc, actual: item.qcCheckedAt }
+  );
+  return stages;
+}
+
+/**
+ * Every field overrun.ts's procurement-item overdue checks need, computed *live* (the same
+ * computeAllProcurementPlannedDates chain ProcurementTracker actually displays) rather than off
+ * the frozen legacy expected_arrival_date column those checks used to read exclusively. That
+ * column is set once, off requirementCreatedAt, at the moment Requirement is first filled in
+ * (see computeExpectedArrivalDate's own doc comment) — it never moves again even as the item's
+ * real stage-by-stage progress pushes its true dates earlier or later, so overdue detection
+ * built on it can drift out of sync with what the tracker (and everything else keyed off this
+ * same live chain — /my-tasks, the KPI report) actually shows for the same item.
+ *
+ * `expectedArrivalDate` (arrival only, for callers like getProcurementDelayBreakdown that are
+ * specifically about arrival-date performance) and `stages` (the item's *entire* lifecycle, for
+ * projectHasOverrun/getProjectDelayReason's general "is anything on this project overdue" check
+ * — previously scoped to arrival alone because redoing this whole chain per project was assumed
+ * too expensive for a list/dashboard page; now that every caller here already pays that cost for
+ * `expectedArrivalDate`, checking the rest of the chain too is free) both come off one shared
+ * computation. Callers (dashboard.ts, /projects/page.tsx) fetch the *full* procurement item
+ * (every column ProcurementItemArrivalInputs plus the raw stage-actual dates need) plus the
+ * project's own 1D step, and use this in place of passing `procurementItems` straight from a
+ * narrow expectedArrivalDate select.
+ */
+export function withLiveExpectedArrivalDates<
+  T extends ProcurementItemArrivalInputs & {
+    requirementPlannedOverride: Date | null;
+    requirementCreatedAt: Date | null;
+    quoteCreatedAt: Date | null;
+    paymentSettledAt: Date | null;
+    actualArrivalDate: Date | null;
+    qcCheckedAt: Date | null;
+  },
+>(
+  items: T[],
+  oneD: { plannedEndDate: Date | null; actualEndDate: Date | null; delayCategory: string | null } | undefined
+): (T & { expectedArrivalDate: Date | null; stages: ProcurementItemStage[] })[] {
+  const phase2PlanAnchor = oneD
+    ? computePhase2PlanAnchor(oneD.plannedEndDate, oneD.actualEndDate, oneD.delayCategory)
+    : null;
+  const sectionItem = items.find((i) => i.itemType === "section");
+  const sectionQCPlanned = sectionItem ? computeSectionQCPlanned(sectionItem, phase2PlanAnchor) : null;
+  // Spread first so this overrides whatever expectedArrivalDate a caller's own select happened
+  // to include (the legacy column, if it's still there) — every other field on T (qcPassed,
+  // the raw stage-actual dates getProjectActiveDepartments reads, etc.) passes through untouched.
+  return items.map((item) => {
+    const stages = procurementItemStages(item, phase2PlanAnchor, sectionQCPlanned);
+    return {
+      ...item,
+      expectedArrivalDate: stages.find((s) => s.label === "Actual arrival")!.planned,
+      stages,
+    };
+  });
+}
+
 /** Installation is planned to open this many days after procurement's QC checked planned date, and
  *  to wrap up this many days after it. Sundays don't count toward either span — the same
  *  working-day rule as the chains above (see addWorkingDays), so neither date can land on one. */
@@ -575,6 +670,29 @@ export function computeInstallationPlannedWindow(itemQCPlannedDates: (Date | nul
     start: addWorkingDays(qcPlanned, INSTALLATION_WINDOW_START_OFFSET_DAYS),
     end: addWorkingDays(qcPlanned, INSTALLATION_WINDOW_END_OFFSET_DAYS),
   };
+}
+
+/**
+ * A project's Installation planned window, resolved from its raw procurement items + 1D step —
+ * the same phase2PlanAnchor → sectionQCPlanned → computeAllProcurementPlannedDates(...).qc chain
+ * InstallationWindowCard and reschedule.ts's own 3C2 default already run, pulled out here as one
+ * shared function so every caller that needs "when will this project's installation likely run" —
+ * including before 3C2 exists as a real step, same as the project detail page's forecast card —
+ * derives it identically and can never drift apart.
+ */
+export function computeProjectInstallationForecast(
+  procurementItems: ProcurementItemArrivalInputs[],
+  oneD: { plannedEndDate: Date | null; actualEndDate: Date | null; delayCategory: string | null } | undefined
+): InstallationPlannedWindow | null {
+  const phase2PlanAnchor = oneD
+    ? computePhase2PlanAnchor(oneD.plannedEndDate, oneD.actualEndDate, oneD.delayCategory)
+    : null;
+  const sectionItem = procurementItems.find((i) => i.itemType === "section");
+  const sectionQCPlanned = sectionItem ? computeSectionQCPlanned(sectionItem, phase2PlanAnchor) : null;
+  const itemQCPlannedDates = procurementItems.map(
+    (item) => computeAllProcurementPlannedDates(item, phase2PlanAnchor, sectionQCPlanned).qc
+  );
+  return computeInstallationPlannedWindow(itemQCPlannedDates);
 }
 
 /** 2A is derived: complete only when all 3 procurement_items rows have requirement_created_at set. */

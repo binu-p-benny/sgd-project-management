@@ -7,13 +7,14 @@ import {
   getEffectiveOverallStatus,
   projectHasOverrun,
   getProjectBlockedStep,
-  getProjectDelayReason,
+  getProjectDelayReasons,
   getProjectQcFailureReason,
   daysBlocked,
   type EffectiveOverallStatus,
   type GlassPurchaseOrderOverrunFields,
 } from "@/lib/overrun";
 import { buildAllStepCodes } from "@/lib/step-template";
+import { withLiveExpectedArrivalDates, computeProjectInstallationForecast } from "@/lib/procurement";
 import {
   getProjectActiveDepartments,
   matchesPhaseProgressFilter,
@@ -112,10 +113,20 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-/** The one-line "why", shown under the Status badge — only ever set for the 3 statuses that
- *  have a concrete cause to point at (on_track/completed don't). The underlying data comes
- *  from getProjectBlockedStep / getProjectDelayReason / getProjectQcFailureReason in overrun.ts;
- *  this is just where it gets worded for this screen. */
+/** One delay reason, worded for this screen — shared by getStatusReasonText (one line per
+ *  reason, joined) and nothing else, since every other status kind only ever has one cause. */
+function formatDelayReasonLine(reason: ReturnType<typeof getProjectDelayReasons>[number]): string {
+  if (reason.kind === "step") return `${reason.stepCode} ${reason.stepName} — overdue since ${formatShortDate(reason.plannedEndDate)}`;
+  if (reason.kind === "item") return `${capitalize(reason.itemType)} — ${reason.stageLabel} — overdue since ${formatShortDate(reason.plannedDate)}`;
+  return `Glass PO — ${reason.stageLabel} — overdue since ${formatShortDate(reason.plannedDate)}`;
+}
+
+/** The "why", shown under the Status badge — only ever set for the 3 statuses that have a
+ *  concrete cause to point at (on_track/completed don't). "delayed" can have more than one
+ *  simultaneous cause (say Hardware's Payment done and Gasket's Quote created both overdue at
+ *  once) — every one of them shows, one per line, not just whichever happened to be checked
+ *  first. The underlying data comes from getProjectBlockedStep / getProjectDelayReasons /
+ *  getProjectQcFailureReason in overrun.ts; this is just where it gets worded for this screen. */
 function getStatusReasonText(
   effectiveStatus: EffectiveOverallStatus,
   steps: {
@@ -129,8 +140,7 @@ function getStatusReasonText(
   }[],
   procurementItems: {
     itemType: string;
-    expectedArrivalDate: Date | null;
-    actualArrivalDate: Date | null;
+    stages: { label: string; planned: Date | null; actual: Date | null }[];
     qcPassed: boolean | null;
   }[],
   glassPurchaseOrder: (GlassPurchaseOrderOverrunFields & { qcPassed: boolean | null }) | null
@@ -142,11 +152,9 @@ function getStatusReasonText(
     return `${step.stepCode} ${step.stepName} — ${label}${step.blockedNote ? `: ${step.blockedNote}` : ""}`;
   }
   if (effectiveStatus === "delayed") {
-    const reason = getProjectDelayReason(steps, procurementItems, glassPurchaseOrder);
-    if (!reason) return null;
-    if (reason.kind === "step") return `${reason.stepCode} ${reason.stepName} — overdue since ${formatShortDate(reason.plannedEndDate)}`;
-    if (reason.kind === "item") return `${capitalize(reason.itemType)} arrival — overdue since ${formatShortDate(reason.expectedArrivalDate)}`;
-    return `Glass PO — ${reason.stageLabel} — overdue since ${formatShortDate(reason.plannedDate)}`;
+    const reasons = getProjectDelayReasons(steps, procurementItems, glassPurchaseOrder);
+    if (reasons.length === 0) return null;
+    return reasons.map(formatDelayReasonLine).join("\n");
   }
   if (effectiveStatus === "qc_failed") {
     const reason = getProjectQcFailureReason(steps, procurementItems, glassPurchaseOrder);
@@ -161,9 +169,10 @@ function getStatusReasonText(
 /** How many days a project has sat blocked/delayed — shown as a compact "· Nd" suffix right on
  *  the Status badge itself (TaskCard/BlockedStepsWidget use the same "· Nd" wording for the same
  *  idea). Blocked's clock starts at the step's own updatedAt (same anchor daysBlocked's other
- *  callers use for "since it became blocked"); delayed's clock starts at whichever date
- *  getStatusReasonText already points at — daysBlocked is generic despite the name, just "days
- *  since this Date". qc_failed has no ongoing clock to show, same as on_track/completed. */
+ *  callers use for "since it became blocked"); delayed's clock starts at the *oldest* of
+ *  whichever dates getStatusReasonText lists (there can be more than one at once) — daysBlocked
+ *  is generic despite the name, just "days since this Date". qc_failed has no ongoing clock to
+ *  show, same as on_track/completed. */
 function getStatusDays(
   effectiveStatus: EffectiveOverallStatus,
   steps: {
@@ -173,7 +182,7 @@ function getStatusDays(
     plannedEndDate: Date | null;
     updatedAt: Date;
   }[],
-  procurementItems: { itemType: string; expectedArrivalDate: Date | null; actualArrivalDate: Date | null }[],
+  procurementItems: { itemType: string; stages: { label: string; planned: Date | null; actual: Date | null }[] }[],
   glassPurchaseOrder: GlassPurchaseOrderOverrunFields | null
 ): number | null {
   if (effectiveStatus === "blocked") {
@@ -181,11 +190,13 @@ function getStatusDays(
     return step ? daysBlocked(step.updatedAt) : null;
   }
   if (effectiveStatus === "delayed") {
-    const reason = getProjectDelayReason(steps, procurementItems, glassPurchaseOrder);
-    if (!reason) return null;
-    if (reason.kind === "step") return daysBlocked(reason.plannedEndDate);
-    if (reason.kind === "item") return daysBlocked(reason.expectedArrivalDate);
-    return daysBlocked(reason.plannedDate);
+    const reasons = getProjectDelayReasons(steps, procurementItems, glassPurchaseOrder);
+    if (reasons.length === 0) return null;
+    // The badge's own "· Nd" — the oldest of any simultaneous cause, not just whichever one
+    // getStatusReasonText happens to list first, so "Delayed · 6d" always means *something*
+    // has genuinely sat overdue that long.
+    const days = reasons.map((r) => daysBlocked(r.kind === "step" ? r.plannedEndDate : r.plannedDate));
+    return Math.max(...days);
   }
   return null;
 }
@@ -206,6 +217,7 @@ const ACTIVE_FILTER_LABEL: Record<string, (value: string) => string> = {
   currentStep: (v) => `Current step: ${v}${STEP_NAME_BY_CODE.has(v) ? ` · ${STEP_NAME_BY_CODE.get(v)}` : ""}`,
   installFrom: (v) => `Installing from ${formatShortDate(new Date(v))}`,
   installTo: (v) => `Installing until ${formatShortDate(new Date(v))}`,
+  q: (v) => `Search: "${v}"`,
 };
 
 export default async function ProjectsPage({
@@ -221,6 +233,7 @@ export default async function ProjectsPage({
     currentStep?: string;
     installFrom?: string;
     installTo?: string;
+    q?: string;
   }>;
 }) {
   const params = await searchParams;
@@ -240,10 +253,19 @@ export default async function ProjectsPage({
   // anywhere within the selected end date still matches, not just up to midnight.
   const installFrom = params.installFrom ? new Date(params.installFrom) : null;
   const installTo = params.installTo ? new Date(`${params.installTo}T23:59:59.999`) : null;
+  const searchQuery = params.q?.trim();
 
   const rawProjects = await prisma.project.findMany({
     where: {
       ...(paymentStatus ? { paymentStatus } : {}),
+      ...(searchQuery
+        ? {
+            OR: [
+              { name: { contains: searchQuery, mode: "insensitive" } },
+              { client: { name: { contains: searchQuery, mode: "insensitive" } } },
+            ],
+          }
+        : {}),
     },
     include: {
       client: true,
@@ -261,6 +283,10 @@ export default async function ProjectsPage({
           blockedReason: true,
           blockedNote: true,
           updatedAt: true,
+          // 1D only, read below to compute each procurement item's *live* expected arrival
+          // (see withLiveExpectedArrivalDates) — not surfaced anywhere else on this page.
+          actualEndDate: true,
+          delayCategory: true,
         },
       },
       procurementItems: {
@@ -276,6 +302,18 @@ export default async function ProjectsPage({
           materialDespatchAt: true,
           arrivedForPowderCoatingAt: true,
           qcCheckedAt: true,
+          // The rest of ProcurementItemArrivalInputs — needed to compute each item's live
+          // planned arrival (see withLiveExpectedArrivalDates) the same way ProcurementTracker
+          // itself does, instead of trusting the frozen expectedArrivalDate column above.
+          planAnchorOverride: true,
+          requirementPlannedOverride: true,
+          quotePlannedOverride: true,
+          paymentPlannedOverride: true,
+          orderPlannedOverride: true,
+          arrivalPlannedOverride: true,
+          qcPlannedOverride: true,
+          materialDespatchPlannedOverride: true,
+          arrivedForPowderCoatingPlannedOverride: true,
         },
       },
       glassPurchaseOrder: {
@@ -307,9 +345,20 @@ export default async function ProjectsPage({
   const projects = rawProjects
     .map((p) => {
       const currentStep = getCurrentStep(p.phaseSteps);
+      // Overdue detection reads each item's *live* planned arrival (same chain
+      // ProcurementTracker displays), not the frozen expectedArrivalDate column straight off
+      // p.procurementItems — see withLiveExpectedArrivalDates. Everything else below (active
+      // departments, qcPassed checks) still reads p.procurementItems directly; only the four
+      // overrun-related calls use this.
+      const oneD = p.phaseSteps.find((s) => s.stepCode === "1D");
+      const procurementItemsForOverrun = withLiveExpectedArrivalDates(p.procurementItems, oneD);
+      // Same forecast InstallationWindowCard shows on the project detail page (always visible
+      // there once computable) — used below so the installFrom/installTo filter can match a
+      // project before 3C2 exists as a real step, not just once it's been seeded.
+      const installationForecast = computeProjectInstallationForecast(p.procurementItems, oneD);
       const effectiveStatus = getEffectiveOverallStatus(
         p.overallStatus,
-        projectHasOverrun(p.phaseSteps, p.procurementItems, p.glassPurchaseOrder),
+        projectHasOverrun(p.phaseSteps, procurementItemsForOverrun, p.glassPurchaseOrder),
         p.procurementItems.some((i) => i.qcPassed === false) ||
           p.phaseSteps.some((s) => s.stepCode === "3E" && s.qcPassed === false) ||
           p.glassPurchaseOrder?.qcPassed === false
@@ -317,9 +366,10 @@ export default async function ProjectsPage({
       return {
         ...p,
         effectiveStatus,
-        statusReason: getStatusReasonText(effectiveStatus, p.phaseSteps, p.procurementItems, p.glassPurchaseOrder),
-        statusDays: getStatusDays(effectiveStatus, p.phaseSteps, p.procurementItems, p.glassPurchaseOrder),
-        hasOverdue: projectHasOverrun(p.phaseSteps, p.procurementItems, p.glassPurchaseOrder),
+        statusReason: getStatusReasonText(effectiveStatus, p.phaseSteps, procurementItemsForOverrun, p.glassPurchaseOrder),
+        statusDays: getStatusDays(effectiveStatus, p.phaseSteps, procurementItemsForOverrun, p.glassPurchaseOrder),
+        hasOverdue: projectHasOverrun(p.phaseSteps, procurementItemsForOverrun, p.glassPurchaseOrder),
+        installationForecast,
         currentStep,
         activeDepartments: getProjectActiveDepartments(
           currentStep,
@@ -342,7 +392,9 @@ export default async function ProjectsPage({
     .filter((p) => !overdueOnly || p.hasOverdue)
     .filter((p) => !currentStepFilter || p.currentStep?.stepCode === currentStepFilter)
     .filter((p) => !department || p.activeDepartments.has(department))
-    .filter((p) => !(installFrom || installTo) || matchesInstallationWindowFilter(p.phaseSteps, installFrom, installTo));
+    .filter(
+      (p) => !(installFrom || installTo) || matchesInstallationWindowFilter(p.phaseSteps, p.installationForecast, installFrom, installTo)
+    );
 
   const activeFilters = Object.entries(params).filter(([, v]) => v);
 
@@ -409,7 +461,7 @@ export default async function ProjectsPage({
                         {formatStatusLabel(project.effectiveStatus, project.statusDays)}
                       </span>
                       {project.statusReason && (
-                        <span className="max-w-[10rem] text-right text-[11px] leading-snug text-fg-subtle">
+                        <span className="max-w-[10rem] whitespace-pre-line text-right text-[11px] leading-snug text-fg-subtle">
                           {project.statusReason}
                         </span>
                       )}
@@ -494,7 +546,7 @@ export default async function ProjectsPage({
                           {formatStatusLabel(project.effectiveStatus, project.statusDays)}
                         </span>
                         {project.statusReason && (
-                          <span className="text-[11px] leading-snug text-fg-subtle">{project.statusReason}</span>
+                          <span className="whitespace-pre-line text-[11px] leading-snug text-fg-subtle">{project.statusReason}</span>
                         )}
                       </div>
                     </td>

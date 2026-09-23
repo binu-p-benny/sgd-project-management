@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { OVERALL_STATUS_LABELS, DEPARTMENT_LABELS } from "@/lib/labels";
 import { buildAllStepCodes } from "@/lib/step-template";
 import { PHASE_PROGRESS_FILTER_OPTIONS } from "@/lib/project-filters";
 
 const STEP_OPTIONS = buildAllStepCodes();
+const SEARCH_DEBOUNCE_MS = 300;
 
 export function ProjectFilters() {
   const router = useRouter();
@@ -20,6 +21,27 @@ export function ProjectFilters() {
       params.delete(key);
     }
     router.push(`/projects?${params.toString()}`);
+  }
+
+  // Debounced separately from setParam above — pushing a route change on every keystroke would
+  // re-run the server query mid-word. Local state updates immediately so the input feels
+  // responsive; the URL (and thus the Prisma query) only catches up after a short pause.
+  const appliedQuery = searchParams.get("q") ?? "";
+  const [prevAppliedQuery, setPrevAppliedQuery] = useState(appliedQuery);
+  const [query, setQuery] = useState(appliedQuery);
+  const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  if (prevAppliedQuery !== appliedQuery) {
+    setPrevAppliedQuery(appliedQuery);
+    setQuery(appliedQuery);
+  }
+
+  function handleQueryChange(value: string) {
+    setQuery(value);
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    searchTimeout.current = setTimeout(() => {
+      setParam("q", value.trim());
+    }, SEARCH_DEBOUNCE_MS);
   }
 
   // Unlike every other filter above, the install window doesn't apply on every change — typing a
@@ -63,6 +85,41 @@ export function ProjectFilters() {
 
   return (
     <div className="flex flex-col gap-3">
+      <div className="relative">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          strokeWidth={1.8}
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 stroke-current text-fg-subtle"
+        >
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-3.5-3.5" strokeLinecap="round" />
+        </svg>
+        <input
+          type="text"
+          aria-label="Search projects by project or client name"
+          placeholder="Search by project or client name…"
+          className="h-11 w-full rounded-lg border border-edge bg-surface pl-9 pr-9 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
+          value={query}
+          onChange={(e) => handleQueryChange(e.target.value)}
+        />
+        {query && (
+          <button
+            type="button"
+            aria-label="Clear search"
+            onClick={() => {
+              if (searchTimeout.current) clearTimeout(searchTimeout.current);
+              handleQueryChange("");
+            }}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-fg-subtle hover:text-fg"
+          >
+            <svg viewBox="0 0 24 24" fill="none" strokeWidth={1.8} className="h-4 w-4 stroke-current">
+              <path d="m6 6 12 12M18 6 6 18" strokeLinecap="round" />
+            </svg>
+          </button>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 gap-3 sm:flex sm:flex-wrap sm:items-center">
         <select
           aria-label="Filter by phase"
