@@ -19,10 +19,12 @@ export const DEPARTMENT_LABELS: Record<Department, string> = {
   operations_manager: "Operations Manager",
 };
 
-// The real work departments a task can be assigned to — owner_admin is an admin role, not
-// something a step or ad-hoc row is ever "owned by", so it's left out here (same reasoning
-// AdminFilters' department filter already applied — this is that same list, made shared so a
-// second picker doesn't have to redefine it).
+// Every department a task can be assigned to — every dropdown that offers "who owns this work"
+// (action items, service rows, work-block tasks, planned-date delegation, admin/task-list
+// filters) reads from this one shared list. Owner and Operations Manager are full members: like
+// any other department, they can be handed a task and mark it done from their own /my-tasks
+// (see MyTasksPage) — this isn't the same list as department-kpi-report.ts' own KPI_DEPARTMENTS,
+// which still excludes owner_admin from the performance leaderboard on purpose.
 // `as const satisfies` (not `: Department[]`) so this is also a non-empty tuple of literal
 // strings — the shape z.enum() needs directly, with no runtime array to keep in sync by hand.
 export const ASSIGNABLE_DEPARTMENTS = [
@@ -31,6 +33,8 @@ export const ASSIGNABLE_DEPARTMENTS = [
   "design_engineer",
   "purchase",
   "accounts",
+  "owner_admin",
+  "operations_manager",
 ] as const satisfies readonly Department[];
 
 export const PHASE_LABELS: Record<ProjectPhase, string> = {

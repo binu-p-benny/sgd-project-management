@@ -32,12 +32,16 @@ import {
 // Non-derived, manually-completed phase steps only.
 const SCORED_STEP_CODES = ["1A", "1B", "1C", "1D", "2D2", "3C1", "3C2", "3E"];
 
-// ASSIGNABLE_DEPARTMENTS plus Operations Manager — scored here even though it's deliberately
-// left out of ASSIGNABLE_DEPARTMENTS itself (that list is for assigning *new* work — action
-// items, service rows — to a real work-performing department; Operations Manager never gets
-// handed one of those, it only reviews what other departments already finished). Kept local
-// to this file rather than widening the shared constant everyone else's dropdowns read from.
-const KPI_DEPARTMENTS = [...ASSIGNABLE_DEPARTMENTS, "operations_manager"] as const satisfies readonly Department[];
+// Every ASSIGNABLE_DEPARTMENTS entry except Owner — the owner isn't scored against their own
+// staff on the performance leaderboard, even though (unlike this file) every other dropdown in
+// the app now treats Owner as a normal work-owning department. Operations Manager, on the other
+// hand, is scored here same as anyone else: reviewing completed work is real, creditable work
+// (see the "review" source below), and now that it can also be handed ad-hoc tasks directly
+// (ASSIGNABLE_DEPARTMENTS), those count here too, same as any other department's.
+const KPI_DEPARTMENTS = ASSIGNABLE_DEPARTMENTS.filter((d) => d !== "owner_admin") as readonly Exclude<
+  Department,
+  "owner_admin"
+>[];
 
 // Actual-timestamp field -> its key in ProcurementStagePlannedDates (mirrors the plannedByField
 // map in unified-tasks.ts' buildProcurementStageTasks).

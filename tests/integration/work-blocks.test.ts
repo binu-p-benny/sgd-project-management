@@ -178,11 +178,24 @@ describe("POST /api/work-blocks/[id]/tasks", () => {
     expect((await callCreateTask(block.id, { department: "purchase", plannedDate: PLANNED })).status).toBe(400);
     expect((await callCreateTask(block.id, { taskLabel: "x", department: "purchase" })).status).toBe(400);
     expect((await callCreateTask(block.id, { taskLabel: "x", plannedDate: PLANNED })).status).toBe(400);
-    // owner_admin isn't a work department — same restriction a service's "+ Add row" has.
+    // Not a department at all — same restriction a service's "+ Add row" has.
     expect(
-      (await callCreateTask(block.id, { taskLabel: "x", department: "owner_admin", plannedDate: PLANNED })).status
+      (await callCreateTask(block.id, { taskLabel: "x", department: "finance", plannedDate: PLANNED })).status
     ).toBe(400);
     expect(await prisma.workTask.count({ where: { workBlockId: block.id } })).toBe(0);
+  });
+
+  it("accepts owner_admin and operations_manager as real work-owning departments", async () => {
+    const { block } = await setupBlock();
+    actAs("owner_admin");
+
+    for (const department of ["owner_admin", "operations_manager"] as const) {
+      const response = await callCreateTask(block.id, { taskLabel: `For ${department}`, department, plannedDate: PLANNED });
+      expect(response.status).toBe(201);
+    }
+
+    const stored = await prisma.workTask.findMany({ where: { workBlockId: block.id } });
+    expect(stored.map((t) => t.department).sort()).toEqual(["operations_manager", "owner_admin"]);
   });
 
   it("forbids non-admin departments, 401s signed out, and 404s an unknown or deleted block", async () => {
@@ -225,6 +238,29 @@ describe("PATCH /api/work-tasks/[id]", () => {
     const reverted = await prisma.workTask.findUniqueOrThrow({ where: { id: task.id } });
     expect(reverted.actualDate).toBeNull();
     expect(reverted.qcPassed).toBeNull();
+  });
+
+  it("lets the row's own department correct its own taskLabel and plannedDate", async () => {
+    const { task } = await setupTask({ department: "purchase" });
+    actAs("purchase");
+
+    const response = await callPatchTask(task.id, {
+      taskLabel: "Corrected label",
+      plannedDate: "2026-11-05T00:00:00.000Z",
+    });
+
+    expect(response.status).toBe(200);
+    const stored = await prisma.workTask.findUniqueOrThrow({ where: { id: task.id } });
+    expect(stored.taskLabel).toBe("Corrected label");
+    expect(stored.plannedDate.toISOString()).toBe("2026-11-05T00:00:00.000Z");
+    // department and isPassFail are untouched — this PATCH only ever moves taskLabel/plannedDate.
+    expect(stored.department).toBe("purchase");
+  });
+
+  it("400s an empty taskLabel", async () => {
+    const { task } = await setupTask();
+    actAs("owner_admin");
+    expect((await callPatchTask(task.id, { taskLabel: "   " })).status).toBe(400);
   });
 
   it("lets the row's own department update it, but not a different one", async () => {
