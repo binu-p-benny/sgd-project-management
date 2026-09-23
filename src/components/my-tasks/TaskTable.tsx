@@ -31,6 +31,13 @@ const MANUAL_PLANNED_END_ONLY_STEP_CODES = new Set(["3E"]);
 // 3C1 only, for now — see MANUAL_CONTRACTOR_STEP_CODES in step-actions.ts (this file's own
 // mirrored copy, same reason every other set here is: that file pulls in the Prisma client).
 const MANUAL_CONTRACTOR_STEP_CODES = new Set(["3C1"]);
+// 3C1 ("Aluminum framework") and 3C2 ("Installation") are the two phase steps whose planned
+// start and end genuinely diverge by more than a day or two — a contractor framework job or an
+// install window, not a single-day target — so a bare "Planned date" is easy to misread as
+// either one. Every phase_step row's own Planned date is actually always plannedEndDate (see
+// buildPhaseStepTasks in unified-tasks.ts — there's no branch that ever shows plannedStartDate
+// here), so the label is fixed, not computed per row; it only ever appears for these two.
+const DATE_RANGE_STEP_CODES = new Set(["3C1", "3C2"]);
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
@@ -53,6 +60,13 @@ function daysOverdue(plannedIso: string): number {
 // this only ever fires for the one day it's neither overdue nor "not due yet".
 function dueToday(task: UnifiedTask): boolean {
   return !task.overrun && isDueToday(task.plannedDate);
+}
+// See DATE_RANGE_STEP_CODES above — only 3C1/3C2 ever get this label, rendered as its own line
+// under the date (not appended inline — the desktop column is nowrap and narrow).
+function plannedDateLabel(task: UnifiedTask): string {
+  return task.kind === "phase_step" && task.stepCode && DATE_RANGE_STEP_CODES.has(task.stepCode)
+    ? "(planned end date)"
+    : "";
 }
 function formatPhase(phase: UnifiedTask["phase"]): string {
   if (phase === "service") return "Service";
@@ -83,13 +97,15 @@ function taskSearchText(task: UnifiedTask): string {
     .toLowerCase();
 }
 
-// The 3 non-phase_step kinds are all structurally identical — one date field + one note field,
-// no status/gate/blocking concept — so a single endpoint-builder covers all of them; only
+// Every non-phase_step kind is structurally identical — one date field + one note field, no
+// status/gate/blocking concept — so a single endpoint-builder covers all of them; only
 // phase_step needs its own richer status-transition handling below.
 function simpleStageEndpoint(task: UnifiedTask): string {
   if (task.kind === "procurement_stage") return `/api/procurement-items/${task.refId}`;
   if (task.kind === "glass_po_stage") return `/api/glass-purchase-orders/${task.refId}`;
   if (task.kind === "service_item") return `/api/service-items/${task.refId}`;
+  if (task.kind === "work_task") return `/api/work-tasks/${task.refId}`;
+  if (task.kind === "customer_review") return `/api/projects/${task.refId}`;
   // action_item
   if (task.actionItemSource === "procurement") return `/api/procurement-action-items/${task.refId}`;
   if (task.actionItemSource === "glass") return `/api/glass-action-items/${task.refId}`;
@@ -178,6 +194,15 @@ function useTaskActions(task: UnifiedTask) {
   const [reviewNoteDraft, setReviewNoteDraft] = useState("");
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  // kind === "work_task" only — editing the row's own fixed-at-creation fields (task label,
+  // planned date), unlike every other kind here where those are permanent. A separate edit mode
+  // from the completion fields above (actualDate/note) so touching one never risks clobbering
+  // the other mid-edit.
+  const [editingMeta, setEditingMeta] = useState(false);
+  const [metaTaskLabel, setMetaTaskLabel] = useState(task.taskLabel);
+  const [metaPlannedDate, setMetaPlannedDate] = useState(toPlannedDateInputValue(task.plannedDate));
+  const [metaSubmitting, setMetaSubmitting] = useState(false);
+  const [metaError, setMetaError] = useState<string | null>(null);
 
   useEffect(() => {
     const timeouts = rowTimeouts.current;
@@ -284,6 +309,49 @@ function useTaskActions(task: UnifiedTask) {
     } catch {
       setPlannedDateEditError("Could not reach the server");
       setPlannedDateEditSubmitting(false);
+    }
+  }
+
+  function startEditMeta() {
+    setMetaTaskLabel(task.taskLabel);
+    setMetaPlannedDate(toPlannedDateInputValue(task.plannedDate));
+    setMetaError(null);
+    setEditingMeta(true);
+  }
+
+  function cancelEditMeta() {
+    setEditingMeta(false);
+    setMetaError(null);
+  }
+
+  async function saveWorkTaskMeta() {
+    if (!metaTaskLabel.trim() || !metaPlannedDate) {
+      setMetaError("Task and planned date are both required");
+      return;
+    }
+    setMetaSubmitting(true);
+    setMetaError(null);
+    try {
+      const res = await fetch(`/api/work-tasks/${task.refId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          taskLabel: metaTaskLabel.trim(),
+          plannedDate: new Date(metaPlannedDate).toISOString(),
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setMetaError(typeof data.error === "string" ? data.error : "Could not save changes");
+        setMetaSubmitting(false);
+        return;
+      }
+      setMetaSubmitting(false);
+      setEditingMeta(false);
+      router.refresh();
+    } catch {
+      setMetaError("Could not reach the server");
+      setMetaSubmitting(false);
     }
   }
 
@@ -466,6 +534,7 @@ function useTaskActions(task: UnifiedTask) {
   // completed service item (see getReviewQueueTasks) still needs to read as a Service here too,
   // not just the original service_item kind it was derived from.
   const isServiceTask = task.phase === "service";
+  const isWorkTask = task.kind === "work_task";
   // 1A collects its delay category *inside* the visit-urgency panel (see confirmVisitUrgency),
   // not before it opens — gating the row's own initial button on it too would disable the very
   // click that's supposed to open that panel in the first place, a deadlock. Every other step
@@ -526,6 +595,17 @@ function useTaskActions(task: UnifiedTask) {
     canStartOrComplete,
     isPhaseStep,
     isServiceTask,
+    isWorkTask,
+    editingMeta,
+    metaTaskLabel,
+    setMetaTaskLabel,
+    metaPlannedDate,
+    setMetaPlannedDate,
+    metaSubmitting,
+    metaError,
+    startEditMeta,
+    cancelEditMeta,
+    saveWorkTaskMeta,
     blockedByMissingDelayCategory,
     blockedByMissingLateReason,
     completeSimple,
@@ -566,19 +646,29 @@ function ReasonField({
   size: Size;
   label?: string;
 }) {
+  // Every other kind's note is a justification (why late, why failed) — this one's the actual
+  // substance of the task (what the client said), so it gets its own wording throughout rather
+  // than reusing the generic "Reason"/"Note" framing, which read as though HR was explaining a
+  // delay instead of recording a review. See PhaseReviewCard's own "Client review" field, which
+  // this mirrors verbatim so the same task reads the same way on both surfaces.
+  const isCustomerReview = task.kind === "customer_review";
   return (
     <div className="flex flex-col gap-1">
-      {label && <span className="text-xs font-medium text-fg-muted">{label}</span>}
+      {(label || isCustomerReview) && (
+        <span className="text-xs font-medium text-fg-muted">{isCustomerReview ? "Client review" : label}</span>
+      )}
       <input
         type="text"
         value={s.note}
         onChange={(e) => s.setNote(e.target.value)}
         placeholder={
-          (s.isPhaseStep && s.needsLateReason) || s.needsLateReasonSimple
-            ? "Required — late"
-            : task.isPassFail
-              ? "Required to fail"
-              : "Note"
+          isCustomerReview
+            ? "What did the client say?"
+            : (s.isPhaseStep && s.needsLateReason) || s.needsLateReasonSimple
+              ? "Required — late"
+              : task.isPassFail
+                ? "Required to fail"
+                : "Note"
         }
         className={fieldCls(size)}
       />
@@ -598,7 +688,9 @@ function ReasonField({
           ))}
         </select>
       )}
-      {(s.blockedByMissingLateReason || s.needsLateReasonSimple) && (
+      {/* "Late" framing doesn't fit a review — nothing enforces a note here even when overdue
+          (see needsLateReasonSimple's own kind list), so the hint would just be misleading. */}
+      {!isCustomerReview && (s.blockedByMissingLateReason || s.needsLateReasonSimple) && (
         <p className="text-[11px] text-amber-600 dark:text-amber-400">Add a note before marking this late</p>
       )}
     </div>
@@ -634,6 +726,70 @@ function ContractorActionField({ s, size }: { s: TaskActions; size: Size }) {
         {s.contractorSubmitting ? <Spinner className={spinnerCls(size)} /> : "Save contractor"}
       </button>
       {s.contractorError && <p className="text-[11px] text-red-600 dark:text-red-400">{s.contractorError}</p>}
+    </div>
+  );
+}
+
+// kind === "work_task" only — the small pencil that opens WorkTaskMetaEditor below. A plain
+// icon button rather than text, so it sits inline with the task label without crowding it.
+function EditPencilButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Edit task and planned date"
+      title="Edit task and planned date"
+      className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-fg-subtle transition-colors hover:bg-overlay hover:text-fg"
+    >
+      <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-3.5 w-3.5 stroke-current">
+        <path d="M16.5 4.5 19.5 7.5 8 19H5v-3L16.5 4.5Z" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
+
+// kind === "work_task" only — unlike every other kind, its task label and planned date aren't
+// fixed at creation (see PATCH /api/work-tasks/[id]): an Additional-works row is free-typed by
+// whoever added it, typos and all, so there needs to be a way back in to fix them. `includeDate`
+// is off on desktop (the planned-date column already gets its own input — see TaskRow) and on
+// for the mobile accordion, which has no separate date column to swap into.
+function WorkTaskMetaEditor({ s, size, includeDate = false }: { s: TaskActions; size: Size; includeDate?: boolean }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <input
+        type="text"
+        value={s.metaTaskLabel}
+        onChange={(e) => s.setMetaTaskLabel(e.target.value)}
+        placeholder="Task"
+        className={fieldCls(size)}
+      />
+      {includeDate && (
+        <input
+          type="date"
+          value={s.metaPlannedDate}
+          onChange={(e) => s.setMetaPlannedDate(e.target.value)}
+          className={fieldCls(size)}
+        />
+      )}
+      <div className="flex gap-1.5">
+        <button
+          type="button"
+          onClick={s.cancelEditMeta}
+          disabled={s.metaSubmitting}
+          className={btnCls("secondary", size)}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={s.saveWorkTaskMeta}
+          disabled={s.metaSubmitting}
+          className={btnCls("primary", size)}
+        >
+          {s.metaSubmitting ? <Spinner className={spinnerCls(size)} /> : "Save"}
+        </button>
+      </div>
+      {s.metaError && <p className="text-[11px] text-red-600 dark:text-red-400">{s.metaError}</p>}
     </div>
   );
 }
@@ -966,7 +1122,14 @@ function TaskRow({ task, isAdmin }: { task: UnifiedTask; isAdmin: boolean }) {
         }`}
       >
         <td className="whitespace-nowrap px-3 py-2.5 text-xs text-fg-muted">
-          {task.plannedDate ? (
+          {s.isWorkTask && s.editingMeta ? (
+            <input
+              type="date"
+              value={s.metaPlannedDate}
+              onChange={(e) => s.setMetaPlannedDate(e.target.value)}
+              className={fieldCls("sm")}
+            />
+          ) : task.plannedDate ? (
             <span
               className={
                 task.overrun
@@ -977,6 +1140,9 @@ function TaskRow({ task, isAdmin }: { task: UnifiedTask; isAdmin: boolean }) {
               }
             >
               {formatDate(task.plannedDate)}
+              {plannedDateLabel(task) && (
+                <span className="block text-[11px] font-normal text-fg-subtle">{plannedDateLabel(task)}</span>
+              )}
               {task.overrun && <span className="block text-[11px]">Overdue {daysOverdue(task.plannedDate)}d</span>}
               {dueToday(task) && <span className="block text-[11px]">Due today</span>}
             </span>
@@ -998,20 +1164,29 @@ function TaskRow({ task, isAdmin }: { task: UnifiedTask; isAdmin: boolean }) {
           <div className="text-xs text-fg-muted">{task.project.client.name}</div>
         </td>
         <td className="px-3 py-2.5">
-          <div className="text-sm font-medium text-fg">{task.taskLabel}</div>
-          {task.subTaskLabel && <div className="text-xs text-fg-muted">{task.subTaskLabel}</div>}
-          <div className="text-[10px] uppercase tracking-wide text-fg-muted">{formatPhase(task.phase)}</div>
-          {s.isPhaseStep && task.status === "blocked" && task.blockedReason && (
-            <div className="mt-1 text-xs text-red-600 dark:text-red-400">
-              Blocked — {BLOCKED_REASON_LABELS[task.blockedReason]}
-              {task.blockedNote ? `: ${task.blockedNote}` : ""}
-            </div>
-          )}
-          {!s.canStartOrComplete && task.gateBlockedBy && (
-            <div className="mt-1 text-xs text-fg-subtle">Waiting on: {task.gateBlockedBy.join(", ")}</div>
-          )}
-          {task.kind !== "contractor_selection" && s.isManualContractorStep && !s.needsContractor && (
-            <div className="mt-1 text-xs text-fg-muted">Contractor: {task.contractorName}</div>
+          {s.isWorkTask && s.editingMeta ? (
+            <WorkTaskMetaEditor s={s} size="sm" />
+          ) : (
+            <>
+              <div className="flex items-center gap-1.5">
+                <div className="text-sm font-medium text-fg">{task.taskLabel}</div>
+                {s.isWorkTask && <EditPencilButton onClick={s.startEditMeta} />}
+              </div>
+              {task.subTaskLabel && <div className="text-xs text-fg-muted">{task.subTaskLabel}</div>}
+              <div className="text-[10px] uppercase tracking-wide text-fg-muted">{formatPhase(task.phase)}</div>
+              {s.isPhaseStep && task.status === "blocked" && task.blockedReason && (
+                <div className="mt-1 text-xs text-red-600 dark:text-red-400">
+                  Blocked — {BLOCKED_REASON_LABELS[task.blockedReason]}
+                  {task.blockedNote ? `: ${task.blockedNote}` : ""}
+                </div>
+              )}
+              {!s.canStartOrComplete && task.gateBlockedBy && (
+                <div className="mt-1 text-xs text-fg-subtle">Waiting on: {task.gateBlockedBy.join(", ")}</div>
+              )}
+              {task.kind !== "contractor_selection" && s.isManualContractorStep && !s.needsContractor && (
+                <div className="mt-1 text-xs text-fg-muted">Contractor: {task.contractorName}</div>
+              )}
+            </>
           )}
         </td>
         <td className="px-3 py-2.5">
@@ -1093,6 +1268,7 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
             >
               {task.plannedDate ? formatDate(task.plannedDate) : "No planned date"}
             </span>
+            {plannedDateLabel(task) && <span className="text-xs text-fg-subtle">{plannedDateLabel(task)}</span>}
             {task.overrun && task.plannedDate && (
               <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
                 Overdue {daysOverdue(task.plannedDate)}d
@@ -1153,6 +1329,21 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
               </svg>
             </Link>
           )}
+          {s.isWorkTask &&
+            (s.editingMeta ? (
+              <WorkTaskMetaEditor s={s} size="md" includeDate />
+            ) : (
+              <button
+                type="button"
+                onClick={s.startEditMeta}
+                className="inline-flex w-fit items-center gap-1 text-xs font-medium text-accent hover:underline"
+              >
+                <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-3.5 w-3.5 stroke-current">
+                  <path d="M16.5 4.5 19.5 7.5 8 19H5v-3L16.5 4.5Z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Edit task / planned date
+              </button>
+            ))}
           {task.kind === "contractor_selection" ? (
             <ContractorActionField s={s} size="md" />
           ) : task.kind === "planned_date_edit" ? (

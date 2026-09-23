@@ -11,6 +11,8 @@ const dateOrNull = z
   .transform((v) => (v === undefined ? undefined : v === null ? null : new Date(v)));
 
 const updateSchema = z.object({
+  taskLabel: z.string().trim().min(1).optional(),
+  plannedDate: z.string().datetime().optional(),
   actualDate: dateOrNull,
   qcPassed: z.boolean().nullable().optional(),
   note: z.string().nullable().optional(),
@@ -18,9 +20,13 @@ const updateSchema = z.object({
 
 /**
  * Records progress against one work row — actual date, note, and (only for a row created with
- * isPassFail) the pass/fail outcome; taskLabel, department and isPassFail are all fixed at
- * creation. Mirrors PATCH /api/service-items/[id]. Open to an admin editor or to the department
- * the row was assigned to, same "your department's own step" rule as PATCH /api/phase-steps/[id].
+ * isPassFail) the pass/fail outcome — plus, unlike PATCH /api/service-items/[id], lets the same
+ * department correct their own taskLabel/plannedDate after the fact (a typo'd task name or a
+ * planned date that turns out wrong shouldn't mean deleting the row and starting over). department
+ * and isPassFail are still fixed at creation — changing who owns a row or whether it needs a
+ * pass/fail outcome is an admin-editor-only concern via a proper reassignment, not a PATCH here.
+ * Open to an admin editor or to the department the row was assigned to, same "your department's
+ * own step" rule as PATCH /api/phase-steps/[id].
  */
 export async function PATCH(
   request: NextRequest,
@@ -49,11 +55,16 @@ export async function PATCH(
 
   // Clearing actualDate back to empty is a revert — qcPassed resets with it, same coupling as
   // ServiceItem's own actualDate/qcPassed handling.
-  const { actualDate, qcPassed, ...rest } = parsed.data;
+  const { actualDate, qcPassed, plannedDate, ...rest } = parsed.data;
   const newQcPassed = actualDate === null ? null : qcPassed;
   const updated = await prisma.workTask.update({
     where: { id },
-    data: { ...rest, actualDate, qcPassed: newQcPassed },
+    data: {
+      ...rest,
+      actualDate,
+      qcPassed: newQcPassed,
+      ...(plannedDate !== undefined ? { plannedDate: new Date(plannedDate) } : {}),
+    },
   });
 
   return NextResponse.json(updated);

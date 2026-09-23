@@ -3,7 +3,10 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { DEPARTMENT_LABELS, ASSIGNABLE_DEPARTMENTS } from "@/lib/labels";
 
-export function AdminFilters() {
+/** Shared by /admin and /open-work — both are "every open X, optionally narrowed to one
+ *  department" pages with an identical dropdown, just reading a different underlying task set.
+ *  basePath defaults to /admin's own route so every existing call site keeps working unchanged. */
+export function AdminFilters({ basePath = "/admin" }: { basePath?: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -14,7 +17,7 @@ export function AdminFilters() {
     } else {
       params.delete("department");
     }
-    router.push(`/admin?${params.toString()}`);
+    router.push(`${basePath}?${params.toString()}`);
   }
 
   return (

@@ -146,6 +146,7 @@ function WorkBlockCard({ block, canEdit }: { block: WorkBlockData; canEdit: bool
                 editable={canEdit}
                 patchUrl={`/api/work-tasks/${task.id}`}
                 onSaved={() => router.refresh()}
+                allowEditingTaskAndPlannedDate
               />
             ))}
             {canEdit && <AddItemRow addUrl={`/api/work-blocks/${block.id}/tasks`} onSaved={() => router.refresh()} />}

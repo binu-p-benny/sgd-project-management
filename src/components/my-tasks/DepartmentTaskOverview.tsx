@@ -166,11 +166,12 @@ function AccordionSection({ bucket }: { bucket: Bucket }) {
 
 /**
  * A read-only, whole-company view of every department's still-open work, grouped by urgency —
- * Operations Manager's own tasks are reviewing what's already *done* (see the review queue
- * above this on /my-tasks), but managing every department means also seeing what's still
- * outstanding everywhere, before it becomes something to review. No action buttons here on
- * purpose: acting on a task is still that department's own job (via their own /my-tasks), this
- * is visibility only.
+ * the /open-work page this renders on (Owner/Admin and Operations Manager only, see
+ * hasOwnerAccess). Managing every department means seeing what's still outstanding everywhere,
+ * not just what's already done and waiting on Operations Manager's own review (see
+ * task-reviews.ts, /my-tasks' own review queue) — this is the "before it gets there" half. No
+ * action buttons here on purpose: acting on a task is still that department's own job (via their
+ * own /my-tasks), this is visibility only.
  */
 export function DepartmentTaskOverview({ tasks }: { tasks: UnifiedTask[] }) {
   const { overdue, dueToday, upcoming, unscheduled } = bucketTasks(tasks);
@@ -215,8 +216,7 @@ export function DepartmentTaskOverview({ tasks }: { tasks: UnifiedTask[] }) {
       <div>
         <h2 className="text-lg font-semibold text-fg">Every department&apos;s open work</h2>
         <p className="text-sm text-fg-muted">
-          A whole-company view — {tasks.length} open task{tasks.length === 1 ? "" : "s"} across every department, so
-          nothing is a surprise once it lands in the review queue above.
+          {`A whole-company view — ${tasks.length} open task${tasks.length === 1 ? "" : "s"} across every department, so nothing is a surprise once it lands in Operations Manager's review queue.`}
         </p>
       </div>
       <div className="flex flex-col gap-3">

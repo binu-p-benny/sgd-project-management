@@ -69,6 +69,13 @@ const ADMIN_ICON = (
   </svg>
 );
 
+const OPEN_WORK_ICON = (
+  <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-full w-full stroke-current">
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 7.5V12l3 2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 const PERFORMANCE_ICON = (
   <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-full w-full stroke-current">
     <path d="M7 5h10v3a5 5 0 0 1-10 0V5Z" strokeLinecap="round" strokeLinejoin="round" />
@@ -104,15 +111,20 @@ function initials(name: string): string {
 function navItemsFor(department: Department): NavItem[] {
   const items: NavItem[] = [];
 
-  // owner_admin and Operations Manager both land on Dashboard first — Operations Manager
-  // additionally gets My Tasks as its own nav item (its review queue lives there, see
-  // /my-tasks), which owner_admin has no equivalent need for. Every other department's only
-  // home is My Tasks.
+  // owner_admin and Operations Manager both land on Dashboard first. Every department also gets
+  // My Tasks — owner_admin included, now that Owner is a normal work-owning department like any
+  // other (see ASSIGNABLE_DEPARTMENTS): whatever's been handed to them directly shows up there,
+  // same as anyone else's queue.
   if (department === "owner_admin" || department === "operations_manager") {
     items.push({ href: "/dashboard", label: "Dashboard", icon: DASHBOARD_ICON });
   }
-  if (department !== "owner_admin") {
-    items.push({ href: "/my-tasks", label: "My Tasks", icon: HOME_ICON });
+  items.push({ href: "/my-tasks", label: "My Tasks", icon: HOME_ICON });
+
+  // Whole-company "every department's open work" view — same owner_admin/operations_manager
+  // audience as Dashboard (see hasOwnerAccess, which open-work/page.tsx gates on directly, not
+  // just nav-hidden like this).
+  if (department === "owner_admin" || department === "operations_manager") {
+    items.push({ href: "/open-work", label: "Open Work", icon: OPEN_WORK_ICON });
   }
 
   // HR & Admin proxy-edits any department's steps/procurement/payment on their behalf, and

@@ -25,6 +25,13 @@ export type TaskKind =
   | "service_item"
   | "contractor_selection"
   | "planned_date_edit"
+  // A project's own "Additional works" row (see WorkBlock/WorkTask, AdditionalWorks.tsx) —
+  // same shape as service_item, just parented by a WorkBlock/Project instead of a Service.
+  | "work_task"
+  // The Phase 1/3 "customer review" card (see PhaseReviewCard.tsx, HR & Admin only) — same
+  // simple date+note shape as work_task/service_item, just parented by a Project directly
+  // (its two fields live on the Project row itself, not a separate table).
+  | "customer_review"
   // Built by task-reviews.ts, not this file — a completed unit of work (of any other kind
   // above) the operation manager hasn't reviewed yet. Kept in this union rather than its own
   // type so it can flow through the same UnifiedTask shape and TaskTable UI as everything else.
@@ -725,6 +732,178 @@ async function buildServiceItemTasks(department: Department | null): Promise<Uni
 }
 
 /**
+ * A project's own "Additional works" rows (see WorkBlock/WorkTask) still open — same
+ * "actualDate null" cutoff as buildServiceItemTasks, just with no completed-parent check to
+ * mirror (a WorkBlock has no completed concept of its own; it just accumulates rows for as long
+ * as the project needs extra work tracked outside the normal phase pipeline). `phase` reuses the
+ * project's own current phase rather than a fixed value — unlike action items, which are always
+ * attached to a specific phase's own follow-up work, a work task can be added at any point in a
+ * project's life, so there's no single phase that's always right; the project's own currentPhase
+ * is the closest honest answer (falling back to phase_3 once the project's completed, since the
+ * union has no "completed" of its own — see isServiceTask's phase === "service" check elsewhere,
+ * this just needs *a* phase_1/2/3 value to classify as a Projects-not-Services row).
+ */
+async function buildWorkTaskTasks(department: Department | null): Promise<UnifiedTask[]> {
+  const tasks = await prisma.workTask.findMany({
+    where: {
+      actualDate: null,
+      ...(department ? { department } : {}),
+    },
+    include: {
+      workBlock: {
+        select: {
+          label: true,
+          project: { select: { id: true, name: true, currentPhase: true, client: { select: { name: true } } } },
+        },
+      },
+    },
+  });
+
+  return tasks.map((task) => ({
+    id: `work_task:${task.id}`,
+    kind: "work_task" as const,
+    phase: task.workBlock.project.currentPhase === "completed" ? "phase_3" : task.workBlock.project.currentPhase,
+    taskLabel: task.taskLabel,
+    subTaskLabel: task.workBlock.label,
+    project: task.workBlock.project,
+    department: task.department,
+    secondaryDepartment: null,
+    status: "not_started" as const,
+    plannedDate: task.plannedDate.toISOString(),
+    actualDate: null,
+    overrun: isProcurementStageOverrun(task.plannedDate, null),
+    qcPassed: task.qcPassed,
+    notes: task.note,
+    blockedReason: null,
+    blockedNote: null,
+    gateBlockedBy: null,
+    isPassFail: task.isPassFail,
+    refId: task.id,
+    dateField: "actualDate",
+    noteField: "note",
+    stepCode: null,
+    actionItemSource: null,
+    contractorId: null,
+    contractorName: null,
+    contractorPlannedDate: null,
+    contractorOverdue: false,
+    manualPlannedStartDate: null,
+    manualPlannedEndDate: null,
+    completedByDepartment: null,
+  }));
+}
+
+/**
+ * The Phase 1/3 "customer review" cards (see PhaseReviewCard.tsx and the comment on Project in
+ * schema.prisma) as open tasks — HR & Admin's only, so every other department gets none. Each
+ * card's own "Planned end date" is a read-only mirror of another step's (2A for Phase 1, 3E for
+ * Phase 3 — see ProjectDetailPage), reused here as-is so this sorts/shows overdue exactly the way
+ * the project page's own hint already implies. Phase 1's is open to every project from day one
+ * (2A's row — and so its planned date — exists from creation, same as every other day-one step);
+ * Phase 3's only once the project has actually reached it for real (a 3E row exists), mirroring
+ * phase3ReviewCard only rendering once editablePhase3Only/phase3Only is non-empty on that page —
+ * there's nothing to review before Phase 3 is real. Disappears the same way every other "simple"
+ * kind here does: once its own actual-end-date column is filled in.
+ */
+async function buildCustomerReviewTasks(department: Department | null): Promise<UnifiedTask[]> {
+  if (department && department !== "hr_admin") return [];
+
+  const projects = await prisma.project.findMany({
+    where: {
+      OR: [{ phase1ReviewActualEndDate: null }, { phase3ReviewActualEndDate: null, phaseSteps: { some: { stepCode: "3E" } } }],
+    },
+    select: {
+      id: true,
+      name: true,
+      client: { select: { name: true } },
+      phase1ReviewActualEndDate: true,
+      phase3ReviewActualEndDate: true,
+      phaseSteps: { where: { stepCode: { in: ["2A", "3E"] } }, select: { stepCode: true, plannedEndDate: true } },
+    },
+  });
+
+  const tasks: UnifiedTask[] = [];
+  for (const project of projects) {
+    const projectRef = { id: project.id, name: project.name, client: project.client };
+    const twoA = project.phaseSteps.find((s) => s.stepCode === "2A");
+    const threeE = project.phaseSteps.find((s) => s.stepCode === "3E");
+
+    if (project.phase1ReviewActualEndDate === null) {
+      const plannedDate = twoA?.plannedEndDate ?? null;
+      tasks.push({
+        id: `customer_review:${project.id}:phase1`,
+        kind: "customer_review",
+        phase: "phase_1",
+        taskLabel: "Phase 1 customer review",
+        subTaskLabel: null,
+        project: projectRef,
+        department: "hr_admin",
+        secondaryDepartment: null,
+        status: "not_started",
+        plannedDate: plannedDate?.toISOString() ?? null,
+        actualDate: null,
+        overrun: isProcurementStageOverrun(plannedDate, null),
+        qcPassed: null,
+        notes: null,
+        blockedReason: null,
+        blockedNote: null,
+        gateBlockedBy: null,
+        isPassFail: false,
+        refId: project.id,
+        dateField: "phase1ReviewActualEndDate",
+        noteField: "phase1ReviewNote",
+        stepCode: null,
+        actionItemSource: null,
+        contractorId: null,
+        contractorName: null,
+        contractorPlannedDate: null,
+        contractorOverdue: false,
+        manualPlannedStartDate: null,
+        manualPlannedEndDate: null,
+        completedByDepartment: null,
+      });
+    }
+
+    if (project.phase3ReviewActualEndDate === null && threeE) {
+      const plannedDate = threeE.plannedEndDate ?? null;
+      tasks.push({
+        id: `customer_review:${project.id}:phase3`,
+        kind: "customer_review",
+        phase: "phase_3",
+        taskLabel: "Phase 3 customer review",
+        subTaskLabel: null,
+        project: projectRef,
+        department: "hr_admin",
+        secondaryDepartment: null,
+        status: "not_started",
+        plannedDate: plannedDate?.toISOString() ?? null,
+        actualDate: null,
+        overrun: isProcurementStageOverrun(plannedDate, null),
+        qcPassed: null,
+        notes: null,
+        blockedReason: null,
+        blockedNote: null,
+        gateBlockedBy: null,
+        isPassFail: false,
+        refId: project.id,
+        dateField: "phase3ReviewActualEndDate",
+        noteField: "phase3ReviewNote",
+        stepCode: null,
+        actionItemSource: null,
+        contractorId: null,
+        contractorName: null,
+        contractorPlannedDate: null,
+        contractorOverdue: false,
+        manualPlannedStartDate: null,
+        manualPlannedEndDate: null,
+        completedByDepartment: null,
+      });
+    }
+  }
+  return tasks;
+}
+
+/**
  * Every open task a department (or everyone, for owner_admin/HR & Admin — see /my-tasks) needs
  * to act on, across every project — not just PhaseStep rows (getMyTasks' own scope) but each
  * procurement item's and the glass PO's own *next* unfilled stage, and any custom follow-up
@@ -732,7 +911,8 @@ async function buildServiceItemTasks(department: Department | null): Promise<Uni
  * Purchase's real queue lives almost entirely in the granular procurement/glass-PO stages, which
  * getMyTasks never surfaced (its own 2A/2D1/2F rows are just auto-computed summaries of exactly
  * this data) — see the /my-tasks table redesign this was built for. Service work-items (a
- * separate, project-less lifecycle — see Service/ServiceItem) are included the same way.
+ * separate, project-less lifecycle — see Service/ServiceItem) and a project's own Additional
+ * works rows (see WorkBlock/WorkTask) are both included the same way.
  *
  * Sorted by planned date ascending, nulls last — the earliest-due (including anything already
  * overdue) always sorts first, with no separate "overdue" tier needed on top of that.
@@ -742,7 +922,7 @@ async function buildServiceItemTasks(department: Department | null): Promise<Uni
  * every downstream planned date on that step depends on it existing at all.
  */
 export async function getUnifiedMyTasks(department: Department | null): Promise<UnifiedTask[]> {
-  const [phaseSteps, plannedDateEdits, procurementStages, glassPOStages, actionItems, serviceItems] =
+  const [phaseSteps, plannedDateEdits, procurementStages, glassPOStages, actionItems, serviceItems, workTasks, customerReviews] =
     await Promise.all([
       buildPhaseStepTasks(department),
       buildPlannedDateEditTasks(department),
@@ -750,6 +930,8 @@ export async function getUnifiedMyTasks(department: Department | null): Promise<
       buildGlassPOStageTasks(department),
       buildActionItemTasks(department),
       buildServiceItemTasks(department),
+      buildWorkTaskTasks(department),
+      buildCustomerReviewTasks(department),
     ]);
 
   const all = [
@@ -759,6 +941,8 @@ export async function getUnifiedMyTasks(department: Department | null): Promise<
     ...glassPOStages,
     ...actionItems,
     ...serviceItems,
+    ...workTasks,
+    ...customerReviews,
   ];
   return all.sort((a, b) => {
     const aIsPlannedDateEdit = a.kind === "planned_date_edit";

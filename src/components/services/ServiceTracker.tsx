@@ -79,23 +79,40 @@ function openPicker(e: React.MouseEvent<HTMLInputElement>) {
  *
  *  Exported, with the PATCH endpoint passed in rather than hardcoded, because a project's
  *  additional-work blocks (see AdditionalWorks.tsx) are the same kind of flat work row and share
- *  this exactly — same completion, late-reason and Pass/Fail behavior, just a different table. */
+ *  this exactly — same completion, late-reason and Pass/Fail behavior, just a different table.
+ *
+ *  allowEditingTaskAndPlannedDate opts into a second edit mode, for the task label and planned
+ *  date themselves — off by default (a service item's are fixed at creation, see this row's own
+ *  comment above) and on only for AdditionalWorks' work-task rows, whose PATCH endpoint
+ *  (/api/work-tasks/[id]) accepts those fields; /api/service-items/[id] doesn't, so turning this
+ *  on for a service item would silently drop the edit server-side. */
 export function ItemRow({
   item,
   editable,
   patchUrl,
   onSaved,
+  allowEditingTaskAndPlannedDate = false,
 }: {
   item: ServiceItemData;
   editable: boolean;
   patchUrl: string;
   onSaved: () => void;
+  allowEditingTaskAndPlannedDate?: boolean;
 }) {
   const isDone = item.actualDate !== null;
   const [dateDraft, setDateDraft] = useSyncedDraft(item.actualDate, toDateInputValue);
   const [noteDraft, setNoteDraft] = useSyncedDraft(item.note, (v) => v ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Its own edit mode, independent of the completion fields above — touching the task's own
+  // metadata (what it's called, when it's due) is a different action from recording progress
+  // against it, so the two never share draft/submitting state.
+  const [editingMeta, setEditingMeta] = useState(false);
+  const [metaTaskLabel, setMetaTaskLabel] = useSyncedDraft(item.taskLabel, (v) => v);
+  const [metaPlannedDate, setMetaPlannedDate] = useSyncedDraft(item.plannedDate, toDateInputValue);
+  const [metaSaving, setMetaSaving] = useState(false);
+  const [metaError, setMetaError] = useState<string | null>(null);
 
   // Editing an already-done row's date to a *different*, non-empty value is a correction, not a
   // live edit — same convention as ProcurementTracker's StageRow.
@@ -133,6 +150,49 @@ export function ItemRow({
     } catch {
       setError("Could not reach the server");
       setSaving(false);
+    }
+  }
+
+  function startEditMeta() {
+    setMetaTaskLabel(item.taskLabel);
+    setMetaPlannedDate(toDateInputValue(item.plannedDate));
+    setMetaError(null);
+    setEditingMeta(true);
+  }
+
+  function cancelEditMeta() {
+    setEditingMeta(false);
+    setMetaError(null);
+  }
+
+  async function saveMeta() {
+    if (!metaTaskLabel.trim() || !metaPlannedDate) {
+      setMetaError("Task and planned date are both required");
+      return;
+    }
+    setMetaSaving(true);
+    setMetaError(null);
+    try {
+      const res = await fetch(patchUrl, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          taskLabel: metaTaskLabel.trim(),
+          plannedDate: new Date(metaPlannedDate).toISOString(),
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setMetaError(typeof data.error === "string" ? data.error : "Could not save changes");
+        setMetaSaving(false);
+        return;
+      }
+      setMetaSaving(false);
+      setEditingMeta(false);
+      onSaved();
+    } catch {
+      setMetaError("Could not reach the server");
+      setMetaSaving(false);
     }
   }
 
@@ -188,7 +248,18 @@ export function ItemRow({
               <ClockIcon className="h-3.5 w-3.5 stroke-current" />
             )}
           </span>
-          <span className="text-sm font-medium text-fg">{item.taskLabel}</span>
+          {allowEditingTaskAndPlannedDate && editable && editingMeta ? (
+            <input
+              type="text"
+              autoFocus
+              value={metaTaskLabel}
+              disabled={metaSaving}
+              onChange={(e) => setMetaTaskLabel(e.target.value)}
+              className="h-8 min-w-[8rem] rounded-lg border border-edge bg-bg px-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-50"
+            />
+          ) : (
+            <span className="text-sm font-medium text-fg">{item.taskLabel}</span>
+          )}
           <span className="shrink-0 rounded-full bg-overlay px-1.5 py-0.5 text-[10px] font-medium text-fg-muted ring-1 ring-inset ring-edge">
             {DEPARTMENT_LABELS[item.department]}
           </span>
@@ -197,12 +268,57 @@ export function ItemRow({
               Reviewed
             </span>
           )}
+          {allowEditingTaskAndPlannedDate && editable && !editingMeta && (
+            <button
+              type="button"
+              onClick={startEditMeta}
+              aria-label="Edit task and planned date"
+              title="Edit task and planned date"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-fg-subtle transition-colors hover:bg-overlay hover:text-fg"
+            >
+              <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-3.5 w-3.5 stroke-current">
+                <path d="M16.5 4.5 19.5 7.5 8 19H5v-3L16.5 4.5Z" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          )}
+          {allowEditingTaskAndPlannedDate && editable && editingMeta && (
+            <span className="flex shrink-0 gap-1">
+              <button
+                type="button"
+                onClick={cancelEditMeta}
+                disabled={metaSaving}
+                className="rounded-lg border border-edge px-2 py-1 text-[11px] font-medium text-fg-muted transition-colors hover:bg-overlay disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveMeta}
+                disabled={metaSaving}
+                className="rounded-lg bg-accent px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {metaSaving ? <Spinner className="h-3 w-3" /> : "Save"}
+              </button>
+            </span>
+          )}
         </div>
+        {metaError && <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">{metaError}</p>}
       </td>
 
       <td className="whitespace-nowrap px-3 py-2.5">
         <div className="flex items-center gap-1.5">
-          <span className="text-sm text-fg-muted">{formatDate(item.plannedDate)}</span>
+          {allowEditingTaskAndPlannedDate && editable && editingMeta ? (
+            <input
+              type="date"
+              value={metaPlannedDate}
+              disabled={metaSaving}
+              onChange={(e) => setMetaPlannedDate(e.target.value)}
+              onClick={openPicker}
+              className="h-8 w-[8.5rem] rounded-lg border border-edge bg-bg px-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-50"
+            />
+          ) : (
+            <span className="text-sm text-fg-muted">{formatDate(item.plannedDate)}</span>
+          )}
           {!isDone && item.overrun && (
             <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-inset ring-amber-500/25 dark:text-amber-400">
               Overdue

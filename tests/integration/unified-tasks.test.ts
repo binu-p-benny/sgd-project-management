@@ -127,8 +127,13 @@ describe("getUnifiedMyTasks — excludes derived phase steps and soft-deleted pr
   it("a soft-deleted project contributes no tasks of any kind — regression for the prisma.ts soft-delete extension gap", async () => {
     const project = await createTestProjectDayOne();
     await advanceThroughPhase1(project.id, users);
+    const block = await prisma.workBlock.create({ data: { projectId: project.id, label: "Extra work" } });
+    await prisma.workTask.create({
+      data: { workBlockId: block.id, taskLabel: "Extra task", department: "purchase", plannedDate: new Date() },
+    });
     const beforeCount = tasksFor(await getUnifiedMyTasks(null), project.id).length;
     expect(beforeCount).toBeGreaterThan(0);
+    expect(tasksFor(await getUnifiedMyTasks(null), project.id).some((t) => t.kind === "work_task")).toBe(true);
 
     await prisma.project.update({ where: { id: project.id }, data: { deletedAt: new Date() } });
     const afterCount = tasksFor(await getUnifiedMyTasks(null), project.id).length;
@@ -137,6 +142,130 @@ describe("getUnifiedMyTasks — excludes derived phase steps and soft-deleted pr
     // Restore it so cleanupTestProjects' own soft-delete (by name prefix) still finds it — a
     // project already deleted here would otherwise be invisible to that cleanup query too.
     await prisma.project.update({ where: { id: project.id }, data: { deletedAt: null } });
+  });
+});
+
+describe("getUnifiedMyTasks — a project's own Additional works rows (WorkBlock/WorkTask)", () => {
+  it("surfaces an open work task, scoped to the department it was assigned to, and disappears once completed", async () => {
+    const project = await createTestProjectDayOne();
+    const block = await prisma.workBlock.create({ data: { projectId: project.id, label: "Balcony railing" } });
+    const task = await prisma.workTask.create({
+      data: {
+        workBlockId: block.id,
+        taskLabel: "Confirm site visit date",
+        department: "owner_admin",
+        plannedDate: new Date("2026-10-01T00:00:00.000Z"),
+      },
+    });
+
+    const forOwner = tasksFor(await getUnifiedMyTasks("owner_admin"), project.id);
+    expect(forOwner).toHaveLength(1);
+    expect(forOwner[0].kind).toBe("work_task");
+    expect(forOwner[0].taskLabel).toBe("Confirm site visit date");
+    // The work block's own label — the row's equivalent of an item-type/procurement-stage
+    // subTaskLabel, so /my-tasks shows which block this belongs to.
+    expect(forOwner[0].subTaskLabel).toBe("Balcony railing");
+    // createTestProjectDayOne seeds a phase_1 project — the row should read the project's own
+    // current phase, not some fixed value (see buildWorkTaskTasks' own comment on why).
+    expect(forOwner[0].phase).toBe("phase_1");
+
+    // Wrong department never sees it.
+    expect(tasksFor(await getUnifiedMyTasks("purchase"), project.id)).toHaveLength(0);
+    // Admin/owner's own department=null view sees every department's rows, this one included.
+    expect(tasksFor(await getUnifiedMyTasks(null), project.id).some((t) => t.kind === "work_task")).toBe(true);
+
+    await prisma.workTask.update({ where: { id: task.id }, data: { actualDate: new Date() } });
+    expect(tasksFor(await getUnifiedMyTasks("owner_admin"), project.id)).toHaveLength(0);
+  });
+
+  it("PATCH /api/work-tasks/[id] is the endpoint TaskTable's simpleStageEndpoint routes a work_task row to", async () => {
+    const project = await createTestProjectDayOne();
+    const block = await prisma.workBlock.create({ data: { projectId: project.id, label: "Extra" } });
+    await prisma.workTask.create({
+      data: {
+        workBlockId: block.id,
+        taskLabel: "Whatever",
+        department: "operations_manager",
+        plannedDate: new Date(),
+      },
+    });
+
+    const [row] = tasksFor(await getUnifiedMyTasks("operations_manager"), project.id);
+    expect(row.dateField).toBe("actualDate");
+    expect(row.noteField).toBe("note");
+    // refId is the WorkTask's own id — /api/work-tasks/[id] is exactly PATCH /api/work-tasks/${refId}.
+    expect(row.refId).toBeTruthy();
+  });
+});
+
+describe("getUnifiedMyTasks — the Phase 1/3 customer review cards (PhaseReviewCard.tsx), HR & Admin only", () => {
+  it("Phase 1 review is open from day one, using 2A's own planned end date, and only HR & Admin sees it", async () => {
+    const project = await createTestProjectDayOne();
+    const twoA = await getStep(project.id, "2A");
+
+    const forHR = tasksFor(await getUnifiedMyTasks("hr_admin"), project.id);
+    const review = forHR.find((t) => t.kind === "customer_review");
+    expect(review).toBeDefined();
+    expect(review!.taskLabel).toBe("Phase 1 customer review");
+    expect(review!.phase).toBe("phase_1");
+    expect(review!.plannedDate).toBe(twoA.plannedEndDate?.toISOString() ?? null);
+    // refId is the Project's own id — PATCH /api/projects/[id] is where this saves, not a
+    // dedicated sub-table like every other simple kind.
+    expect(review!.refId).toBe(project.id);
+    expect(review!.dateField).toBe("phase1ReviewActualEndDate");
+    expect(review!.noteField).toBe("phase1ReviewNote");
+
+    // No other department owns this — not even Design Engineer, who owns 2A itself.
+    expect(tasksFor(await getUnifiedMyTasks("design_engineer"), project.id).some((t) => t.kind === "customer_review")).toBe(
+      false
+    );
+    // Admin/owner's own department=null view sees it too, same as every other kind.
+    expect(tasksFor(await getUnifiedMyTasks(null), project.id).some((t) => t.kind === "customer_review")).toBe(true);
+  });
+
+  it("Phase 1 review disappears once phase1ReviewActualEndDate is filled in", async () => {
+    const project = await createTestProjectDayOne();
+    await prisma.project.update({ where: { id: project.id }, data: { phase1ReviewActualEndDate: new Date() } });
+
+    const forHR = tasksFor(await getUnifiedMyTasks("hr_admin"), project.id);
+    expect(forHR.some((t) => t.kind === "customer_review" && t.phase === "phase_1")).toBe(false);
+  });
+
+  it("Phase 3 review doesn't exist yet on a day-one project — nothing to review before Phase 3 is real", async () => {
+    const project = await createTestProjectDayOne();
+    const forHR = tasksFor(await getUnifiedMyTasks("hr_admin"), project.id);
+    expect(forHR.some((t) => t.kind === "customer_review" && t.phase === "phase_3")).toBe(false);
+  });
+
+  it("Phase 3 review appears once the project has actually reached Phase 3 (a 3E row exists), using 3E's own planned end date", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users); // seeds Phase 3, including 3E
+    const threeE = await getStep(project.id, "3E");
+
+    const forHR = tasksFor(await getUnifiedMyTasks("hr_admin"), project.id);
+    const review = forHR.find((t) => t.kind === "customer_review" && t.phase === "phase_3");
+    expect(review).toBeDefined();
+    expect(review!.taskLabel).toBe("Phase 3 customer review");
+    expect(review!.plannedDate).toBe(threeE.plannedEndDate?.toISOString() ?? null);
+    expect(review!.refId).toBe(project.id);
+    expect(review!.dateField).toBe("phase3ReviewActualEndDate");
+    expect(review!.noteField).toBe("phase3ReviewNote");
+
+    // Phase 1's review is still its own, separate, still-open row — filling in Phase 3's data
+    // never touches it.
+    expect(forHR.some((t) => t.kind === "customer_review" && t.phase === "phase_1")).toBe(true);
+  });
+
+  it("Phase 3 review disappears once phase3ReviewActualEndDate is filled in, independently of Phase 1's", async () => {
+    const project = await createTestProjectDayOne();
+    await advanceThroughPhase1(project.id, users);
+    await advanceThroughPhase2(project.id, users);
+    await prisma.project.update({ where: { id: project.id }, data: { phase3ReviewActualEndDate: new Date() } });
+
+    const forHR = tasksFor(await getUnifiedMyTasks("hr_admin"), project.id);
+    expect(forHR.some((t) => t.kind === "customer_review" && t.phase === "phase_3")).toBe(false);
+    expect(forHR.some((t) => t.kind === "customer_review" && t.phase === "phase_1")).toBe(true);
   });
 });
 
