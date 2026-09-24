@@ -2,6 +2,7 @@ import type {
   Department,
   PaymentStatus,
   ProjectPhase,
+  StepPhase,
   StepStatus,
   BlockedReason,
   DelayCategory,
@@ -96,6 +97,18 @@ export const STEP_STATUS_LABELS: Record<StepStatus, string> = {
   blocked: "Blocked",
   completed: "Completed",
 };
+
+/**
+ * Display-only override: "Blocked" reads as a dead end, but past Phase 1 most blockers (a
+ * damaged part, a vendor issue) get worked around rather than sitting until someone manually
+ * unblocks the step, so the badge says "Temporarily blocked" instead once the step is in Phase
+ * 2/3. Front-end wording only — the stored status is still "blocked" either way, and
+ * STEP_STATUS_COLORS/STEP_STATUS_LABELS are unaffected.
+ */
+export function stepStatusLabel(status: StepStatus, phase: StepPhase | string): string {
+  if (status === "blocked" && phase !== "phase_1") return "Temporarily blocked";
+  return STEP_STATUS_LABELS[status];
+}
 
 export const STEP_STATUS_COLORS: Record<StepStatus, string> = {
   not_started: "bg-overlay text-fg-muted ring-1 ring-inset ring-edge",

@@ -1,4 +1,4 @@
-import { PHASE_LABELS, STEP_STATUS_LABELS, BLOCKED_REASON_LABELS } from "@/lib/labels";
+import { PHASE_LABELS, stepStatusLabel, BLOCKED_REASON_LABELS } from "@/lib/labels";
 import { isStepOverrun, isDueToday, daysBlocked } from "@/lib/overrun";
 import type { BlockedReason, StepPhase, StepStatus } from "@prisma/client";
 
@@ -23,10 +23,11 @@ function formatShortDate(date: Date): string {
 /** Status label plus the concrete detail behind it — the note, the date, the count. */
 function getStatusDetail(step: ProgressStep): { primary: string; secondary: string | null } {
   if (step.status === "blocked") {
+    const label = stepStatusLabel("blocked", step.phase);
     const reason = step.blockedReason ? BLOCKED_REASON_LABELS[step.blockedReason] : null;
     const days = daysBlocked(step.updatedAt);
     const parts = [step.blockedNote, `blocked ${days}d`].filter(Boolean);
-    return { primary: reason ? `Blocked: ${reason}` : "Blocked", secondary: parts.join(" · ") || null };
+    return { primary: reason ? `${label}: ${reason}` : label, secondary: parts.join(" · ") || null };
   }
 
   if (step.status === "completed") {

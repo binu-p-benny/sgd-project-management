@@ -80,14 +80,15 @@ export function isOperationsManager(session: SessionPayload): boolean {
 }
 
 /**
- * Owner-level access: owner_admin, or Operations Manager — who is meant to be able to do
- * everything the owner can except see /performance. The check to reach for on any "owner only"
- * action (skipping a phase, seeing every department's steps, the dashboard); isOwnerAdmin is
- * reserved for /performance itself. Still narrower than isAdminEditor, which also includes HR &
- * Admin.
+ * Owner-level access: owner_admin, Operations Manager, or Project Engineer — every one of whom
+ * is meant to be able to do everything the owner can except see /performance. The check to reach
+ * for on any "owner only" action (skipping a phase, seeing every department's steps, the
+ * dashboard); isOwnerAdmin is reserved for /performance itself. Still narrower than isAdminEditor,
+ * which also includes HR & Admin. Project Engineer was added here (not just isAdminEditor) so
+ * they get the exact same reach as Operations Manager, including /dashboard and /open-work.
  */
 export function hasOwnerAccess(session: SessionPayload): boolean {
-  return isOwnerAdmin(session) || isOperationsManager(session);
+  return isOwnerAdmin(session) || isOperationsManager(session) || session.department === "project_engineer";
 }
 
 /** /dashboard is one of the "all pages except /performance" Operations Manager gets — same
@@ -99,15 +100,17 @@ export function canViewDashboard(session: SessionPayload): boolean {
 /**
  * HR & Admin acts as a proxy editor for any department's steps, procurement items,
  * and payment fields — not all staff reliably update their own tasks, so HR can do
- * it on their behalf. Same bypass owner_admin already has. Operations Manager gets the
- * same full page access (everything except /performance — see its own layout.tsx gate)
- * so they can review completed work in context, even though their own day-to-day queue
- * is the review queue in /my-tasks, not proxy-editing other departments' steps.
+ * it on their behalf. Same bypass owner_admin already has. Operations Manager and
+ * Project Engineer both get the same full page access (everything except /performance
+ * — see its own layout.tsx gate) so they can see/act on every project in context, even
+ * though their own day-to-day queue is /my-tasks, not proxy-editing other departments'
+ * steps.
  */
 export function isAdminEditor(session: SessionPayload): boolean {
   return (
     session.department === "owner_admin" ||
     session.department === "hr_admin" ||
-    session.department === "operations_manager"
+    session.department === "operations_manager" ||
+    session.department === "project_engineer"
   );
 }

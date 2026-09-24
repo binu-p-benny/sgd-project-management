@@ -58,10 +58,20 @@ async function listSteps(projectId: string, departmentParam?: Department): Promi
   return response.json();
 }
 
-describe("POST /api/projects/[id]/skip-phase — owner-level only (owner_admin + Operations Manager)", () => {
+describe("POST /api/projects/[id]/skip-phase — owner-level only (owner_admin + Operations Manager + Project Engineer)", () => {
   it("lets Operations Manager skip a project straight to phase 2", async () => {
     const project = await createTestProject();
     actAs("operations_manager");
+
+    const response = await callSkipPhase(project.id);
+
+    expect(response.status).toBe(200);
+    expect((await getProject(project.id)).currentPhase).toBe("phase_2");
+  });
+
+  it("lets Project Engineer too — same owner-level reach as Operations Manager (see hasOwnerAccess)", async () => {
+    const project = await createTestProject();
+    actAs("project_engineer");
 
     const response = await callSkipPhase(project.id);
 
@@ -79,7 +89,7 @@ describe("POST /api/projects/[id]/skip-phase — owner-level only (owner_admin +
     expect((await getProject(project.id)).currentPhase).toBe("phase_2");
   });
 
-  it.each(["hr_admin", "accounts", "project_engineer"] as Department[])(
+  it.each(["hr_admin", "accounts"] as Department[])(
     "forbids %s — HR & Admin included, this is deliberately narrower than isAdminEditor — and leaves the project untouched",
     async (department) => {
       const project = await createTestProject();
@@ -100,7 +110,7 @@ describe("POST /api/projects/[id]/skip-phase — owner-level only (owner_admin +
   });
 });
 
-describe("GET /api/phase-steps — owner-level roles see every department, everyone else stays scoped to their own", () => {
+describe("GET /api/phase-steps — owner-level roles (owner_admin, Operations Manager, Project Engineer) see every department, everyone else stays scoped to their own", () => {
   it("Operations Manager sees the same steps the owner does, across more than one department", async () => {
     const project = await createTestProject();
 
@@ -111,6 +121,18 @@ describe("GET /api/phase-steps — owner-level roles see every department, every
 
     expect(new Set(opsManagerSteps.map((s) => s.owningDepartment)).size).toBeGreaterThan(1);
     expect(opsManagerSteps.map((s) => s.stepCode)).toEqual(ownerSteps.map((s) => s.stepCode));
+  });
+
+  it("Project Engineer sees the same steps the owner does too, not just their own department's", async () => {
+    const project = await createTestProject();
+
+    actAs("owner_admin");
+    const ownerSteps = await listSteps(project.id);
+    actAs("project_engineer");
+    const engineerSteps = await listSteps(project.id);
+
+    expect(new Set(engineerSteps.map((s) => s.owningDepartment)).size).toBeGreaterThan(1);
+    expect(engineerSteps.map((s) => s.stepCode)).toEqual(ownerSteps.map((s) => s.stepCode));
   });
 
   it("Operations Manager can still narrow down with ?department=, the same filter the owner has", async () => {
@@ -127,11 +149,11 @@ describe("GET /api/phase-steps — owner-level roles see every department, every
 
   it("a plain department user is still scoped to their own department, whatever ?department= says", async () => {
     const project = await createTestProject();
-    actAs("project_engineer");
+    actAs("design_engineer");
 
     const steps = await listSteps(project.id, "hr_admin");
 
     expect(steps.length).toBeGreaterThan(0);
-    expect(steps.every((s) => s.owningDepartment === "project_engineer" || s.secondaryDepartment === "project_engineer")).toBe(true);
+    expect(steps.every((s) => s.owningDepartment === "design_engineer" || s.secondaryDepartment === "design_engineer")).toBe(true);
   });
 });

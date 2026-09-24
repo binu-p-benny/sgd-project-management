@@ -25,7 +25,8 @@ export async function proxy(request: NextRequest) {
   if (
     pathname.startsWith("/dashboard") &&
     session.department !== "owner_admin" &&
-    session.department !== "operations_manager"
+    session.department !== "operations_manager" &&
+    session.department !== "project_engineer"
   ) {
     return NextResponse.redirect(new URL("/my-tasks", request.url));
   }
@@ -34,7 +35,8 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith("/admin") &&
     session.department !== "owner_admin" &&
     session.department !== "hr_admin" &&
-    session.department !== "operations_manager"
+    session.department !== "operations_manager" &&
+    session.department !== "project_engineer"
   ) {
     return NextResponse.redirect(new URL("/my-tasks", request.url));
   }

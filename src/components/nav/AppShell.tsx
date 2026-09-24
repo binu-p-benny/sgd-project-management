@@ -111,29 +111,32 @@ function initials(name: string): string {
 function navItemsFor(department: Department): NavItem[] {
   const items: NavItem[] = [];
 
-  // owner_admin and Operations Manager both land on Dashboard first. Every department also gets
-  // My Tasks — owner_admin included, now that Owner is a normal work-owning department like any
-  // other (see ASSIGNABLE_DEPARTMENTS): whatever's been handed to them directly shows up there,
-  // same as anyone else's queue.
-  if (department === "owner_admin" || department === "operations_manager") {
+  // owner_admin, Operations Manager and Project Engineer all land on Dashboard first (see
+  // hasOwnerAccess — Project Engineer was added there for the same full-visibility reach as
+  // Operations Manager). Every department also gets My Tasks — owner_admin included, now that
+  // Owner is a normal work-owning department like any other (see ASSIGNABLE_DEPARTMENTS):
+  // whatever's been handed to them directly shows up there, same as anyone else's queue.
+  if (department === "owner_admin" || department === "operations_manager" || department === "project_engineer") {
     items.push({ href: "/dashboard", label: "Dashboard", icon: DASHBOARD_ICON });
   }
   items.push({ href: "/my-tasks", label: "My Tasks", icon: HOME_ICON });
 
-  // Whole-company "every department's open work" view — same owner_admin/operations_manager
-  // audience as Dashboard (see hasOwnerAccess, which open-work/page.tsx gates on directly, not
-  // just nav-hidden like this).
-  if (department === "owner_admin" || department === "operations_manager") {
+  // Whole-company "every department's open work" view — same hasOwnerAccess audience as
+  // Dashboard (open-work/page.tsx gates on it directly, not just nav-hidden like this).
+  if (department === "owner_admin" || department === "operations_manager" || department === "project_engineer") {
     items.push({ href: "/open-work", label: "Open Work", icon: OPEN_WORK_ICON });
   }
 
   // HR & Admin proxy-edits any department's steps/procurement/payment on their behalf, and
-  // Operations Manager needs the same full page access to review completed work in context
-  // (see isAdminEditor) — same pairing /clients', /contractors', /projects' and /services' own
+  // Operations Manager and Project Engineer both need the same full page access (see
+  // isAdminEditor) — same pairing /clients', /contractors', /projects' and /services' own
   // layout.tsx gate on, so these links only ever appear for someone who can actually get past
   // them.
   const isAdmin =
-    department === "owner_admin" || department === "hr_admin" || department === "operations_manager";
+    department === "owner_admin" ||
+    department === "hr_admin" ||
+    department === "operations_manager" ||
+    department === "project_engineer";
   if (isAdmin) {
     items.push(
       { href: "/clients", label: "Clients", icon: CLIENTS_ICON },

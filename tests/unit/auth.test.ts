@@ -19,7 +19,7 @@ const EXPECTED: Record<Department, { ownerAdmin: boolean; ownerAccess: boolean; 
   owner_admin: { ownerAdmin: true, ownerAccess: true, adminEditor: true },
   operations_manager: { ownerAdmin: false, ownerAccess: true, adminEditor: true },
   hr_admin: { ownerAdmin: false, ownerAccess: false, adminEditor: true },
-  project_engineer: { ownerAdmin: false, ownerAccess: false, adminEditor: false },
+  project_engineer: { ownerAdmin: false, ownerAccess: true, adminEditor: true },
   design_engineer: { ownerAdmin: false, ownerAccess: false, adminEditor: false },
   purchase: { ownerAdmin: false, ownerAccess: false, adminEditor: false },
   accounts: { ownerAdmin: false, ownerAccess: false, adminEditor: false },
@@ -52,5 +52,21 @@ describe("Operations Manager has everything the owner has, except the owner-only
     expect(isOwnerAdmin(owner)).toBe(true);
     expect(isOwnerAdmin(opsManager)).toBe(false);
     expect(isOperationsManager(opsManager)).toBe(true);
+  });
+});
+
+describe("Project Engineer has the exact same reach as Operations Manager", () => {
+  const opsManager = sessionFor("operations_manager");
+  const engineer = sessionFor("project_engineer");
+
+  it("passes every access check Operations Manager passes", () => {
+    expect(hasOwnerAccess(engineer)).toBe(hasOwnerAccess(opsManager));
+    expect(isAdminEditor(engineer)).toBe(isAdminEditor(opsManager));
+    expect(canViewDashboard(engineer)).toBe(canViewDashboard(opsManager));
+  });
+
+  it("is not isOwnerAdmin or isOperationsManager — still no /performance access, and not the review queue's own audience", () => {
+    expect(isOwnerAdmin(engineer)).toBe(false);
+    expect(isOperationsManager(engineer)).toBe(false);
   });
 });
