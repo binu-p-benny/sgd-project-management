@@ -51,6 +51,10 @@ const updateProjectSchema = z.object({
   phase1ReviewNote: z.string().nullable().optional(),
   phase3ReviewActualEndDate: dateOrNull,
   phase3ReviewNote: z.string().nullable().optional(),
+  // Phase 3's own last card — same admin-only gate as the pair above.
+  websiteReviewAsked: z.boolean().nullable().optional(),
+  websiteReviewedAt: dateOrNull,
+  websiteReviewNote: z.string().nullable().optional(),
 });
 
 // "notes" counts as a payment-adjacent field for permission purposes — Accounts should

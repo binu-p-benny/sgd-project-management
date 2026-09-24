@@ -9,6 +9,7 @@ import {
   getRequirementCreatedStatus,
 } from "@/lib/procurement";
 import { PROCUREMENT_STAGES, firstUnfilledStage, type StageSpec } from "@/lib/project-filters";
+import { addDays } from "@/lib/step-template";
 import {
   DERIVED_STEP_CODES,
   MANUAL_CONTRACTOR_STEP_CODES,
@@ -32,6 +33,15 @@ export type TaskKind =
   // simple date+note shape as work_task/service_item, just parented by a Project directly
   // (its two fields live on the Project row itself, not a separate table).
   | "customer_review"
+  // Phase 3's own last card (see WebsiteReviewCard.tsx, HR & Admin only) — did HR ask the
+  // client for a website review once installation's final QC (3E) actually finished. Built
+  // alongside customer_review in buildCustomerReviewTasks (same Project row, same query), but
+  // kept as its own kind rather than folding into customer_review: its completion is a plain
+  // Yes/No, not a "Mark complete" — see TaskTable's own website_review branch, which answers
+  // through websiteReviewAsked directly rather than the isPassFail/qcPassed pair every other
+  // Pass/Fail-shaped kind here uses (qcPassed feeds getEffectiveOverallStatus's "qc_failed"
+  // project status elsewhere — a plain "no" here must never be mistaken for a failed QC check).
+  | "website_review"
   // Built by task-reviews.ts, not this file — a completed unit of work (of any other kind
   // above) the operation manager hasn't reviewed yet. Kept in this union rather than its own
   // type so it can flow through the same UnifiedTask shape and TaskTable UI as everything else.
@@ -804,13 +814,24 @@ async function buildWorkTaskTasks(department: Department | null): Promise<Unifie
  * phase3ReviewCard only rendering once editablePhase3Only/phase3Only is non-empty on that page —
  * there's nothing to review before Phase 3 is real. Disappears the same way every other "simple"
  * kind here does: once its own actual-end-date column is filled in.
+ *
+ * Also builds the Phase 3 "website review" task (see WebsiteReviewCard.tsx) in the same pass —
+ * same Project row, same HR & Admin-only audience, so it rides along on this query rather than a
+ * second round trip. Unlike the two review cards above, it needs 3E to have actually *completed*
+ * (not just exist) before it can open at all: its planned date is 3E's own actual end date + 1
+ * day, so there's nothing to compute a plan from — let alone anything to ask about — until final
+ * QC has genuinely happened.
  */
 async function buildCustomerReviewTasks(department: Department | null): Promise<UnifiedTask[]> {
   if (department && department !== "hr_admin") return [];
 
   const projects = await prisma.project.findMany({
     where: {
-      OR: [{ phase1ReviewActualEndDate: null }, { phase3ReviewActualEndDate: null, phaseSteps: { some: { stepCode: "3E" } } }],
+      OR: [
+        { phase1ReviewActualEndDate: null },
+        { phase3ReviewActualEndDate: null, phaseSteps: { some: { stepCode: "3E" } } },
+        { websiteReviewAsked: null, phaseSteps: { some: { stepCode: "3E", actualEndDate: { not: null } } } },
+      ],
     },
     select: {
       id: true,
@@ -818,7 +839,11 @@ async function buildCustomerReviewTasks(department: Department | null): Promise<
       client: { select: { name: true } },
       phase1ReviewActualEndDate: true,
       phase3ReviewActualEndDate: true,
-      phaseSteps: { where: { stepCode: { in: ["2A", "3E"] } }, select: { stepCode: true, plannedEndDate: true } },
+      websiteReviewAsked: true,
+      phaseSteps: {
+        where: { stepCode: { in: ["2A", "3E"] } },
+        select: { stepCode: true, plannedEndDate: true, actualEndDate: true },
+      },
     },
   });
 
@@ -888,6 +913,42 @@ async function buildCustomerReviewTasks(department: Department | null): Promise<
         refId: project.id,
         dateField: "phase3ReviewActualEndDate",
         noteField: "phase3ReviewNote",
+        stepCode: null,
+        actionItemSource: null,
+        contractorId: null,
+        contractorName: null,
+        contractorPlannedDate: null,
+        contractorOverdue: false,
+        manualPlannedStartDate: null,
+        manualPlannedEndDate: null,
+        completedByDepartment: null,
+      });
+    }
+
+    if (project.websiteReviewAsked === null && threeE?.actualEndDate) {
+      const plannedDate = addDays(threeE.actualEndDate, 1);
+      tasks.push({
+        id: `website_review:${project.id}`,
+        kind: "website_review",
+        phase: "phase_3",
+        taskLabel: "Website review",
+        subTaskLabel: null,
+        project: projectRef,
+        department: "hr_admin",
+        secondaryDepartment: null,
+        status: "not_started",
+        plannedDate: plannedDate.toISOString(),
+        actualDate: null,
+        overrun: isProcurementStageOverrun(plannedDate, null),
+        qcPassed: null,
+        notes: null,
+        blockedReason: null,
+        blockedNote: null,
+        gateBlockedBy: null,
+        isPassFail: false,
+        refId: project.id,
+        dateField: "websiteReviewedAt",
+        noteField: "websiteReviewNote",
         stepCode: null,
         actionItemSource: null,
         contractorId: null,

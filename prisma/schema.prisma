@@ -126,10 +126,10 @@ model User {
   department   Department
   createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  statusChanges       StepStatusLog[]      @relation("StatusChangedBy")
-  qcCheckedItems      ProcurementItem[]    @relation("QcCheckedBy")
+  statusChanges        StepStatusLog[]      @relation("StatusChangedBy")
+  qcCheckedItems       ProcurementItem[]    @relation("QcCheckedBy")
   qcCheckedGlassOrders GlassPurchaseOrder[] @relation("GlassQcCheckedBy")
-  notifications       Notification[]
+  notifications        Notification[]
 
   @@index([department])
   @@map("users")
@@ -171,6 +171,17 @@ model Project {
   phase1ReviewNote          String?   @map("phase1_review_note") @db.Text
   phase3ReviewActualEndDate DateTime? @map("phase3_review_actual_end_date") @db.Timestamptz(3)
   phase3ReviewNote          String?   @map("phase3_review_note") @db.Text
+
+  // Phase 3's own last card (see WebsiteReviewCard.tsx) — did HR ask the client to leave a
+  // website review once installation's final QC (3E) actually wrapped up? A plain yes/no,
+  // deliberately its own boolean rather than folding into a qcPassed-style field — those feed
+  // getEffectiveOverallStatus's "qc_failed" project status elsewhere, and a plain "no" answer
+  // here must never be mistaken for a failed QC check. Null until answered; surfaced as an
+  // HR & Admin task (see buildCustomerReviewTasks in unified-tasks.ts) whose planned date is
+  // 3E's own actual end date + 1 day — there's nothing to ask about until then.
+  websiteReviewAsked Boolean?  @map("website_review_asked")
+  websiteReviewedAt  DateTime? @map("website_reviewed_at") @db.Timestamptz(3)
+  websiteReviewNote  String?   @map("website_review_note") @db.Text
 
   // Soft delete: set when a project is removed from the app. The row and everything hanging
   // off it are kept — deleting is a UI action, not a data one — but every read path filters
@@ -331,9 +342,9 @@ model PhaseStep {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  statusLogs    StepStatusLog[]
-  notifications Notification[]
-  actionItems   PhaseStepActionItem[]
+  statusLogs        StepStatusLog[]
+  notifications     Notification[]
+  actionItems       PhaseStepActionItem[]
 
   @@index([projectId])
   @@index([stepCode])
@@ -351,17 +362,17 @@ model PhaseStepActionItem {
   phaseStepId String    @map("phase_step_id")
   phaseStep   PhaseStep @relation(fields: [phaseStepId], references: [id], onDelete: Cascade)
 
-  taskLabel String @map("task_label")
+  taskLabel   String     @map("task_label")
   // Same "picked at creation, independent of the fixed stage's own owner" idea as
   // ProcurementActionItem.department — see its comment for why this is defaulted.
-  department Department @default(project_engineer)
+  department  Department @default(project_engineer)
   // Same "opt into Pass/Fail at creation" idea as ProcurementActionItem.isPassFail.
-  isPassFail  Boolean   @default(false) @map("is_pass_fail")
-  plannedDate DateTime  @map("planned_date") @db.Timestamptz(3)
-  actualDate  DateTime? @map("actual_date") @db.Timestamptz(3)
+  isPassFail  Boolean    @default(false) @map("is_pass_fail")
+  plannedDate DateTime   @map("planned_date") @db.Timestamptz(3)
+  actualDate  DateTime?  @map("actual_date") @db.Timestamptz(3)
   // Only meaningful when isPassFail is true — see ProcurementActionItem.qcPassed.
-  qcPassed Boolean? @map("qc_passed")
-  note     String?  @db.Text
+  qcPassed    Boolean?   @map("qc_passed")
+  note        String?    @db.Text
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -406,48 +417,48 @@ model ProcurementItem {
   // project default", same as every item behaves today.
   planAnchorOverride DateTime? @map("plan_anchor_override") @db.Timestamptz(3)
 
-  requirementCreatedAt DateTime? @map("requirement_created_at") @db.Timestamptz(3)
-  requirementNote      String?   @map("requirement_note") @db.Text
+  requirementCreatedAt       DateTime? @map("requirement_created_at") @db.Timestamptz(3)
+  requirementNote            String?   @map("requirement_note") @db.Text
   // Manual override for this stage's Planned date — null means "keep computing it from the
   // anchor/offset formula as usual". Setting one re-anchors every stage after it in the same
   // item's chain (see computeProcurementPlannedDates), the same "shift together" principle
   // planAnchorOverride already applies at the whole-item level.
   requirementPlannedOverride DateTime? @map("requirement_planned_override") @db.Timestamptz(3)
-  quoteCreatedAt       DateTime? @map("quote_created_at") @db.Timestamptz(3)
-  quoteNote            String?   @map("quote_note") @db.Text
-  quotePlannedOverride DateTime? @map("quote_planned_override") @db.Timestamptz(3)
-  orderConfirmedAt     DateTime? @map("order_confirmed_at") @db.Timestamptz(3)
-  orderNote            String?   @map("order_note") @db.Text
-  orderPlannedOverride DateTime? @map("order_planned_override") @db.Timestamptz(3)
+  quoteCreatedAt             DateTime? @map("quote_created_at") @db.Timestamptz(3)
+  quoteNote                  String?   @map("quote_note") @db.Text
+  quotePlannedOverride       DateTime? @map("quote_planned_override") @db.Timestamptz(3)
+  orderConfirmedAt           DateTime? @map("order_confirmed_at") @db.Timestamptz(3)
+  orderNote                  String?   @map("order_note") @db.Text
+  orderPlannedOverride       DateTime? @map("order_planned_override") @db.Timestamptz(3)
 
   // Section only — hardware/gasket never populate these two. Planned dates chain off the
   // previous stage's own ground-truth date (actual once known, else planned) rather than the
   // shared anchor — see computeSectionChainDates in procurement.ts. Each has its own manual
   // override too, same "shift every later stage in the chain" principle as every other stage.
-  materialDespatchAt                  DateTime? @map("material_despatch_at") @db.Timestamptz(3)
-  materialDespatchNote                String?   @map("material_despatch_note") @db.Text
-  materialDespatchPlannedOverride     DateTime? @map("material_despatch_planned_override") @db.Timestamptz(3)
-  arrivedForPowderCoatingAt           DateTime? @map("arrived_for_powder_coating_at") @db.Timestamptz(3)
-  arrivedForPowderCoatingNote         String?   @map("arrived_for_powder_coating_note") @db.Text
+  materialDespatchAt                     DateTime? @map("material_despatch_at") @db.Timestamptz(3)
+  materialDespatchNote                   String?   @map("material_despatch_note") @db.Text
+  materialDespatchPlannedOverride        DateTime? @map("material_despatch_planned_override") @db.Timestamptz(3)
+  arrivedForPowderCoatingAt              DateTime? @map("arrived_for_powder_coating_at") @db.Timestamptz(3)
+  arrivedForPowderCoatingNote            String?   @map("arrived_for_powder_coating_note") @db.Text
   arrivedForPowderCoatingPlannedOverride DateTime? @map("arrived_for_powder_coating_planned_override") @db.Timestamptz(3)
 
-  paymentSettledAt     DateTime? @map("payment_settled_at") @db.Timestamptz(3)
-  paymentNote          String?   @map("payment_note") @db.Text
-  paymentDetails       String?   @map("payment_details") @db.Text
+  paymentSettledAt       DateTime? @map("payment_settled_at") @db.Timestamptz(3)
+  paymentNote            String?   @map("payment_note") @db.Text
+  paymentDetails         String?   @map("payment_details") @db.Text
   paymentPlannedOverride DateTime? @map("payment_planned_override") @db.Timestamptz(3)
-  expectedArrivalDate  DateTime? @map("expected_arrival_date") @db.Timestamptz(3)
-  actualArrivalDate    DateTime? @map("actual_arrival_date") @db.Timestamptz(3)
-  arrivalNote          String?   @map("arrival_note") @db.Text
+  expectedArrivalDate    DateTime? @map("expected_arrival_date") @db.Timestamptz(3)
+  actualArrivalDate      DateTime? @map("actual_arrival_date") @db.Timestamptz(3)
+  arrivalNote            String?   @map("arrival_note") @db.Text
   arrivalPlannedOverride DateTime? @map("arrival_planned_override") @db.Timestamptz(3)
 
-  qcChecked   Boolean   @default(false) @map("qc_checked")
-  qcCheckedAt DateTime? @map("qc_checked_at") @db.Timestamptz(3)
-  qcCheckedBy String?   @map("qc_checked_by")
-  qcCheckedByUser User? @relation("QcCheckedBy", fields: [qcCheckedBy], references: [id])
+  qcChecked         Boolean   @default(false) @map("qc_checked")
+  qcCheckedAt       DateTime? @map("qc_checked_at") @db.Timestamptz(3)
+  qcCheckedBy       String?   @map("qc_checked_by")
+  qcCheckedByUser   User?     @relation("QcCheckedBy", fields: [qcCheckedBy], references: [id])
   // null = not yet checked, true = passed, false = failed. 2F only derives as complete once
   // every item is checked AND passed — a failed item blocks phase 3 until it's corrected.
-  qcPassed Boolean? @map("qc_passed")
-  qcNote      String?   @map("qc_note") @db.Text
+  qcPassed          Boolean?  @map("qc_passed")
+  qcNote            String?   @map("qc_note") @db.Text
   qcPlannedOverride DateTime? @map("qc_planned_override") @db.Timestamptz(3)
 
   // Only meaningful once qcPassed is false — the corrective plan for redoing this item.
@@ -519,25 +530,25 @@ model GlassPurchaseOrder {
   projectId String  @unique @map("project_id")
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  requirementCreatedAt DateTime? @map("requirement_created_at") @db.Timestamptz(3)
-  requirementNote      String?   @map("requirement_note") @db.Text
+  requirementCreatedAt   DateTime? @map("requirement_created_at") @db.Timestamptz(3)
+  requirementNote        String?   @map("requirement_note") @db.Text
   requirementPlannedDate DateTime? @map("requirement_planned_date") @db.Timestamptz(3)
 
-  quoteCreatedAt       DateTime? @map("quote_created_at") @db.Timestamptz(3)
-  quoteNote            String?   @map("quote_note") @db.Text
-  quotePlannedDate     DateTime? @map("quote_planned_date") @db.Timestamptz(3)
+  quoteCreatedAt   DateTime? @map("quote_created_at") @db.Timestamptz(3)
+  quoteNote        String?   @map("quote_note") @db.Text
+  quotePlannedDate DateTime? @map("quote_planned_date") @db.Timestamptz(3)
 
-  paymentSettledAt     DateTime? @map("payment_settled_at") @db.Timestamptz(3)
-  paymentNote          String?   @map("payment_note") @db.Text
-  paymentPlannedDate   DateTime? @map("payment_planned_date") @db.Timestamptz(3)
+  paymentSettledAt   DateTime? @map("payment_settled_at") @db.Timestamptz(3)
+  paymentNote        String?   @map("payment_note") @db.Text
+  paymentPlannedDate DateTime? @map("payment_planned_date") @db.Timestamptz(3)
 
-  orderConfirmedAt     DateTime? @map("order_confirmed_at") @db.Timestamptz(3)
-  orderNote            String?   @map("order_note") @db.Text
-  orderPlannedDate     DateTime? @map("order_planned_date") @db.Timestamptz(3)
+  orderConfirmedAt DateTime? @map("order_confirmed_at") @db.Timestamptz(3)
+  orderNote        String?   @map("order_note") @db.Text
+  orderPlannedDate DateTime? @map("order_planned_date") @db.Timestamptz(3)
 
-  actualArrivalDate    DateTime? @map("actual_arrival_date") @db.Timestamptz(3)
-  arrivalNote          String?   @map("arrival_note") @db.Text
-  arrivalPlannedDate   DateTime? @map("arrival_planned_date") @db.Timestamptz(3)
+  actualArrivalDate  DateTime? @map("actual_arrival_date") @db.Timestamptz(3)
+  arrivalNote        String?   @map("arrival_note") @db.Text
+  arrivalPlannedDate DateTime? @map("arrival_planned_date") @db.Timestamptz(3)
 
   qcCheckedAt     DateTime? @map("qc_checked_at") @db.Timestamptz(3)
   qcCheckedBy     String?   @map("qc_checked_by")
@@ -668,17 +679,17 @@ model ServiceItem {
   serviceId String  @map("service_id")
   service   Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
-  taskLabel  String     @map("task_label")
-  department Department @default(purchase)
+  taskLabel   String     @map("task_label")
+  department  Department @default(purchase)
   // When true, this row gets a Pass/Fail button pair instead of a single Mark complete button —
   // same opt-in-at-creation idea as ProcurementActionItem.isPassFail.
-  isPassFail Boolean    @default(false) @map("is_pass_fail")
-  plannedDate DateTime  @map("planned_date") @db.Timestamptz(3)
-  actualDate DateTime?  @map("actual_date") @db.Timestamptz(3)
+  isPassFail  Boolean    @default(false) @map("is_pass_fail")
+  plannedDate DateTime   @map("planned_date") @db.Timestamptz(3)
+  actualDate  DateTime?  @map("actual_date") @db.Timestamptz(3)
   // Only meaningful when isPassFail is true — null until that outcome is recorded, same
   // "unset/passed/failed" convention as ProcurementActionItem.qcPassed.
-  qcPassed Boolean?  @map("qc_passed")
-  note     String?   @db.Text
+  qcPassed    Boolean?   @map("qc_passed")
+  note        String?    @db.Text
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
