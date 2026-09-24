@@ -14,6 +14,7 @@ import {
   DELAY_CATEGORY_OPTIONS,
   DEPARTMENT_LABELS,
   ASSIGNABLE_DEPARTMENTS,
+  stepStatusLabel,
 } from "@/lib/labels";
 
 // Mirrors TaskCard.tsx's own copies of these same sets — kept local for the same reason: the
@@ -73,6 +74,15 @@ function formatPhase(phase: UnifiedTask["phase"]): string {
   return phase === "phase_1" ? "Phase 1" : phase === "phase_2" ? "Phase 2" : "Phase 3";
 }
 
+// Task column's own task-name line gets the same "which date" callout the Planned date column
+// already carries (see plannedDateLabel/DATE_RANGE_STEP_CODES) — "Installation (end)" rather
+// than a bare "Installation", so it reads the same whether you're scanning the date or the task
+// name. Suffixed onto the name, not the phase line below it — "(end)" describes which of this
+// task's own two planned dates is showing, not the phase.
+function taskLabelWithDateSuffix(task: UnifiedTask): string {
+  return task.taskLabel + (plannedDateLabel(task) ? " (end)" : "");
+}
+
 // Every field a row actually shows, flattened into one lowercased string — this is what the
 // general filter below matches against, so "matches anything in the row" is literal rather than
 // scoped to just the task name. Computed fresh per render rather than memoized: the task list
@@ -105,7 +115,7 @@ function simpleStageEndpoint(task: UnifiedTask): string {
   if (task.kind === "glass_po_stage") return `/api/glass-purchase-orders/${task.refId}`;
   if (task.kind === "service_item") return `/api/service-items/${task.refId}`;
   if (task.kind === "work_task") return `/api/work-tasks/${task.refId}`;
-  if (task.kind === "customer_review") return `/api/projects/${task.refId}`;
+  if (task.kind === "customer_review" || task.kind === "website_review") return `/api/projects/${task.refId}`;
   // action_item
   if (task.actionItemSource === "procurement") return `/api/procurement-action-items/${task.refId}`;
   if (task.actionItemSource === "glass") return `/api/glass-action-items/${task.refId}`;
@@ -462,6 +472,20 @@ function useTaskActions(task: UnifiedTask) {
     patch(simpleStageEndpoint(task), body, { removesRow: passed !== false });
   }
 
+  // kind === "website_review" only — a plain Yes/No answer, not a Pass/Fail: unlike
+  // completeSimple's isPassFail branch (where "Fail" means try again, so the row stays open and
+  // a note is required), both answers here are a genuine, final completion of the task, so
+  // neither needs a note and both remove the row. Answers through websiteReviewAsked directly —
+  // see the TaskKind comment on why this doesn't reuse isPassFail/qcPassed.
+  function answerWebsiteReview(asked: boolean) {
+    const body: Record<string, unknown> = {
+      [task.dateField!]: new Date(actualDate).toISOString(),
+      ...(task.noteField ? { [task.noteField]: note || undefined } : {}),
+      websiteReviewAsked: asked,
+    };
+    patch(simpleStageEndpoint(task), body, { removesRow: true });
+  }
+
   // --- Phase step actions ---
   function startStep() {
     patch(`/api/phase-steps/${task.refId}`, {
@@ -609,6 +633,7 @@ function useTaskActions(task: UnifiedTask) {
     blockedByMissingDelayCategory,
     blockedByMissingLateReason,
     completeSimple,
+    answerWebsiteReview,
     startStep,
     resumeStep,
     completePhaseStep,
@@ -963,6 +988,23 @@ function TaskActionCluster({
               </button>
             )}
           </>
+        ) : task.kind === "website_review" ? (
+          <>
+            <button
+              className={btnCls("primary", size)}
+              onClick={() => s.answerWebsiteReview(true)}
+              disabled={s.submitting}
+            >
+              {s.submitting ? <Spinner className={spinnerCls(size)} /> : "Yes"}
+            </button>
+            <button
+              className={btnCls("secondary", size)}
+              onClick={() => s.answerWebsiteReview(false)}
+              disabled={s.submitting}
+            >
+              {s.submitting ? <Spinner className={spinnerCls(size)} /> : "No"}
+            </button>
+          </>
         ) : task.isPassFail ? (
           <>
             <button
@@ -1169,14 +1211,14 @@ function TaskRow({ task, isAdmin }: { task: UnifiedTask; isAdmin: boolean }) {
           ) : (
             <>
               <div className="flex items-center gap-1.5">
-                <div className="text-sm font-medium text-fg">{task.taskLabel}</div>
+                <div className="text-sm font-medium text-fg">{taskLabelWithDateSuffix(task)}</div>
                 {s.isWorkTask && <EditPencilButton onClick={s.startEditMeta} />}
               </div>
               {task.subTaskLabel && <div className="text-xs text-fg-muted">{task.subTaskLabel}</div>}
               <div className="text-[10px] uppercase tracking-wide text-fg-muted">{formatPhase(task.phase)}</div>
               {s.isPhaseStep && task.status === "blocked" && task.blockedReason && (
                 <div className="mt-1 text-xs text-red-600 dark:text-red-400">
-                  Blocked — {BLOCKED_REASON_LABELS[task.blockedReason]}
+                  {stepStatusLabel("blocked", task.phase)} — {BLOCKED_REASON_LABELS[task.blockedReason]}
                   {task.blockedNote ? `: ${task.blockedNote}` : ""}
                 </div>
               )}
@@ -1285,11 +1327,13 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
             {task.project.client.name} · {formatPhase(task.phase)}
           </div>
           <div className="text-sm text-fg">
-            {task.taskLabel}
+            {taskLabelWithDateSuffix(task)}
             {task.subTaskLabel ? <span className="text-fg-muted"> — {task.subTaskLabel}</span> : null}
           </div>
           {!open && s.isPhaseStep && task.status === "blocked" && (
-            <div className="text-xs font-medium text-red-600 dark:text-red-400">Blocked</div>
+            <div className="text-xs font-medium text-red-600 dark:text-red-400">
+              {stepStatusLabel("blocked", task.phase)}
+            </div>
           )}
         </div>
         <svg
@@ -1308,7 +1352,7 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
         <div className="flex flex-col gap-3 border-t border-edge px-3 py-3">
           {s.isPhaseStep && task.status === "blocked" && task.blockedReason && (
             <div className="text-xs text-red-600 dark:text-red-400">
-              Blocked — {BLOCKED_REASON_LABELS[task.blockedReason]}
+              {stepStatusLabel("blocked", task.phase)} — {BLOCKED_REASON_LABELS[task.blockedReason]}
               {task.blockedNote ? `: ${task.blockedNote}` : ""}
             </div>
           )}

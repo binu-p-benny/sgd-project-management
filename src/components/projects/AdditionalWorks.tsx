@@ -12,6 +12,8 @@ export type WorkTaskData = ServiceItemData;
 export interface WorkBlockData {
   id: string;
   label: string;
+  /** Created from a step's "Confirm block" modal — see WorkBlock.blockedPhaseStepId. */
+  blockedWork?: boolean;
   tasks: WorkTaskData[];
 }
 
@@ -109,6 +111,11 @@ function WorkBlockCard({ block, canEdit }: { block: WorkBlockData; canEdit: bool
           <h3 className="truncate font-medium text-fg" title={block.label}>
             {block.label}
           </h3>
+          {block.blockedWork && (
+            <span className="shrink-0 rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-700 ring-1 ring-inset ring-red-500/25 dark:text-red-400">
+              Blocked work tasks
+            </span>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-3">
           {block.tasks.length > 0 && (

@@ -2,9 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession, isAdminEditor } from "@/lib/auth";
+import { ASSIGNABLE_DEPARTMENTS } from "@/lib/labels";
+
+const taskSchema = z.object({
+  taskLabel: z.string().trim().min(1, "A task name is required"),
+  plannedDate: z.string().datetime(),
+  department: z.enum(ASSIGNABLE_DEPARTMENTS),
+  isPassFail: z.boolean().optional().default(false),
+});
 
 const createSchema = z.object({
   label: z.string().trim().min(1, "A work block label is required").max(120, "Keep the label under 120 characters"),
+  // Set only by the "Confirm block" modal (see BlockedWorkModal): ties the block to the blocked
+  // step it exists to resolve, and lets its first rows be created in the same call.
+  blockedPhaseStepId: z.string().min(1).optional(),
+  tasks: z.array(taskSchema).optional(),
 });
 
 /**
@@ -39,7 +51,33 @@ export async function POST(
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const block = await prisma.workBlock.create({ data: { projectId: id, label: parsed.data.label } });
+  const { label, blockedPhaseStepId, tasks } = parsed.data;
+  if (blockedPhaseStepId) {
+    const step = await prisma.phaseStep.findFirst({ where: { id: blockedPhaseStepId, projectId: id }, select: { id: true } });
+    if (!step) {
+      return NextResponse.json({ error: "Blocked step not found on this project" }, { status: 400 });
+    }
+  }
+
+  const block = await prisma.workBlock.create({
+    data: {
+      projectId: id,
+      label,
+      blockedPhaseStepId: blockedPhaseStepId ?? null,
+      ...(tasks && tasks.length > 0
+        ? {
+            tasks: {
+              create: tasks.map((t) => ({
+                taskLabel: t.taskLabel,
+                department: t.department,
+                isPassFail: t.isPassFail,
+                plannedDate: new Date(t.plannedDate),
+              })),
+            },
+          }
+        : {}),
+    },
+  });
 
   return NextResponse.json(block, { status: 201 });
 }

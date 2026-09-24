@@ -91,14 +91,49 @@ describe("POST /api/projects/[id]/work-blocks", () => {
     expect(stored.map((b) => b.label)).toEqual(["Extra balcony railing"]);
   });
 
-  it.each(["owner_admin", "operations_manager", "hr_admin"] as Department[])("allows %s", async (department) => {
+  it("creates a Blocked-work block tied to a step, with its tasks, in one call", async () => {
+    const project = await createTestProject();
+    const step = await prisma.phaseStep.findFirstOrThrow({ where: { projectId: project.id, stepCode: "1B" } });
+    actAs("owner_admin");
+
+    const response = await callCreateBlock(project.id, {
+      label: "Blocked: 1B Site visit",
+      blockedPhaseStepId: step.id,
+      tasks: [
+        { taskLabel: "Call client", department: "hr_admin", plannedDate: PLANNED },
+        { taskLabel: "Re-measure", department: "design_engineer", plannedDate: PLANNED },
+      ],
+    });
+
+    expect(response.status).toBe(201);
+    const stored = await prisma.workBlock.findFirstOrThrow({
+      where: { projectId: project.id },
+      include: { tasks: true },
+    });
+    expect(stored.blockedPhaseStepId).toBe(step.id);
+    expect(stored.tasks.map((t) => t.taskLabel).sort()).toEqual(["Call client", "Re-measure"]);
+  });
+
+  it("rejects a blocked step that belongs to a different project", async () => {
+    const project = await createTestProject();
+    const other = await createTestProject();
+    const otherStep = await prisma.phaseStep.findFirstOrThrow({ where: { projectId: other.id, stepCode: "1B" } });
+    actAs("owner_admin");
+
+    const response = await callCreateBlock(project.id, { label: "Blocked: x", blockedPhaseStepId: otherStep.id });
+
+    expect(response.status).toBe(400);
+    expect(await prisma.workBlock.count({ where: { projectId: project.id } })).toBe(0);
+  });
+
+  it.each(["owner_admin", "operations_manager", "hr_admin", "project_engineer"] as Department[])("allows %s", async (department) => {
     const project = await createTestProject();
     actAs(department);
 
     expect((await callCreateBlock(project.id, { label: "Extra" })).status).toBe(201);
   });
 
-  it.each(["accounts", "project_engineer"] as Department[])("forbids %s and creates nothing", async (department) => {
+  it.each(["accounts"] as Department[])("forbids %s and creates nothing", async (department) => {
     const project = await createTestProject();
     actAs(department);
 

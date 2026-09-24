@@ -201,9 +201,34 @@ function getStatusDays(
   return null;
 }
 
-/** Status badge text — label plus a "· Nd" suffix once getStatusDays has something to show. */
-function formatStatusLabel(effectiveStatus: EffectiveOverallStatus, days: number | null): string {
-  const label = OVERALL_STATUS_LABELS[effectiveStatus];
+/** The "Blocked work" tasks lined up against a project's blocked step (see BlockedWorkModal):
+ *  "no tasks", "2/3 tasks completed", or "3/3 tasks completed" with ready = true once every one is
+ *  done. Blocked projects only — every other status keeps its Status cell exactly as it was. */
+function getBlockedTaskProgress(
+  steps: { id: string; stepCode: string; status: "not_started" | "in_progress" | "blocked" | "completed" }[],
+  workBlocks: { blockedPhaseStepId: string | null; tasks: { actualDate: Date | null }[] }[]
+): { text: string; ready: boolean } {
+  const step = getProjectBlockedStep(steps);
+  const tasks = workBlocks.filter((b) => step && b.blockedPhaseStepId === step.id).flatMap((b) => b.tasks);
+  if (tasks.length === 0) return { text: "no tasks", ready: false };
+  const done = tasks.filter((t) => t.actualDate !== null).length;
+  return { text: `${done}/${tasks.length} tasks completed`, ready: done === tasks.length };
+}
+
+/** Status badge text — label plus a "· Nd" suffix once getStatusDays has something to show.
+ *  "Blocked" reads as a dead end, but past Phase 1 most blockers get worked around rather than
+ *  sitting until someone unblocks the step by hand — same wording call as stepStatusLabel in
+ *  labels.ts, just applied to the project-level badge, which is worded off whichever step is
+ *  actually blocked (see getProjectBlockedStep) rather than the step's own status badge. */
+function formatStatusLabel(
+  effectiveStatus: EffectiveOverallStatus,
+  days: number | null,
+  blockedStepPhase?: string | null
+): string {
+  const label =
+    effectiveStatus === "blocked" && blockedStepPhase && blockedStepPhase !== "phase_1"
+      ? "Temporarily blocked"
+      : OVERALL_STATUS_LABELS[effectiveStatus];
   return days !== null && days > 0 ? `${label} · ${days}d` : label;
 }
 
@@ -271,6 +296,7 @@ export default async function ProjectsPage({
       client: true,
       phaseSteps: {
         select: {
+          id: true,
           phase: true,
           stepCode: true,
           stepName: true,
@@ -315,6 +341,13 @@ export default async function ProjectsPage({
           materialDespatchPlannedOverride: true,
           arrivedForPowderCoatingPlannedOverride: true,
         },
+      },
+      // Only the "Blocked work" blocks (see BlockedWorkModal) — feeds the task-progress line under a
+      // blocked project's Status badge. deletedAt is filtered here by hand: a nested include
+      // bypasses lib/prisma.ts's central soft-delete filter.
+      workBlocks: {
+        where: { blockedPhaseStepId: { not: null }, deletedAt: null },
+        select: { blockedPhaseStepId: true, tasks: { select: { actualDate: true } } },
       },
       glassPurchaseOrder: {
         select: {
@@ -368,6 +401,11 @@ export default async function ProjectsPage({
         effectiveStatus,
         statusReason: getStatusReasonText(effectiveStatus, p.phaseSteps, procurementItemsForOverrun, p.glassPurchaseOrder),
         statusDays: getStatusDays(effectiveStatus, p.phaseSteps, procurementItemsForOverrun, p.glassPurchaseOrder),
+        // Which phase the actual blocked step belongs to — not necessarily this project's own
+        // currentPhase (2D2 blocked mid-Phase-2 still shows here even once currentPhase has
+        // already moved on to phase_3 early via maybeEarlyUnlockPhase3) — see formatStatusLabel.
+        statusBlockedStepPhase: effectiveStatus === "blocked" ? (getProjectBlockedStep(p.phaseSteps)?.phase ?? null) : null,
+        statusTaskProgress: effectiveStatus === "blocked" ? getBlockedTaskProgress(p.phaseSteps, p.workBlocks) : null,
         hasOverdue: projectHasOverrun(p.phaseSteps, procurementItemsForOverrun, p.glassPurchaseOrder),
         installationForecast,
         currentStep,
@@ -458,8 +496,18 @@ export default async function ProjectsPage({
                       <span
                         className={`rounded-full px-2 py-0.5 text-xs font-medium ${OVERALL_STATUS_COLORS[project.effectiveStatus]}`}
                       >
-                        {formatStatusLabel(project.effectiveStatus, project.statusDays)}
+                        {formatStatusLabel(project.effectiveStatus, project.statusDays, project.statusBlockedStepPhase)}
                       </span>
+                      {project.statusTaskProgress && (
+                        <span
+                          className={`text-[11px] font-medium ${
+                            project.statusTaskProgress.ready ? "text-emerald-600 dark:text-emerald-400" : "text-fg-subtle"
+                          }`}
+                        >
+                          {project.statusTaskProgress.text}
+                          {project.statusTaskProgress.ready && " · ready to resume"}
+                        </span>
+                      )}
                       {project.statusReason && (
                         <span className="max-w-[10rem] whitespace-pre-line text-right text-[11px] leading-snug text-fg-subtle">
                           {project.statusReason}
@@ -538,15 +586,34 @@ export default async function ProjectsPage({
                     <td className="px-4 py-3">
                       <DepartmentBadges departments={project.activeDepartments} />
                     </td>
-                    <td className="max-w-[12rem] px-4 py-3">
-                      <div className="flex flex-col items-start gap-1">
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${OVERALL_STATUS_COLORS[project.effectiveStatus]}`}
-                        >
-                          {formatStatusLabel(project.effectiveStatus, project.statusDays)}
-                        </span>
-                        {project.statusReason && (
-                          <span className="whitespace-pre-line text-[11px] leading-snug text-fg-subtle">{project.statusReason}</span>
+                    <td className={`px-4 py-3 ${project.statusTaskProgress ? "max-w-[24rem]" : "max-w-[12rem]"}`}>
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex flex-col items-start gap-1">
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-xs font-medium ${OVERALL_STATUS_COLORS[project.effectiveStatus]}`}
+                          >
+                            {formatStatusLabel(project.effectiveStatus, project.statusDays, project.statusBlockedStepPhase)}
+                          </span>
+                          {project.statusReason && (
+                            <span className="whitespace-pre-line text-[11px] leading-snug text-fg-subtle">{project.statusReason}</span>
+                          )}
+                        </div>
+                        {project.statusTaskProgress && (
+                          <span
+                            className={`shrink-0 pt-0.5 text-right text-[11px] font-medium leading-snug ${
+                              project.statusTaskProgress.ready
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : "text-fg-subtle"
+                            }`}
+                          >
+                            {project.statusTaskProgress.text}
+                            {project.statusTaskProgress.ready && (
+                              <>
+                                <br />
+                                ready to resume
+                              </>
+                            )}
+                          </span>
                         )}
                       </div>
                     </td>

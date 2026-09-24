@@ -343,6 +343,7 @@ model PhaseStep {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   statusLogs        StepStatusLog[]
+  blockedWorkBlocks WorkBlock[]
   notifications     Notification[]
   actionItems       PhaseStepActionItem[]
 
@@ -709,6 +710,13 @@ model WorkBlock {
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   label String
+
+  // Set only on a block created from the "Confirm block" modal (see BlockedWorkModal) — the
+  // phase step whose blocked situation these rows exist to resolve. Renders with a "Blocked work"
+  // badge and feeds the "N/M tasks completed" line on /projects' Status column for that blocked
+  // step; nothing else reads it. SetNull so deleting the step never takes the block with it.
+  blockedPhaseStepId String?    @map("blocked_phase_step_id")
+  blockedPhaseStep   PhaseStep? @relation(fields: [blockedPhaseStepId], references: [id], onDelete: SetNull)
 
   // Soft delete, same convention as Project/Service (see lib/prisma.ts, which enforces the
   // filter centrally): a mistaken delete keeps the block and all its rows in the database.

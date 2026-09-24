@@ -9,6 +9,7 @@ import { GlassTracker, type GlassStageData } from "@/components/glass/GlassTrack
 import { SiteQCTracker } from "@/components/projects/SiteQCTracker";
 import { PaymentEditor } from "@/components/projects/PaymentEditor";
 import { PhaseReviewCard } from "@/components/projects/PhaseReviewCard";
+import { WebsiteReviewCard } from "@/components/projects/WebsiteReviewCard";
 import { InstallationWindowCard } from "@/components/projects/InstallationWindowCard";
 import { AdditionalWorks, type WorkBlockData } from "@/components/projects/AdditionalWorks";
 import { ProductionMaterialDeliveryTracker } from "@/components/projects/ProductionMaterialDeliveryTracker";
@@ -31,6 +32,7 @@ import {
   withLiveExpectedArrivalDates,
 } from "@/lib/procurement";
 import { findUpstreamDelay } from "@/lib/reschedule";
+import { addDays } from "@/lib/step-template";
 import {
   maybeEarlyUnlockPhase3,
   ensureProductionMaterialDeliveryBlock,
@@ -41,7 +43,7 @@ import {
   PHASE_LABELS,
   OVERALL_STATUS_LABELS,
   OVERALL_STATUS_COLORS,
-  STEP_STATUS_LABELS,
+  stepStatusLabel,
   STEP_STATUS_COLORS,
   DEPARTMENT_LABELS,
   BLOCKED_REASON_LABELS,
@@ -151,7 +153,7 @@ function ReadOnlyStepRow({ step }: { step: PhaseStep }) {
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STEP_STATUS_COLORS[step.status]}`}>
-            {STEP_STATUS_LABELS[step.status]}
+            {stepStatusLabel(step.status, step.phase)}
           </span>
           {isStepOverrun(step.plannedEndDate, step.status) && (
             <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-500/25 dark:text-amber-400">
@@ -308,7 +310,12 @@ export default async function ProjectDetailPage({
   // shows up in the generic Additional works list below.
   const additionalWorkBlocks: WorkBlockData[] = workBlocks
     .filter((block) => block.label !== PRODUCTION_MATERIAL_DELIVERY_LABEL)
-    .map((block) => ({ id: block.id, label: block.label, tasks: mapWorkTasks(block.tasks) }));
+    .map((block) => ({
+      id: block.id,
+      label: block.label,
+      blockedWork: block.blockedPhaseStepId !== null,
+      tasks: mapWorkTasks(block.tasks),
+    }));
   // Sorted back into PRODUCTION_MATERIAL_DELIVERY_TASKS' own fixed order — see that const's own
   // comment for why createdAt asc alone (mapWorkTasks' own tasks query) can't be trusted here.
   const productionMaterialDeliveryTaskOrder = new Map(
@@ -483,10 +490,23 @@ export default async function ProjectDetailPage({
         />
       </div>
     ) : null;
+  const websiteReviewCard = (
+    <div className="sm:col-span-2">
+      <WebsiteReviewCard
+        projectId={project.id}
+        plannedDate={threeE?.actualEndDate ? addDays(threeE.actualEndDate, 1).toISOString() : null}
+        asked={project.websiteReviewAsked}
+        askedAt={project.websiteReviewedAt?.toISOString() ?? null}
+        note={project.websiteReviewNote}
+        canEdit={canEditReview}
+      />
+    </div>
+  );
   const phase3TrailingContent = (
     <>
       {phase3ReviewCard}
       {siteQCTracker}
+      {websiteReviewCard}
     </>
   );
 

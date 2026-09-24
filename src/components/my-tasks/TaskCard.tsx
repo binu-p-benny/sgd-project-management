@@ -7,8 +7,10 @@ import type { MyTaskItem } from "@/lib/my-tasks";
 import { isDueToday } from "@/lib/overrun";
 import { useSyncedDraft } from "@/hooks/useSyncedDraft";
 import { Spinner } from "@/components/ui/Spinner";
+import { BlockedWorkModal, type BlockedWorkTaskDraft } from "@/components/projects/BlockedWorkModal";
 import {
   STEP_STATUS_LABELS,
+  stepStatusLabel,
   STEP_STATUS_COLORS,
   BLOCKED_REASON_LABELS,
   BLOCKED_REASON_OPTIONS,
@@ -290,8 +292,11 @@ export function TaskCard({
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [blockModalOpen, setBlockModalOpen] = useState(false);
 
-  async function submit(body: Record<string, unknown>) {
+  // `deferRefresh` lets a caller that still has follow-up writes to make (see finalizeBlock) hold
+  // off the router.refresh()/submitting reset until it's done. Returns whether the PATCH succeeded.
+  async function submit(body: Record<string, unknown>, opts: { deferRefresh?: boolean } = {}): Promise<boolean> {
     setSubmitting(true);
     setError(null);
     try {
@@ -305,16 +310,20 @@ export function TaskCard({
         const detail = data.detail?.blockedBy ? ` (waiting on: ${data.detail.blockedBy.join(", ")})` : "";
         setError((typeof data.error === "string" ? data.error : "Update failed") + detail);
         setSubmitting(false);
-        return;
+        return false;
       }
       setPanel("none");
       setNote("");
       setDelayCategory("");
-      router.refresh();
-      setSubmitting(false);
+      if (!opts.deferRefresh) {
+        router.refresh();
+        setSubmitting(false);
+      }
+      return true;
     } catch {
       setError("Could not reach the server");
       setSubmitting(false);
+      return false;
     }
   }
 
@@ -437,7 +446,48 @@ export function TaskCard({
       setError("A note is required for 'Other'");
       return;
     }
-    submit({ status: "blocked", blockedReason, blockedNote: blockedNote || undefined });
+    setError(null);
+    setBlockModalOpen(true);
+  }
+
+  // The modal's confirm: record the block first (the step is what's actually blocked), then, if
+  // any tasks were added, create the "Blocked work" block for them. A failure creating the tasks
+  // leaves the step blocked — the modal closes and the banner says so, rather than pretending
+  // the whole thing failed and inviting a second, duplicate block attempt.
+  async function finalizeBlock(tasks: BlockedWorkTaskDraft[]) {
+    const ok = await submit(
+      { status: "blocked", blockedReason, blockedNote: blockedNote || undefined },
+      { deferRefresh: true }
+    );
+    if (!ok) return;
+    setBlockModalOpen(false);
+    if (tasks.length > 0) {
+      try {
+        const res = await fetch(`/api/projects/${item.project.id}/work-blocks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            label: `Blocked: ${item.stepCode} ${item.stepName}`.slice(0, 120),
+            blockedPhaseStepId: item.id,
+            tasks: tasks.map((t) => ({
+              taskLabel: t.taskLabel,
+              department: t.department,
+              plannedDate: new Date(t.plannedDate).toISOString(),
+            })),
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setError(
+            `Step blocked, but its tasks weren't saved: ${typeof data.error === "string" ? data.error : "Update failed"}`
+          );
+        }
+      } catch {
+        setError("Step blocked, but its tasks weren't saved: could not reach the server");
+      }
+    }
+    router.refresh();
+    setSubmitting(false);
   }
 
   function confirmComplete1A() {
@@ -834,7 +884,7 @@ export function TaskCard({
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STEP_STATUS_COLORS[displayStatus]}`}>
-            {STEP_STATUS_LABELS[displayStatus]}
+            {stepStatusLabel(displayStatus, item.phase)}
           </span>
           {item.overrun && item.status !== "blocked" && (
             <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-500/25 dark:text-amber-400">
@@ -999,6 +1049,19 @@ export function TaskCard({
         <div className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-600 ring-1 ring-inset ring-red-500/25 dark:text-red-400">
           {error}
         </div>
+      )}
+
+      {blockModalOpen && (
+        <BlockedWorkModal
+          stepLabel={`${item.stepCode} ${item.stepName}`}
+          reasonText={`${BLOCKED_REASON_LABELS[blockedReason as keyof typeof BLOCKED_REASON_LABELS] ?? blockedReason}${
+            blockedNote ? ` — ${blockedNote}` : ""
+          }`}
+          submitting={submitting}
+          error={error}
+          onCancel={() => setBlockModalOpen(false)}
+          onConfirm={finalizeBlock}
+        />
       )}
 
       {panel === "block" && (
