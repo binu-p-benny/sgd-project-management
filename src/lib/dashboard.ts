@@ -5,7 +5,7 @@ import { withLiveExpectedArrivalDates } from "@/lib/procurement";
 // Reused across every query below that needs projectHasOverrun's Glass PO argument — see its own
 // doc comment in overrun.ts for why these (unlike a ProcurementItem's other stages) are cheap:
 // real stored columns, not a computed anchor chain.
-const GLASS_PO_OVERRUN_SELECT = {
+export const GLASS_PO_OVERRUN_SELECT = {
   requirementCreatedAt: true,
   requirementPlannedDate: true,
   quoteCreatedAt: true,
@@ -25,7 +25,7 @@ const GLASS_PO_OVERRUN_SELECT = {
 // in procurement.ts), reused across every query below that used to select just
 // {expectedArrivalDate, actualArrivalDate} — that frozen legacy column, and arrival-only scope,
 // both drift from what the procurement tracker itself displays as items actually progress.
-const PROCUREMENT_ITEM_OVERRUN_SELECT = {
+export const PROCUREMENT_ITEM_OVERRUN_SELECT = {
   itemType: true,
   requirementCreatedAt: true,
   quoteCreatedAt: true,
