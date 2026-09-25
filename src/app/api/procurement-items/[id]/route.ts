@@ -5,6 +5,7 @@ import { getSession, isAdminEditor } from "@/lib/auth";
 import { syncDerivedStepStatus } from "@/lib/step-actions";
 import { computeExpectedArrivalDate } from "@/lib/procurement";
 import { rescheduleProjectDates } from "@/lib/reschedule";
+import { notifyProcurementQcFailed } from "@/lib/notify-events";
 
 const dateOrNull = z
   .string()
@@ -137,6 +138,12 @@ export async function PATCH(
           : {}),
     },
   });
+
+  // Newly failed only — a later edit that leaves qcPassed false (a corrected note, say) reuses
+  // the same qc_checked_at, which notifyProcurementQcFailed dedupes on.
+  if (effectiveQcPassed === false) {
+    await notifyProcurementQcFailed(item.id, session.userId);
+  }
 
   await syncDerivedStepStatus(item.projectId, "2A", session.userId);
   await syncDerivedStepStatus(item.projectId, "2D1", session.userId);

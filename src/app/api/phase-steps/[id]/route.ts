@@ -4,6 +4,7 @@ import { BlockedReason, DelayCategory, StepStatus, VisitUrgency } from "@prisma/
 import { prisma } from "@/lib/prisma";
 import { getSession, isAdminEditor } from "@/lib/auth";
 import { StepActionError, updateStepStatus } from "@/lib/step-actions";
+import { notifyStepQcFailed } from "@/lib/notify-events";
 
 const dateOrNull = z
   .string()
@@ -118,6 +119,8 @@ export async function PATCH(
           reason: `Final QC failed${options.notes ? ` — ${options.notes}` : ""}`,
         },
       });
+      // A failure here leaves the step at in_progress, so nothing else in the app announces it.
+      await notifyStepQcFailed(id, session.userId);
     }
 
     return NextResponse.json(updated);

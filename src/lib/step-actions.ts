@@ -1,7 +1,8 @@
 import type { BlockedReason, DelayCategory, Department, ProjectPhase, StepStatus, VisitUrgency } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { checkDependencyGate } from "@/lib/dependency-gate";
-import { BLOCKED_REASON_LABELS } from "@/lib/labels";
+import { BLOCKED_REASON_LABELS, stepStatusLabel } from "@/lib/labels";
+import { notifyQuietly } from "@/lib/notifications";
 import {
   addDays,
   buildPhase2Steps,
@@ -1148,6 +1149,27 @@ export async function updateStepStatus(
           : options.notes ?? null,
     },
   });
+
+  // Every way a step gets blocked comes through here — the project page's TaskCard, the Admin
+  // one, and /my-tasks' own table — so the notification is wired here rather than in any one
+  // route. Only on the transition into blocked: re-saving a blocked step (a corrected reason,
+  // say) shouldn't tell everyone about it again.
+  if (newStatus === "blocked" && oldStatus !== "blocked" && options.blockedReason) {
+    await notifyQuietly({
+      type: "step_blocked",
+      // "temporarily blocked" past Phase 1, the same wording the badges use — see stepStatusLabel.
+      message: `${step.stepCode} ${step.stepName} on ${step.project.name} is ${stepStatusLabel(
+        "blocked",
+        step.phase
+      ).toLowerCase()} — ${BLOCKED_REASON_LABELS[options.blockedReason]}${
+        options.blockedNote ? ` (${options.blockedNote})` : ""
+      }`,
+      departments: [step.owningDepartment, step.secondaryDepartment],
+      projectId: step.projectId,
+      phaseStepId: stepId,
+      exceptUserId: actorId,
+    });
+  }
 
   if (newStatus === "completed") {
     if (step.stepCode === "1A" && options.visitUrgency) {

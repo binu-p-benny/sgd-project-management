@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession, isAdminEditor } from "@/lib/auth";
+import { notifyBlockedWorkReady } from "@/lib/notify-events";
 
 const dateOrNull = z
   .string()
@@ -66,6 +67,12 @@ export async function PATCH(
       ...(plannedDate !== undefined ? { plannedDate: new Date(plannedDate) } : {}),
     },
   });
+
+  // Completing a row can be the one that finishes a "Blocked work" block — no-ops for every
+  // other kind of edit and every block that still has something outstanding.
+  if (updated.actualDate) {
+    await notifyBlockedWorkReady(updated.workBlockId, session.userId);
+  }
 
   return NextResponse.json(updated);
 }

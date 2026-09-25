@@ -398,8 +398,19 @@ model Notification {
 
   readAt DateTime? @map("read_at") @db.Timestamptz(3)
 
+  // Idempotency key for the kinds a repeating job produces (see notifyDepartments in
+  // notifications.ts), so a daily cron doesn't re-tell everyone the same thing: unique per
+  // user, which lets createMany(skipDuplicates) drop the repeat without a read-then-write.
+  // Keys embed the planned date they were raised against, so a date that moves is a new key
+  // and gets notified again — the same "re-notify only when it actually slips" rule
+  // phase_steps.notified_overdue_at gives the overdue-step cron. Null for event-driven kinds
+  // (a block, a QC failure): those fire once per action and need no guard, and Postgres treats
+  // every null here as distinct, so they never collide with each other.
+  dedupeKey String? @map("dedupe_key")
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
+  @@unique([userId, dedupeKey])
   @@index([userId, readAt])
   @@map("notifications")
 }

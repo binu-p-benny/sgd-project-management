@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession, isAdminEditor } from "@/lib/auth";
 import { syncGlassPOStepStatus } from "@/lib/step-actions";
+import { notifyGlassQcFailed } from "@/lib/notify-events";
 
 const dateOrNull = z
   .string()
@@ -113,6 +114,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           : {}),
     },
   });
+
+  // Same "newly failed, deduped on qc_checked_at" rule as the procurement route's own QC branch.
+  if (effectiveQcPassed === false) {
+    await notifyGlassQcFailed(updated.id, session.userId);
+  }
 
   // 3A's status, actual start (Requirement created) and actual end (Order confirmed) all track
   // this row live — see syncGlassPOStepStatus in step-actions.ts.
