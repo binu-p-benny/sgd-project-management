@@ -16,15 +16,38 @@ interface NotificationRow {
 
 const POLL_MS = 60_000;
 
+/**
+ * Relative age, worded the way someone reading their own history would say it out loud
+ * ("a minute ago", not "1m ago"). Anything past a week is a plain date instead — "63 days
+ * ago" reads as noise where "12 Sep 2026" is something you can match against a project.
+ */
 function timeAgo(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const minutes = Math.floor(ms / 60_000);
+  const then = new Date(iso);
+  const minutes = Math.floor((Date.now() - then.getTime()) / 60_000);
   if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes === 1) return "a minute ago";
+  if (minutes < 60) return `${minutes} minutes ago`;
+
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours === 1) return "an hour ago";
+  if (hours < 24) return `${hours} hours ago`;
+
   const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+
+  return new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" }).format(then);
+}
+
+/** Full timestamp for the row's title attribute — the exact moment behind "2 hours ago". */
+function fullTimestamp(iso: string): string {
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(iso));
 }
 
 const BELL_ICON = (
@@ -45,16 +68,26 @@ function DropdownPanel({
   anchorRect,
   notifications,
   unreadCount,
+  page,
+  totalPages,
+  totalCount,
+  loading,
   marking,
   onMarkAllRead,
   onMarkRead,
+  onPageChange,
 }: {
   anchorRect: DOMRect;
   notifications: NotificationRow[];
   unreadCount: number;
+  page: number;
+  totalPages: number;
+  totalCount: number;
+  loading: boolean;
   marking: boolean;
   onMarkAllRead: () => void;
   onMarkRead: (id: string) => void;
+  onPageChange: (page: number) => void;
 }) {
   const panelWidth = 320;
   const left = Math.min(anchorRect.right - panelWidth, window.innerWidth - panelWidth - 8);
@@ -66,7 +99,12 @@ function DropdownPanel({
       className="z-50 flex max-h-96 flex-col overflow-hidden rounded-xl border border-edge bg-surface shadow-[var(--shadow-sm)]"
     >
       <div className="flex items-center justify-between border-b border-edge px-3 py-2">
-        <span className="text-sm font-semibold text-fg">Notifications</span>
+        <span className="flex items-baseline gap-1.5 text-sm font-semibold text-fg">
+          Notifications
+          {totalCount > 0 && (
+            <span className="font-mono text-[10px] font-normal tabular-nums text-fg-subtle">{totalCount} total</span>
+          )}
+        </span>
         {unreadCount > 0 && (
           <button
             type="button"
@@ -92,7 +130,9 @@ function DropdownPanel({
                 }`}
               >
                 <span className={unread ? "font-medium text-fg" : "text-fg-muted"}>{n.message}</span>
-                <span className="text-[10px] text-fg-subtle">{timeAgo(n.createdAt)}</span>
+                <span className="text-[10px] text-fg-subtle" title={fullTimestamp(n.createdAt)}>
+                  {timeAgo(n.createdAt)}
+                </span>
               </div>
             );
             return n.projectId ? (
@@ -112,6 +152,32 @@ function DropdownPanel({
           })
         )}
       </div>
+
+      {/* History pager — same shape as the dashboard widgets' footer, five rows to a page. */}
+      {totalCount > 0 && (
+        <div className="flex shrink-0 items-center justify-between border-t border-edge px-3 py-2">
+          <button
+            type="button"
+            onClick={() => onPageChange(page - 1)}
+            disabled={loading || page <= 1}
+            className="rounded-lg border border-edge px-2 py-1 text-[11px] font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            ← Previous
+          </button>
+          <span className="flex items-center gap-1.5 font-mono text-[11px] tabular-nums text-fg-muted">
+            {loading && <Spinner className="h-3 w-3" />}
+            Page {page} of {totalPages}
+          </span>
+          <button
+            type="button"
+            onClick={() => onPageChange(page + 1)}
+            disabled={loading || page >= totalPages}
+            className="rounded-lg border border-edge px-2 py-1 text-[11px] font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Next →
+          </button>
+        </div>
+      )}
     </div>,
     document.body
   );
@@ -120,26 +186,44 @@ function DropdownPanel({
 export function NotificationBell() {
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [marking, setMarking] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  // The background poll has to refresh whatever page is on screen, but `load` must not be
+  // re-created on every page change or the poll interval would restart with it.
+  const pageRef = useRef(1);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (nextPage?: number) => {
+    const target = nextPage ?? pageRef.current;
+    if (nextPage !== undefined) setLoading(true);
     try {
-      const res = await fetch("/api/notifications");
+      const res = await fetch(`/api/notifications?page=${target}`);
       if (!res.ok) return;
       const data = await res.json();
       setNotifications(data.notifications ?? []);
       setUnreadCount(data.unreadCount ?? 0);
+      setTotalCount(data.totalCount ?? 0);
+      setTotalPages(data.totalPages ?? 1);
+      // The server clamps the page to what actually exists, so trust its answer rather than
+      // the number we asked for.
+      const settled = data.page ?? 1;
+      pageRef.current = settled;
+      setPage(settled);
     } catch {
       // silent — the badge just stays at its last known value until the next poll
+    } finally {
+      if (nextPage !== undefined) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     load();
-    const interval = setInterval(load, POLL_MS);
+    const interval = setInterval(() => load(), POLL_MS);
     return () => clearInterval(interval);
   }, [load]);
 
@@ -161,8 +245,16 @@ export function NotificationBell() {
   function toggle() {
     if (!open && buttonRef.current) {
       setAnchorRect(buttonRef.current.getBoundingClientRect());
+      // Every open starts at the newest page — reopening the bell to find yourself parked on
+      // page 4 from last time would hide whatever just came in.
+      if (pageRef.current !== 1) load(1);
     }
     setOpen((v) => !v);
+  }
+
+  function goToPage(next: number) {
+    if (loading || next < 1 || next > totalPages || next === page) return;
+    load(next);
   }
 
   async function markRead(id?: string) {
@@ -206,9 +298,14 @@ export function NotificationBell() {
           anchorRect={anchorRect}
           notifications={notifications}
           unreadCount={unreadCount}
+          page={page}
+          totalPages={totalPages}
+          totalCount={totalCount}
+          loading={loading}
           marking={marking}
           onMarkAllRead={() => markRead()}
           onMarkRead={(id) => markRead(id)}
+          onPageChange={goToPage}
         />
       )}
     </>
