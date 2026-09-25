@@ -251,7 +251,9 @@ describe("qc_failed", () => {
 
     const messages = (await notificationsFor(project.id, "qc_failed")).map((n) => n.message);
     expect(messages.some((m) => m.includes("Glass PO failed QC"))).toBe(true);
-    expect(messages.some((m) => m.includes("failed final QC") && m.includes("action plan due"))).toBe(true);
+    expect(messages.some((m) => m.includes("3E Final QC on site failed on") && m.includes("action plan due"))).toBe(
+      true
+    );
   });
 });
 

@@ -83,9 +83,9 @@ export async function notifyStepQcFailed(stepId: string, actorId?: string | null
 
   return notifyQuietly({
     type: "qc_failed",
-    message: `${step.stepCode} ${step.stepName} on ${step.project.name} failed final QC${actionPlanSuffix(
-      step.actionPlanAt
-    )}`,
+    // "3E Final QC on site failed on RATHEESH" — not "…on RATHEESH failed final QC", which
+    // reads as two "on"s and says QC twice once the step's own name is in front of it.
+    message: `${step.stepCode} ${step.stepName} failed on ${step.project.name}${actionPlanSuffix(step.actionPlanAt)}`,
     departments: [step.owningDepartment, step.secondaryDepartment],
     projectId: step.projectId,
     phaseStepId: step.id,
