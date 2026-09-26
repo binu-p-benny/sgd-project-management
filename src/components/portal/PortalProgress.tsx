@@ -44,9 +44,12 @@ function PhaseBlock({ phase, project }: { phase: StepPhase; project: PortalProje
           return (
             <li key={step.id} className="flex gap-4 border-b border-edge py-3.5 last:border-b-0">
               <span className={`mt-[7px] h-2 w-2 shrink-0 rounded-full ${style.dot}`} aria-hidden />
-              <div className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-6">
+              {/* One structure at every width: the name sits left, the outcome right. On a phone
+                  the outcome wraps to its own line and reads inline (status then detail); from
+                  sm up there's room to stack the two right-aligned beside the name. */}
+              <div className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-6 gap-y-0.5">
                 <span className="text-[15px] text-fg">{portalStepLabel(step.stepCode, step.stepName)}</span>
-                <span className="flex shrink-0 flex-col text-left sm:items-end sm:text-right">
+                <span className="flex flex-wrap items-baseline gap-x-2 sm:flex-col sm:items-end sm:gap-0 sm:text-right">
                   <span className={`text-[13px] ${style.text}`}>{PORTAL_STATUS_LABELS[step.status]}</span>
                   {detail && <span className="text-[12px] text-fg-subtle">{detail}</span>}
                 </span>
