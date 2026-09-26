@@ -18,6 +18,9 @@ import { TaskCard } from "@/components/my-tasks/TaskCard";
 import { getMyTasks, type MyTaskItem } from "@/lib/my-tasks";
 import { getTaskReviewsByIds } from "@/lib/task-reviews";
 import { getBlockerHistory } from "@/lib/blocker-history";
+import { FollowUpsButton } from "@/components/projects/FollowUpsButton";
+import { FollowUpsSection } from "@/components/projects/FollowUpsSection";
+import { anchorKey, getProjectFollowUps, type FollowUpAnchor } from "@/lib/follow-ups";
 import { isStepOverrun, isProcurementStageOverrun, getEffectiveOverallStatus, projectHasOverrun } from "@/lib/overrun";
 import {
   computeProcurementPlannedDates,
@@ -93,9 +96,12 @@ function EditablePhaseGroup({
   insertContent,
   appendToBeforeGrid,
   appendToAfterGrid,
+  renderFollowUps,
 }: {
   phase: StepPhase;
   items: MyTaskItem[];
+  /** Builds one step's "Follow ups" control (see FollowUpsButton) — the page owns the data. */
+  renderFollowUps?: (stepId: string) => ReactNode;
   /** Rendered right after this phase's own heading, before any of its step cards — for content
    *  that belongs to the phase as a whole rather than any one step (e.g. Production material
    *  Delivery on phase_3), unlike insertContent/appendTo*Grid below, which all anchor to a
@@ -125,7 +131,14 @@ function EditablePhaseGroup({
         {leadingContent}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {before.map((item) => (
-            <TaskCard key={item.id} item={item} canEditDates canRevert showDepartment />
+            <TaskCard
+              key={item.id}
+              item={item}
+              canEditDates
+              canRevert
+              showDepartment
+              followUps={renderFollowUps?.(item.id)}
+            />
           ))}
           {appendToBeforeGrid}
         </div>
@@ -134,7 +147,14 @@ function EditablePhaseGroup({
       {after.length > 0 && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {after.map((item) => (
-            <TaskCard key={item.id} item={item} canEditDates canRevert showDepartment />
+            <TaskCard
+              key={item.id}
+              item={item}
+              canEditDates
+              canRevert
+              showDepartment
+              followUps={renderFollowUps?.(item.id)}
+            />
           ))}
           {appendToAfterGrid}
         </div>
@@ -143,7 +163,7 @@ function EditablePhaseGroup({
   );
 }
 
-function ReadOnlyStepRow({ step }: { step: PhaseStep }) {
+function ReadOnlyStepRow({ step, followUps }: { step: PhaseStep; followUps?: ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5 p-4">
       <div className="flex items-start justify-between gap-2">
@@ -152,6 +172,7 @@ function ReadOnlyStepRow({ step }: { step: PhaseStep }) {
           <span className="font-medium text-fg">{step.stepName}</span>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
+          {followUps}
           <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STEP_STATUS_COLORS[step.status]}`}>
             {stepStatusLabel(step.status, step.phase)}
           </span>
@@ -190,9 +211,12 @@ function ReadOnlyPhaseGroup({
   insertBeforeStepCode,
   insertContent,
   trailingContent,
+  renderFollowUps,
 }: {
   phase: StepPhase;
   steps: PhaseStep[];
+  /** Same as EditablePhaseGroup's — read-only viewers still see what is being chased. */
+  renderFollowUps?: (stepId: string) => ReactNode;
   /** Same idea as EditablePhaseGroup's own leadingContent — rendered right after this phase's
    *  heading, before its step rows. */
   leadingContent?: ReactNode;
@@ -217,7 +241,7 @@ function ReadOnlyPhaseGroup({
         {leadingContent}
         <div className="flex flex-col divide-y divide-edge rounded-xl border border-edge bg-surface">
           {before.map((step) => (
-            <ReadOnlyStepRow key={step.id} step={step} />
+            <ReadOnlyStepRow key={step.id} step={step} followUps={renderFollowUps?.(step.id)} />
           ))}
         </div>
       </div>
@@ -225,7 +249,7 @@ function ReadOnlyPhaseGroup({
       {after.length > 0 && (
         <div className="flex flex-col divide-y divide-edge rounded-xl border border-edge bg-surface">
           {after.map((step) => (
-            <ReadOnlyStepRow key={step.id} step={step} />
+            <ReadOnlyStepRow key={step.id} step={step} followUps={renderFollowUps?.(step.id)} />
           ))}
         </div>
       )}
@@ -281,7 +305,50 @@ export default async function ProjectDetailPage({
   if (!project) notFound();
 
   const blockerHistory = await getBlockerHistory(id);
+  // Every follow-up on this project in one query, keyed by the card it hangs off — each card's
+  // own button reads its slice out of this rather than fetching for itself.
+  const followUpsByAnchor = await getProjectFollowUps(id);
   const canEditEverything = !!session && isAdminEditor(session);
+
+  /**
+   * The same follow-ups the per-card buttons carry, grouped for the page's own Follow ups
+   * section — labelled here rather than in the component so both read identically.
+   */
+  const followUpGroups = Object.entries(followUpsByAnchor).map(([key, rows]) => {
+    const separator = key.indexOf(":");
+    const kind = key.slice(0, separator);
+    const refId = key.slice(separator + 1);
+    const step = kind === "phase_step" ? project.phaseSteps.find((s) => s.id === refId) : undefined;
+    const item = kind === "procurement_item" ? project.procurementItems.find((i) => i.id === refId) : undefined;
+    const label = step
+      ? `${step.stepCode} ${step.stepName}`
+      : item
+        ? `${item.itemType.charAt(0).toUpperCase()}${item.itemType.slice(1)} procurement`
+        : "Glass PO";
+    return { key, label, rows };
+  });
+
+  /** A phase step's own button, looked up by step id — what the phase groups render per card. */
+  const renderStepFollowUps = (stepId: string) => {
+    const step = project.phaseSteps.find((s) => s.id === stepId);
+    return followUpsFor({
+      kind: "phase_step",
+      id: stepId,
+      label: step ? `${step.stepCode} ${step.stepName}` : "Step",
+    });
+  };
+
+  /** One card's "Follow ups" button, wired to that card's own slice of the follow-up list. */
+  function followUpsFor(anchor: FollowUpAnchor) {
+    return (
+      <FollowUpsButton
+        projectId={id}
+        anchor={anchor}
+        followUps={followUpsByAnchor[anchorKey(anchor)] ?? []}
+        canEdit={canEditEverything}
+      />
+    );
+  }
 
   // Top-level read (not a nested include on `project`) so lib/prisma.ts's soft-delete filter
   // applies to it — a nested include would still hand back a block that has been deleted.
@@ -468,6 +535,7 @@ export default async function ProjectDetailPage({
     threeE && threeE.qcPassed === false ? (
       <div className="sm:col-span-2">
         <SiteQCTracker
+          followUps={followUpsFor({ kind: "phase_step", id: threeE.id, label: `${threeE.stepCode} ${threeE.stepName}` })}
           phaseStepId={threeE.id}
           actionPlanAt={threeE.actionPlanAt?.toISOString() ?? null}
           actionPlanPlannedDate={
@@ -552,6 +620,16 @@ export default async function ProjectDetailPage({
 
   const procurementTracker = (
     <ProcurementTracker
+      followUpsByItem={Object.fromEntries(
+        project.procurementItems.map((item) => [
+          item.id,
+          followUpsFor({
+            kind: "procurement_item",
+            id: item.id,
+            label: `${item.itemType.charAt(0).toUpperCase()}${item.itemType.slice(1)} procurement`,
+          }),
+        ])
+      )}
       canEdit={!!session && (isAdminEditor(session) || session.department === "purchase")}
       canEditRequirement={!!session && session.department === "design_engineer"}
       canEditPayment={!!session && session.department === "accounts"}
@@ -937,6 +1015,7 @@ export default async function ProjectDetailPage({
   const glassTracker = glassPO ? (
     <GlassTracker
       id={glassPO.id}
+      followUps={followUpsFor({ kind: "glass_po", id: glassPO.id, label: "Glass PO" })}
       canEdit={canEditGlass}
       canEditRequirement={canEditGlassRequirement}
       canEditPayment={canEditGlassPayment}
@@ -1055,6 +1134,7 @@ export default async function ProjectDetailPage({
                 <EditablePhaseGroup
                   phase={phase}
                   items={items}
+                  renderFollowUps={renderStepFollowUps}
                   insertBeforeStepCode={phase === "phase_2" ? MATERIALS_ARRIVED_STEP_CODE : undefined}
                   insertContent={phase === "phase_2" ? procurementTracker : undefined}
                   appendToBeforeGrid={phase === "phase_1" ? phase1ReviewCard : undefined}
@@ -1067,6 +1147,7 @@ export default async function ProjectDetailPage({
                 <ReadOnlyPhaseGroup
                   phase={phase}
                   steps={steps}
+                  renderFollowUps={renderStepFollowUps}
                   insertBeforeStepCode={phase === "phase_2" ? MATERIALS_ARRIVED_STEP_CODE : undefined}
                   insertContent={phase === "phase_2" ? procurementTracker : undefined}
                   trailingContent={phase === "phase_1" ? phase1ReviewCard : undefined}
@@ -1084,6 +1165,7 @@ export default async function ProjectDetailPage({
                   key={phase}
                   phase={phase}
                   items={items}
+                  renderFollowUps={renderStepFollowUps}
                   leadingContent={productionMaterialDeliveryCard}
                   insertBeforeStepCode="3B"
                   insertContent={glassTracker}
@@ -1095,6 +1177,7 @@ export default async function ProjectDetailPage({
                   key={phase}
                   phase={phase}
                   steps={steps}
+                  renderFollowUps={renderStepFollowUps}
                   leadingContent={productionMaterialDeliveryCard}
                   insertBeforeStepCode="3B"
                   insertContent={glassTracker}
@@ -1105,6 +1188,8 @@ export default async function ProjectDetailPage({
       )}
 
       <AdditionalWorks projectId={project.id} blocks={additionalWorkBlocks} canEdit={canEditEverything} />
+
+      <FollowUpsSection groups={followUpGroups} />
 
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-2.5">

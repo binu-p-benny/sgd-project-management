@@ -130,6 +130,7 @@ model User {
   qcCheckedItems       ProcurementItem[]    @relation("QcCheckedBy")
   qcCheckedGlassOrders GlassPurchaseOrder[] @relation("GlassQcCheckedBy")
   notifications        Notification[]
+  followUpsCreated     FollowUpTask[]       @relation("FollowUpCreatedBy")
 
   @@index([department])
   @@map("users")
@@ -198,6 +199,7 @@ model Project {
   paymentSchedule    PaymentSchedule?
   notifications      Notification[]
   workBlocks         WorkBlock[]
+  followUps          FollowUpTask[]
 
   @@index([currentPhase])
   @@index([overallStatus])
@@ -344,6 +346,7 @@ model PhaseStep {
 
   statusLogs        StepStatusLog[]
   blockedWorkBlocks WorkBlock[]
+  followUps         FollowUpTask[]
   notifications     Notification[]
   actionItems       PhaseStepActionItem[]
 
@@ -485,6 +488,7 @@ model ProcurementItem {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   actionItems ProcurementActionItem[]
+  followUps   FollowUpTask[]
 
   @@index([projectId])
   @@index([itemType])
@@ -582,6 +586,7 @@ model GlassPurchaseOrder {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   actionItems GlassActionItem[]
+  followUps   FollowUpTask[]
 
   @@map("glass_purchase_orders")
 }
@@ -824,4 +829,50 @@ model TaskReview {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@map("task_reviews")
+}
+
+/**
+ * A follow-up raised from one card on the project detail page — a phase step, one procurement
+ * item's tracker, the Glass PO tracker or the site-QC table. Deliberately its own table rather
+ * than another WorkBlock/WorkTask: an "Additional work" block is a piece of work in its own
+ * right that someone decided the project needs, while a follow-up only exists in relation to
+ * the thing it hangs off, and is listed and counted per card.
+ *
+ * Exactly one of the three anchor columns is set — enforced in the API rather than by the
+ * database, the same way the rest of this schema handles "one of these" shapes. The Site QC
+ * table anchors on 3E's own phase step, so it needs no anchor of its own.
+ */
+model FollowUpTask {
+  id        String  @id @default(cuid())
+  projectId String  @map("project_id")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  phaseStepId          String?             @map("phase_step_id")
+  phaseStep            PhaseStep?          @relation(fields: [phaseStepId], references: [id], onDelete: Cascade)
+  procurementItemId    String?             @map("procurement_item_id")
+  procurementItem      ProcurementItem?    @relation(fields: [procurementItemId], references: [id], onDelete: Cascade)
+  glassPurchaseOrderId String?             @map("glass_purchase_order_id")
+  glassPurchaseOrder   GlassPurchaseOrder? @relation(fields: [glassPurchaseOrderId], references: [id], onDelete: Cascade)
+
+  taskLabel   String     @map("task_label")
+  // Who the follow-up is for — picked at creation from the same list every other assignable row
+  // uses (see ASSIGNABLE_DEPARTMENTS), and editable afterwards, unlike WorkTask.department.
+  department  Department @default(project_engineer)
+  plannedDate DateTime   @map("planned_date") @db.Timestamptz(3)
+  // Null until it's done; filling it is what completes the row, here or from /my-tasks.
+  actualDate  DateTime?  @map("actual_date") @db.Timestamptz(3)
+  note        String?    @db.Text
+
+  createdByUserId String? @map("created_by_user_id")
+  createdBy       User?   @relation("FollowUpCreatedBy", fields: [createdByUserId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([projectId])
+  @@index([phaseStepId])
+  @@index([procurementItemId])
+  @@index([glassPurchaseOrderId])
+  @@index([department, actualDate])
+  @@map("follow_up_tasks")
 }

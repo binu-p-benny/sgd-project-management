@@ -29,6 +29,10 @@ export type TaskKind =
   // A project's own "Additional works" row (see WorkBlock/WorkTask, AdditionalWorks.tsx) —
   // same shape as service_item, just parented by a WorkBlock/Project instead of a Service.
   | "work_task"
+  // A follow-up raised from one card on the project detail page (see FollowUpTask and
+  // FollowUpsButton.tsx) — the same date+note shape as work_task, parented by the card it hangs
+  // off rather than by a WorkBlock.
+  | "follow_up"
   // The Phase 1/3 "customer review" card (see PhaseReviewCard.tsx, HR & Admin only) — same
   // simple date+note shape as work_task/service_item, just parented by a Project directly
   // (its two fields live on the Project row itself, not a separate table).
@@ -804,6 +808,66 @@ async function buildWorkTaskTasks(department: Department | null): Promise<Unifie
 }
 
 /**
+ * Open follow-ups (see FollowUpTask) as tasks. They reach the department they were assigned to
+ * exactly like an Additional works row does — a follow-up nobody can see from /my-tasks is a
+ * note that never gets chased. The card it hangs off becomes the row's sub-label, so it says
+ * what it is about without the project page open.
+ */
+async function buildFollowUpTasks(department: Department | null): Promise<UnifiedTask[]> {
+  const rows = await prisma.followUpTask.findMany({
+    where: {
+      actualDate: null,
+      ...(department ? { department } : {}),
+    },
+    include: {
+      project: { select: { id: true, name: true, currentPhase: true, client: { select: { name: true } } } },
+      phaseStep: { select: { stepCode: true, stepName: true } },
+      procurementItem: { select: { itemType: true } },
+    },
+  });
+
+  return rows.map((row) => {
+    const anchorLabel = row.phaseStep
+      ? `${row.phaseStep.stepCode} ${row.phaseStep.stepName}`
+      : row.procurementItem
+        ? `${capitalize(row.procurementItem.itemType)} procurement`
+        : "Glass PO";
+    return {
+      id: `follow_up:${row.id}`,
+      kind: "follow_up" as const,
+      phase: row.project.currentPhase === "completed" ? "phase_3" : row.project.currentPhase,
+      taskLabel: row.taskLabel,
+      subTaskLabel: `Follow-up · ${anchorLabel}`,
+      project: row.project,
+      department: row.department,
+      secondaryDepartment: null,
+      status: "not_started" as const,
+      plannedDate: row.plannedDate.toISOString(),
+      actualDate: null,
+      overrun: isProcurementStageOverrun(row.plannedDate, null),
+      qcPassed: null,
+      notes: row.note,
+      blockedReason: null,
+      blockedNote: null,
+      gateBlockedBy: null,
+      isPassFail: false,
+      refId: row.id,
+      dateField: "actualDate",
+      noteField: "note",
+      stepCode: null,
+      actionItemSource: null,
+      contractorId: null,
+      contractorName: null,
+      contractorPlannedDate: null,
+      contractorOverdue: false,
+      manualPlannedStartDate: null,
+      manualPlannedEndDate: null,
+      completedByDepartment: null,
+    };
+  });
+}
+
+/**
  * The Phase 1/3 "customer review" cards (see PhaseReviewCard.tsx and the comment on Project in
  * schema.prisma) as open tasks — HR & Admin's only, so every other department gets none. Each
  * card's own "Planned end date" is a read-only mirror of another step's (2A for Phase 1, 3E for
@@ -983,7 +1047,17 @@ async function buildCustomerReviewTasks(department: Department | null): Promise<
  * every downstream planned date on that step depends on it existing at all.
  */
 export async function getUnifiedMyTasks(department: Department | null): Promise<UnifiedTask[]> {
-  const [phaseSteps, plannedDateEdits, procurementStages, glassPOStages, actionItems, serviceItems, workTasks, customerReviews] =
+  const [
+    phaseSteps,
+    plannedDateEdits,
+    procurementStages,
+    glassPOStages,
+    actionItems,
+    serviceItems,
+    workTasks,
+    followUps,
+    customerReviews,
+  ] =
     await Promise.all([
       buildPhaseStepTasks(department),
       buildPlannedDateEditTasks(department),
@@ -992,6 +1066,7 @@ export async function getUnifiedMyTasks(department: Department | null): Promise<
       buildActionItemTasks(department),
       buildServiceItemTasks(department),
       buildWorkTaskTasks(department),
+      buildFollowUpTasks(department),
       buildCustomerReviewTasks(department),
     ]);
 
@@ -1003,6 +1078,7 @@ export async function getUnifiedMyTasks(department: Department | null): Promise<
     ...actionItems,
     ...serviceItems,
     ...workTasks,
+    ...followUps,
     ...customerReviews,
   ];
   return all.sort((a, b) => {

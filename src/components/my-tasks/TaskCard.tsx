@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { MyTaskItem } from "@/lib/my-tasks";
@@ -229,11 +229,15 @@ export function TaskCard({
   showDepartment = false,
   canEditDates = false,
   canRevert = false,
+  followUps,
 }: {
   item: MyTaskItem;
   showDepartment?: boolean;
   canEditDates?: boolean;
   canRevert?: boolean;
+  /** This step's own "Follow ups" control (see FollowUpsButton) — passed only from the project
+   *  detail page, so /my-tasks' own cards are unchanged. */
+  followUps?: ReactNode;
 }) {
   const router = useRouter();
   const [panel, setPanel] = useState<Panel>("none");
@@ -883,6 +887,7 @@ export function TaskCard({
           </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
+          {followUps}
           <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STEP_STATUS_COLORS[displayStatus]}`}>
             {stepStatusLabel(displayStatus, item.phase)}
           </span>

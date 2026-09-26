@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Spinner } from "@/components/ui/Spinner";
 import { useSyncedDraft } from "@/hooks/useSyncedDraft";
@@ -621,6 +621,7 @@ export function GlassTracker({
   canEditPayment,
   canAddActionItem,
   actionItems,
+  followUps,
 }: {
   id: string;
   stages: GlassStageData[];
@@ -634,12 +635,17 @@ export function GlassTracker({
    *  fail on click. */
   canAddActionItem: boolean;
   actionItems: GlassActionItemData[];
+  /** The Glass PO's own "Follow ups" control (see FollowUpsButton), rendered beside the heading. */
+  followUps?: ReactNode;
 }) {
   const router = useRouter();
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="text-lg font-semibold text-fg">Glass PO</h2>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold text-fg">Glass PO</h2>
+        {followUps}
+      </div>
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-3 rounded-xl border border-edge bg-surface p-4">
           <div className="overflow-x-auto rounded-lg border border-edge">

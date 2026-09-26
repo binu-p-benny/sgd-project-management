@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useSyncedDraft } from "@/hooks/useSyncedDraft";
 import { Spinner } from "@/components/ui/Spinner";
@@ -483,6 +483,7 @@ export function SiteQCTracker({
   canEdit,
   canAddActionItem,
   actionItems,
+  followUps,
 }: {
   phaseStepId: string;
   actionPlanAt: string | null;
@@ -494,6 +495,8 @@ export function SiteQCTracker({
    *  to fail on click. */
   canAddActionItem: boolean;
   actionItems: SiteQCActionItemData[];
+  /** 3E's "Follow ups" control (see FollowUpsButton) — this table belongs to that step. */
+  followUps?: ReactNode;
 }) {
   const router = useRouter();
 
@@ -511,7 +514,10 @@ export function SiteQCTracker({
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-edge bg-surface p-4">
-      <h2 className="text-lg font-semibold text-fg">Final QC — action plan</h2>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold text-fg">Final QC — action plan</h2>
+        {followUps}
+      </div>
       <div className="overflow-x-auto rounded-lg border border-edge">
         <table className="w-full border-collapse text-left">
           <thead>

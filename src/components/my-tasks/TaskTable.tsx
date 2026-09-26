@@ -115,6 +115,7 @@ function simpleStageEndpoint(task: UnifiedTask): string {
   if (task.kind === "glass_po_stage") return `/api/glass-purchase-orders/${task.refId}`;
   if (task.kind === "service_item") return `/api/service-items/${task.refId}`;
   if (task.kind === "work_task") return `/api/work-tasks/${task.refId}`;
+  if (task.kind === "follow_up") return `/api/follow-ups/${task.refId}`;
   if (task.kind === "customer_review" || task.kind === "website_review") return `/api/projects/${task.refId}`;
   // action_item
   if (task.actionItemSource === "procurement") return `/api/procurement-action-items/${task.refId}`;

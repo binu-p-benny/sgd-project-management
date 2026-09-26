@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useSyncedDraft } from "@/hooks/useSyncedDraft";
 import { Spinner } from "@/components/ui/Spinner";
@@ -695,11 +695,14 @@ function ItemTable({
   canEdit,
   canEditRequirement,
   canEditPayment,
+  followUps,
 }: {
   item: ProcurementItemData;
   canEdit: boolean;
   canEditRequirement: boolean;
   canEditPayment: boolean;
+  /** This item's own "Follow ups" control, passed in from the project page (see FollowUpsButton). */
+  followUps?: ReactNode;
 }) {
   const router = useRouter();
 
@@ -735,9 +738,12 @@ function ItemTable({
             </span>
           )}
         </div>
-        <span className="text-xs font-medium text-fg-subtle">
-          {doneCount} / {fixedStages.length} done
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-xs font-medium text-fg-subtle">
+            {doneCount} / {fixedStages.length} done
+          </span>
+          {followUps}
+        </div>
       </div>
 
       {item.upstreamDelay && (
@@ -822,9 +828,14 @@ export function ProcurementTracker({
   canEdit,
   canEditRequirement,
   canEditPayment,
+  followUpsByItem,
 }: {
   items: ProcurementItemData[];
   canEdit: boolean;
+  /** Each item's own "Follow ups" control, keyed by item id. A rendered element rather than a
+   *  render function on purpose: this is a client component, and a function prop cannot cross
+   *  the boundary from the server-rendered project page. */
+  followUpsByItem?: Record<string, ReactNode>;
   /** Design Engineer (2A's owner) can edit the "Requirement created" row even without full Purchase access. */
   canEditRequirement: boolean;
   /** Accounts can edit the "Payment done" row even without full Purchase access. */
@@ -843,6 +854,7 @@ export function ProcurementTracker({
             canEdit={canEdit}
             canEditRequirement={canEditRequirement}
             canEditPayment={canEditPayment}
+            followUps={followUpsByItem?.[item.id]}
           />
         ))}
       </div>

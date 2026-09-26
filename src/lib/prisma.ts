@@ -27,6 +27,9 @@ const PATH_TO_PROJECT: Record<string, object> = {
   // block takes its rows with it.
   WorkBlock: { deletedAt: null, project: { deletedAt: null } },
   WorkTask: { workBlock: { deletedAt: null, project: { deletedAt: null } } },
+  // Follow-ups hang off a card on the project page (see FollowUpTask), so a hidden project
+  // hides them too — including from /my-tasks, which reads them at the top level.
+  FollowUpTask: { project: { deletedAt: null } },
 };
 
 // Reads. Writes are deliberately left alone: a soft-deleted project's rows can still be updated
