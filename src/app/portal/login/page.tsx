@@ -5,6 +5,56 @@ import { useRouter } from "next/navigation";
 import { Spinner } from "@/components/ui/Spinner";
 import { PortalWordmark } from "@/components/portal/PortalHeader";
 
+/**
+ * The track-record figures on the sign-in panel. Hard-coded on purpose, and in one place on
+ * purpose: these are the company's own claims about ten years of work, not anything this app
+ * measures — its database only starts at the system's rollout (42 live projects today), so
+ * deriving them from it would understate the business badly.
+ *
+ * They are also the first thing a client sees, so they should be figures the office is happy to
+ * stand behind: the state numbers add up to the headline deliberately, and "delivered" is a
+ * claim about completed work rather than a count of what is open right now. Change them here.
+ */
+const PORTAL_STATS = [
+  { value: "700+", label: "Projects delivered" },
+  { value: "400+", label: "Kerala" },
+  { value: "200+", label: "Tamil Nadu" },
+  { value: "90+", label: "Karnataka" },
+];
+
+/** The figures above, rendered for either background — ink panel or paper. */
+function TrackRecord({ tone, className = "" }: { tone: "light" | "dark"; className?: string }) {
+  const light = tone === "light";
+  return (
+    <div className={`border-t pt-6 ${light ? "border-[rgba(234,232,227,0.18)]" : "border-edge"} ${className}`}>
+      <p
+        className={`text-[10px] uppercase tracking-[0.22em] ${
+          light ? "text-[rgba(245,244,239,0.45)]" : "text-fg-subtle"
+        }`}
+      >
+        Ten years of glass and window systems across South India
+      </p>
+      <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-5 xl:grid-cols-4">
+        {PORTAL_STATS.map((stat) => (
+          <div key={stat.label}>
+            <dt className="sr-only">{stat.label}</dt>
+            <dd className={`text-[22px] leading-none sm:text-[26px] ${light ? "text-[#eae8e3]" : "text-fg"}`}>
+              {stat.value}
+            </dd>
+            <p
+              className={`mt-1.5 text-[10px] uppercase tracking-[0.18em] ${
+                light ? "text-[rgba(245,244,239,0.5)]" : "text-fg-muted"
+              }`}
+            >
+              {stat.label}
+            </p>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 export default function PortalLoginPage() {
   const router = useRouter();
   const [phone, setPhone] = useState("");
@@ -54,9 +104,10 @@ export default function PortalLoginPage() {
             and what comes next.
           </p>
         </div>
-        <p className="mt-10 hidden text-xs tracking-[0.18em] text-[rgba(245,244,239,0.45)] lg:block">
-          EXPERT GLASS &amp; WINDOW SOLUTIONS
-        </p>
+        {/* Below lg the panel is a band above the form, and anything added here pushes the
+            inputs off the screen — so the track record moves under the form at those widths
+            (see the second TrackRecord below) and only shares the panel on a wide screen. */}
+        <TrackRecord tone="light" className="mt-10 hidden lg:block" />
       </div>
 
       {/* Paper panel — the form. */}
@@ -122,6 +173,8 @@ export default function PortalLoginPage() {
           <p className="mt-10 text-xs leading-relaxed text-fg-subtle">
             Can&apos;t get in? Call the SGD office and we&apos;ll check the number we have on file.
           </p>
+
+          <TrackRecord tone="dark" className="mt-10 lg:hidden" />
         </div>
       </div>
     </div>
