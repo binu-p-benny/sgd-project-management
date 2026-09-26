@@ -24,7 +24,7 @@ export function PortalSignOut() {
       type="button"
       onClick={signOut}
       disabled={loading}
-      className="inline-flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[rgba(245,244,239,0.65)] transition-colors hover:text-[#eae8e3] disabled:opacity-50"
+      className="inline-flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-fg-muted transition-colors hover:text-fg disabled:opacity-50"
     >
       {loading && <Spinner className="h-3 w-3" />}
       Sign out

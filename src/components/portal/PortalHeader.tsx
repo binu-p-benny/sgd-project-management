@@ -1,25 +1,41 @@
+import Image from "next/image";
+
 /**
- * The ink band at the top of every portal page — the public site's header, reduced to the
- * wordmark and (once signed in) a sign-out control. The wordmark is set in type rather than
- * loaded as the site's logo file, so the portal has no cross-origin dependency for its own
- * chrome and stays crisp at any size.
+ * The portal's chrome. Two tones because the portal has two backgrounds: the login page keeps
+ * the dark panel from the public site (white logo), while /portal itself is all paper (colour
+ * logo). Both files ship in /public at 230x90 and are rendered at a third of that, so they stay
+ * crisp on a retina screen.
  */
-export function PortalWordmark({ tone = "light" }: { tone?: "light" | "dark" }) {
-  const color = tone === "light" ? "text-[#eae8e3]" : "text-[#111111]";
-  const rule = tone === "light" ? "border-[rgba(234,232,227,0.45)]" : "border-[rgba(17,17,17,0.35)]";
+export function PortalWordmark({ tone = "dark" }: { tone?: "light" | "dark" }) {
+  const light = tone === "light";
   return (
-    <span className={`inline-flex flex-col leading-none ${color}`}>
-      <span className="text-[22px] font-semibold tracking-[0.18em]">SGD</span>
-      <span className={`mt-1 border-t pt-1 text-[8px] font-medium uppercase tracking-[0.3em] ${rule}`}>
-        Group of Companies
+    <span className="inline-flex items-center gap-3">
+      <Image
+        src={light ? "/logo-wt.png" : "/logo-cl.png"}
+        alt="SGD Group of Companies"
+        width={230}
+        height={90}
+        priority
+        className="h-9 w-auto sm:h-10"
+      />
+      <span
+        className={`border-l pl-3 text-[11px] uppercase tracking-[0.22em] ${
+          light ? "border-[rgba(234,232,227,0.35)] text-[rgba(234,232,227,0.75)]" : "border-edge-2 text-fg-muted"
+        }`}
+      >
+        Connect
       </span>
     </span>
   );
 }
 
+/**
+ * /portal's own header — paper, not ink: the page carries one continuous background now, with
+ * only a hairline separating the header from the content under it.
+ */
 export function PortalHeader({ children }: { children?: React.ReactNode }) {
   return (
-    <header className="portal-ink">
+    <header className="border-b border-edge">
       <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-6 py-5 sm:px-8">
         <PortalWordmark />
         {children}

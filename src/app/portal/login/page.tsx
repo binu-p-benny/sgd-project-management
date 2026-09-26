@@ -44,7 +44,7 @@ export default function PortalLoginPage() {
       {/* Ink panel — the site's dark hero, carried over as the left half on a wide screen and a
           slim band on a phone. */}
       <div className="portal-ink flex flex-col justify-between px-6 py-8 sm:px-10 lg:w-[46%] lg:py-14">
-        <PortalWordmark />
+        <PortalWordmark tone="light" />
         <div className="mt-10 lg:mt-0">
           <h1 className="max-w-md text-[30px] leading-[1.12] text-[#eae8e3] sm:text-[40px] lg:text-[46px]">
             Follow your installation, stage by stage.

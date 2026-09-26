@@ -224,7 +224,8 @@ h3 {
   letter-spacing: -0.025em;
 }
 
-/* The ink band at the top of every portal page, mirroring the site's dark header. */
+/* The dark panel on the portal's sign-in page, mirroring the public site's hero. /portal itself
+   is one continuous paper background and uses none of this. */
 .portal-ink {
   background: #111111;
   color: #eae8e3;

@@ -69,6 +69,10 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico).*)",
+    // Files served straight out of /public are skipped by extension. Without that, a signed-out
+    // request for an asset gets the login redirect instead of the file — which is how the
+    // portal's logo first came back broken: next/image fetches /logo-wt.png itself, was handed a
+    // 307, and reported the resource wasn't a valid image.
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpe?g|gif|webp|avif|svg|ico|txt|xml|webmanifest|woff2?)$).*)",
   ],
 };

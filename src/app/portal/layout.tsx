@@ -10,7 +10,7 @@ import { Inter } from "next/font/google";
 const inter = Inter({ variable: "--font-portal-sans", subsets: ["latin"], display: "swap" });
 
 export const metadata: Metadata = {
-  title: "Your project | SGD Group of Companies",
+  title: "SGD Connect",
   description: "Track the progress of your window and glass installation with SGD.",
 };
 
