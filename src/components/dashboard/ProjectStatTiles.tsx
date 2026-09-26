@@ -5,7 +5,7 @@ type Severity = "good" | "warning" | "serious" | "critical";
 // Overview tiles get a decorative hue (no severity meaning); alert tiles map their
 // severity onto one of these so red/orange/amber keep their warning connotation.
 type Hue = "indigo" | "violet" | "teal" | "emerald" | "amber" | "orange" | "red";
-type IconName = "folder" | "check" | "checks" | "trend" | "block" | "clock" | "wallet";
+type IconName = "folder" | "check" | "checks" | "trend" | "block" | "pause" | "clock" | "wallet";
 
 interface Tile {
   label: string;
@@ -90,6 +90,13 @@ function TileIcon({ name, className }: { name: IconName; className?: string }) {
         <svg {...common}>
           <circle cx="12" cy="12" r="8.5" />
           <path d="M6.4 6.4 17.6 17.6" strokeLinecap="round" />
+        </svg>
+      );
+    case "pause":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="8.5" />
+          <path d="M10 9.5v5M14 9.5v5" strokeLinecap="round" />
         </svg>
       );
     case "clock":
@@ -179,12 +186,23 @@ export function ProjectStatTiles({ counts }: { counts: ProjectSituationCounts })
 
   const alerts: Tile[] = [
     {
+      // Phase 1 only — a block here stops the project dead, so any count at all is critical.
       label: "Blocked",
-      subtitle: "Projects",
+      subtitle: "Phase 1",
       value: counts.blocked,
       hue: SEVERITY_TO_HUE[severity(counts.blocked, 1, 1, 1)],
-      href: "/projects?status=blocked",
+      href: "/projects?status=blocked&blockedStage=phase_1",
       icon: "block",
+    },
+    {
+      // Phase 2/3 — normally worked around rather than waited on, so it escalates by volume
+      // instead of on the first one.
+      label: "Temporarily blocked",
+      subtitle: "Phase 2 & 3",
+      value: counts.temporarilyBlocked,
+      hue: SEVERITY_TO_HUE[severity(counts.temporarilyBlocked, 1, 4, 10)],
+      href: "/projects?status=blocked&blockedStage=later",
+      icon: "pause",
     },
     {
       label: "Delayed",
@@ -230,7 +248,7 @@ export function ProjectStatTiles({ counts }: { counts: ProjectSituationCounts })
             </span>
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {alerts.map((tile) => (
             <StatTile key={tile.label} tile={tile} />
           ))}

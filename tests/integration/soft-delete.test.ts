@@ -131,7 +131,12 @@ describe("deleting a project hides it without removing it", () => {
     };
 
     expect(after.counts.total).toBe(before.counts.total - 1);
-    expect(after.counts.blocked).toBe(before.counts.blocked - 1);
+    // Summed across both blocked tiles: this project's block is on 2D2, so it counts under
+    // temporarilyBlocked rather than blocked (see getProjectSituationCounts). What this test
+    // cares about is that it stops being counted at all.
+    expect(after.counts.blocked + after.counts.temporarilyBlocked).toBe(
+      before.counts.blocked + before.counts.temporarilyBlocked - 1
+    );
     expect(after.blocked).toBeLessThan(before.blocked);
     expect(after.progress).toBe(before.progress - 1);
     expect(after.activity).toBeLessThan(before.activity);

@@ -235,6 +235,7 @@ function formatStatusLabel(
 const ACTIVE_FILTER_LABEL: Record<string, (value: string) => string> = {
   phase: (v) => PHASE_PROGRESS_FILTER_OPTIONS.find((o) => o.value === v)?.label ?? v,
   status: (v) => `Status: ${OVERALL_STATUS_LABELS[v as EffectiveOverallStatus] ?? v}`,
+  blockedStage: (v) => (v === "phase_1" ? "Blocked in Phase 1" : "Temporarily blocked (Phase 2 & 3)"),
   department: (v) => `Currently with ${DEPARTMENT_LABELS[v as Department] ?? v}`,
   paymentStatus: (v) => `Payment: ${PAYMENT_STATUS_LABELS[v as PaymentStatus] ?? v}`,
   newDays: (v) => `Created in last ${v} days`,
@@ -251,6 +252,7 @@ export default async function ProjectsPage({
   searchParams: Promise<{
     phase?: string;
     status?: string;
+    blockedStage?: string;
     department?: string;
     paymentStatus?: string;
     newDays?: string;
@@ -269,6 +271,10 @@ export default async function ProjectsPage({
   // field — so it's applied in JS via matchesPhaseProgressFilter, same as status/overdue/department.
   const phaseFilter = params.phase;
   const status = params.status as EffectiveOverallStatus | undefined;
+  // Where the block sits, for the dashboard's two blocked tiles: "phase_1" is the hard stop,
+  // "later" is everything the badges call temporarily blocked. Keyed off the blocked step's own
+  // phase (statusBlockedStepPhase below), the same value formatStatusLabel words the badge from.
+  const blockedStage = params.blockedStage === "phase_1" || params.blockedStage === "later" ? params.blockedStage : undefined;
   const department = params.department as Department | undefined;
   const paymentStatus = params.paymentStatus as PaymentStatus | undefined;
   const newDays = params.newDays ? Number(params.newDays) : undefined;
@@ -427,6 +433,14 @@ export default async function ProjectsPage({
     .filter((p) => !phaseFilter || matchesPhaseProgressFilter(phaseFilter, p.phaseSteps))
     .filter((p) => !status || p.effectiveStatus === status)
     .filter((p) => !newSince || p.createdAt >= newSince)
+    .filter(
+      (p) =>
+        !blockedStage ||
+        (p.effectiveStatus === "blocked" &&
+          (blockedStage === "phase_1"
+            ? !p.statusBlockedStepPhase || p.statusBlockedStepPhase === "phase_1"
+            : p.statusBlockedStepPhase !== null && p.statusBlockedStepPhase !== "phase_1"))
+    )
     .filter((p) => !overdueOnly || p.hasOverdue)
     .filter((p) => !currentStepFilter || p.currentStep?.stepCode === currentStepFilter)
     .filter((p) => !department || p.activeDepartments.has(department))

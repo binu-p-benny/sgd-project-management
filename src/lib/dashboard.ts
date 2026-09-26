@@ -1,5 +1,11 @@
 import { prisma } from "@/lib/prisma";
-import { isProcurementItemOverrun, isStepOverrun, getEffectiveOverallStatus, projectHasOverrun } from "@/lib/overrun";
+import {
+  isProcurementItemOverrun,
+  isStepOverrun,
+  getEffectiveOverallStatus,
+  getProjectBlockedStep,
+  projectHasOverrun,
+} from "@/lib/overrun";
 import { withLiveExpectedArrivalDates } from "@/lib/procurement";
 
 // Reused across every query below that needs projectHasOverrun's Glass PO argument — see its own
@@ -94,7 +100,16 @@ export interface ProjectSituationCounts {
   total: number;
   onTrack: number;
   delayed: number;
+  /**
+   * Blocked projects, split the way the badges already word them (see stepStatusLabel): a block
+   * in Phase 1 is a dead stop — nothing moves until someone lifts it — while one in Phase 2 or 3
+   * is usually worked around, so it reads as "temporarily blocked". The two need different
+   * attention, which a single combined tile hid. Bucketed by the *blocked step's* own phase, not
+   * the project's currentPhase: a 2D2 block still counts as temporary after the project has
+   * moved on to Phase 3 early (see maybeEarlyUnlockPhase3).
+   */
   blocked: number;
+  temporarilyBlocked: number;
   completed: number;
   newLast30Days: number;
   overdueSteps: number;
@@ -108,7 +123,9 @@ export async function getProjectSituationCounts(): Promise<ProjectSituationCount
       createdAt: true,
       overallStatus: true,
       paymentStatus: true,
-      phaseSteps: { select: { plannedEndDate: true, status: true, stepCode: true, actualEndDate: true, delayCategory: true } },
+      phaseSteps: {
+        select: { phase: true, plannedEndDate: true, status: true, stepCode: true, actualEndDate: true, delayCategory: true },
+      },
       procurementItems: { select: PROCUREMENT_ITEM_OVERRUN_SELECT },
       glassPurchaseOrder: { select: GLASS_PO_OVERRUN_SELECT },
     },
@@ -122,6 +139,7 @@ export async function getProjectSituationCounts(): Promise<ProjectSituationCount
     onTrack: 0,
     delayed: 0,
     blocked: 0,
+    temporarilyBlocked: 0,
     completed: 0,
     newLast30Days: 0,
     overdueSteps: 0,
@@ -135,9 +153,16 @@ export async function getProjectSituationCounts(): Promise<ProjectSituationCount
       projectHasOverrun(p.phaseSteps, withLiveExpectedArrivalDates(p.procurementItems, oneD), p.glassPurchaseOrder)
     );
     if (status === "on_track") counts.onTrack += 1;
-    else if (status === "delayed") counts.delayed += 1;
-    else if (status === "blocked") counts.blocked += 1;
-    else if (status === "completed") counts.completed += 1;
+    else if (status === "delayed") {
+      counts.delayed += 1;
+    } else if (status === "blocked") {
+      // Same rule /projects' own badge uses: the blocking step's phase decides the wording, and
+      // a project somehow blocked with no blocked step to point at falls back to the harder
+      // reading rather than being quietly counted as temporary.
+      const blockedStep = getProjectBlockedStep(p.phaseSteps);
+      if (blockedStep && blockedStep.phase !== "phase_1") counts.temporarilyBlocked += 1;
+      else counts.blocked += 1;
+    } else if (status === "completed") counts.completed += 1;
 
     if (p.createdAt >= thirtyDaysAgo) counts.newLast30Days += 1;
     if (p.paymentStatus === "pending") counts.paymentPending += 1;
