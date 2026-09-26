@@ -87,6 +87,59 @@ export function rowAnchorKey(row: Pick<Selected, "phaseStepId" | "procurementIte
   return anchorKey({ kind: "glass_po", id: row.glassPurchaseOrderId! });
 }
 
+export interface DepartmentFollowUp extends FollowUpRow {
+  projectId: string;
+  projectName: string;
+  /** The card it was raised from, worded as the project page words it. */
+  anchorLabel: string;
+}
+
+/** How far back the drawer still shows something already closed. */
+const RECENTLY_DONE_DAYS = 30;
+
+/**
+ * One department's follow-ups for the /my-tasks drawer — everything still open, plus whatever
+ * it closed in the last month so a "did I already do that?" check doesn't need the project page.
+ * Open ones first, each by planned date; closed ones after, most recently closed first.
+ *
+ * A null department (nobody signed in, or a session without one) gets nothing rather than
+ * everything — this is a personal list, not an admin view.
+ */
+export async function getDepartmentFollowUps(department: Department | null): Promise<DepartmentFollowUp[]> {
+  if (!department) return [];
+
+  const since = new Date(Date.now() - RECENTLY_DONE_DAYS * 86_400_000);
+  const rows = await prisma.followUpTask.findMany({
+    where: {
+      department,
+      OR: [{ actualDate: null }, { actualDate: { gte: since } }],
+    },
+    select: {
+      ...SELECT,
+      project: { select: { id: true, name: true } },
+      phaseStep: { select: { stepCode: true, stepName: true } },
+      procurementItem: { select: { itemType: true } },
+    },
+  });
+
+  return rows
+    .map((row) => ({
+      ...toRow(row),
+      projectId: row.project.id,
+      projectName: row.project.name,
+      anchorLabel: row.phaseStep
+        ? `${row.phaseStep.stepCode} ${row.phaseStep.stepName}`
+        : row.procurementItem
+          ? `${row.procurementItem.itemType.charAt(0).toUpperCase()}${row.procurementItem.itemType.slice(1)} procurement`
+          : "Glass PO",
+    }))
+    .sort((a, b) => {
+      if (!a.actualDate !== !b.actualDate) return a.actualDate ? 1 : -1;
+      if (a.actualDate && b.actualDate) return b.actualDate.localeCompare(a.actualDate);
+      return a.plannedDate.localeCompare(b.plannedDate);
+    });
+}
+
 /**
  * Every follow-up on a project, keyed by the card it belongs to — one query for the whole page,
  * rather than one per card. Oldest first inside each card, so a card's list reads in the order
