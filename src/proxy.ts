@@ -1,12 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/auth";
+import { CLIENT_SESSION_COOKIE_NAME, verifyClientSessionToken } from "@/lib/client-auth";
 
-const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/auth/logout"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/api/auth/login",
+  "/api/auth/logout",
+  "/portal/login",
+  "/api/portal/login",
+  "/api/portal/logout",
+];
+
+/** Everything under here belongs to the client portal and is gated by the portal cookie alone. */
+const PORTAL_PREFIX = "/portal";
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (PUBLIC_PATHS.some((path) => pathname === path)) {
+    return NextResponse.next();
+  }
+
+  // Checked before the staff session, so a client is never bounced to the staff login — and a
+  // staff cookie doesn't open the portal either, since verifyClientSessionToken rejects a
+  // payload without clientIds even though both are signed with the same secret.
+  if (pathname === PORTAL_PREFIX || pathname.startsWith(`${PORTAL_PREFIX}/`)) {
+    const portalToken = request.cookies.get(CLIENT_SESSION_COOKIE_NAME)?.value;
+    const portalSession = portalToken ? await verifyClientSessionToken(portalToken) : null;
+    if (!portalSession) {
+      return NextResponse.redirect(new URL("/portal/login", request.url));
+    }
     return NextResponse.next();
   }
 

@@ -172,3 +172,65 @@ h3 {
   background-color: var(--edge-2);
   border-radius: 9999px;
 }
+
+/* ---------------------------------------------------------------------------
+   Client portal (/portal)
+   ---------------------------------------------------------------------------
+   The palette and type are lifted from sgdgroupofcompanies.com: bone paper
+   (#eae8e3) under ink (#111), no saturated accent anywhere, square corners and
+   large light headings on tight tracking.
+
+   It re-declares the *same* variables the staff theme uses rather than adding a
+   parallel set of classes, so every utility already in the codebase — bg-surface,
+   text-fg-muted, border-edge — renders in the portal's colours inside this
+   wrapper and nowhere else. `data-theme="dark"` on <html> doesn't reach these:
+   the portal is one fixed look, the way the public site is.
+*/
+.portal {
+  --bg: #eae8e3;
+  --surface: #f5f4ef;
+  --surface-2: #e3e0d9;
+  --surface-3: #d8d4cb;
+
+  --edge: rgba(17, 17, 17, 0.12);
+  --edge-2: rgba(17, 17, 17, 0.22);
+
+  --overlay: rgba(17, 17, 17, 0.04);
+  --overlay-2: rgba(17, 17, 17, 0.08);
+
+  --fg: #111111;
+  --fg-muted: rgba(17, 17, 17, 0.62);
+  --fg-subtle: rgba(17, 17, 17, 0.42);
+
+  /* The site has no accent colour — ink is the accent. */
+  --accent: #111111;
+  --accent-2: #2b2b2b;
+  --accent-soft: rgba(17, 17, 17, 0.06);
+
+  --shadow-sm: 0 1px 2px rgba(17, 17, 17, 0.05);
+  --shadow-md: 0 8px 28px -10px rgba(17, 17, 17, 0.18);
+  --shadow-lg: 0 20px 50px -20px rgba(17, 17, 17, 0.28);
+
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-portal-sans), Inter, Arial, sans-serif;
+}
+
+/* Light weights and tight tracking are the whole character of the site's type. */
+.portal h1,
+.portal h2,
+.portal h3 {
+  font-weight: 400;
+  letter-spacing: -0.025em;
+}
+
+/* The ink band at the top of every portal page, mirroring the site's dark header. */
+.portal-ink {
+  background: #111111;
+  color: #eae8e3;
+}
+
+.portal-ink ::selection {
+  background: #eae8e3;
+  color: #111111;
+}
