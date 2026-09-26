@@ -46,11 +46,20 @@ export const PORTAL_STATUS_LABELS: Record<StepStatus, string> = {
   completed: "Completed",
 };
 
-export const PORTAL_STATUS_STYLES: Record<StepStatus, { dot: string; text: string }> = {
-  completed: { dot: "bg-[#2f6b4f]", text: "text-[#2f6b4f]" },
-  in_progress: { dot: "bg-[#111111]", text: "text-[#111111]" },
-  blocked: { dot: "bg-[#9a6b1f]", text: "text-[#9a6b1f]" },
-  not_started: { dot: "bg-[rgba(17,17,17,0.22)]", text: "text-[rgba(17,17,17,0.45)]" },
+/**
+ * Node colours for the phase timeline. Ink carries "happening now" and green "done", the way the
+ * staff overview uses blue and green — kept to two hues plus one amber so the portal still reads
+ * as the monochrome public site rather than a status dashboard.
+ */
+export const PORTAL_STATUS_STYLES: Record<StepStatus, { node: string; text: string; connector: string }> = {
+  completed: { node: "border-[#2f6b4f] bg-[#2f6b4f]", text: "text-[#2f6b4f]", connector: "bg-[#2f6b4f]" },
+  in_progress: { node: "border-[#111111] bg-[#111111]", text: "text-[#111111]", connector: "bg-[rgba(17,17,17,0.18)]" },
+  blocked: { node: "border-[#9a6b1f] bg-[#9a6b1f]", text: "text-[#9a6b1f]", connector: "bg-[rgba(17,17,17,0.18)]" },
+  not_started: {
+    node: "border-[rgba(17,17,17,0.22)] bg-[#eae8e3]",
+    text: "text-[rgba(17,17,17,0.45)]",
+    connector: "bg-[rgba(17,17,17,0.18)]",
+  },
 };
 
 export function formatPortalDate(iso: string | null): string | null {
@@ -60,26 +69,45 @@ export function formatPortalDate(iso: string | null): string | null {
   );
 }
 
-/** The one line of detail under a step: when it finished, or when it is expected to. */
-export function portalStepDetail(step: {
+/** "17 Sept" — the timeline is tight, so the year only appears in the hover title. */
+export function formatPortalDateShort(iso: string | null): string | null {
+  if (!iso) return null;
+  return new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short" }).format(new Date(iso));
+}
+
+export interface PortalStepDates {
   status: StepStatus;
   plannedStartDate: string | null;
   plannedEndDate: string | null;
   actualEndDate: string | null;
-}): string | null {
+}
+
+/** The one short line under a timeline node — a date wherever there is one to give. */
+export function portalStepNote(step: PortalStepDates): string | null {
+  if (step.status === "completed") return formatPortalDateShort(step.actualEndDate);
+  if (step.status === "in_progress") {
+    const due = formatPortalDateShort(step.plannedEndDate);
+    return due ? `by ${due}` : "underway";
+  }
+  // Deliberately no date on hold: those planned dates are the ones most likely to move, and
+  // quoting one would read as a promise.
+  if (step.status === "blocked") return "on hold";
+  const starts = formatPortalDateShort(step.plannedStartDate);
+  return starts ? `from ${starts}` : null;
+}
+
+/** The full sentence, kept for the node's hover title where there's room for it. */
+export function portalStepTitle(name: string, step: PortalStepDates): string {
+  const status = PORTAL_STATUS_LABELS[step.status];
   if (step.status === "completed") {
     const done = formatPortalDate(step.actualEndDate);
-    return done ? `Completed ${done}` : null;
+    return done ? `${name} — completed ${done}` : `${name} — ${status}`;
   }
   if (step.status === "in_progress") {
     const due = formatPortalDate(step.plannedEndDate);
-    return due ? `Expected by ${due}` : "Underway";
+    return due ? `${name} — in progress, expected by ${due}` : `${name} — in progress`;
   }
-  if (step.status === "blocked") {
-    // Deliberately no date: an on-hold step's planned dates are the ones most likely to move,
-    // and quoting one would read as a promise.
-    return "Paused — our team will be in touch";
-  }
+  if (step.status === "blocked") return `${name} — paused, our team will be in touch`;
   const starts = formatPortalDate(step.plannedStartDate);
-  return starts ? `Planned from ${starts}` : null;
+  return starts ? `${name} — planned from ${starts}` : `${name} — ${status}`;
 }
