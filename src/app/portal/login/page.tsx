@@ -5,49 +5,36 @@ import { useRouter } from "next/navigation";
 import { Spinner } from "@/components/ui/Spinner";
 import { PortalWordmark } from "@/components/portal/PortalHeader";
 
+const WORK_IN_HAND_HEADING = "Projects under way across South India";
+
 /**
- * The track-record figures on the sign-in panel. Hard-coded on purpose, and in one place on
- * purpose: these are the company's own claims about ten years of work, not anything this app
- * measures — its database only starts at the system's rollout (42 live projects today), so
- * deriving them from it would understate the business badly.
- *
- * They are also the first thing a client sees, so they should be figures the office is happy to
- * stand behind: the state numbers add up to the headline deliberately, and "delivered" is a
- * claim about completed work rather than a count of what is open right now. Change them here.
+ * What SGD currently has on site, shown above the sign-in form. Hard-coded on purpose and in one
+ * place on purpose: these are the office's own figures, not anything this app measures — its
+ * database only starts at the system's rollout (42 live projects today), so deriving them from
+ * it would understate the business badly. Change them here when the office does.
  */
 const PORTAL_STATS = [
-  { value: "700+", label: "Projects delivered" },
-  { value: "400+", label: "Kerala" },
-  { value: "200+", label: "Tamil Nadu" },
-  { value: "90+", label: "Karnataka" },
+  { value: "130", label: "Projects ongoing" },
+  { value: "62", label: "Kerala" },
+  { value: "57", label: "Tamil Nadu" },
+  { value: "46", label: "Karnataka" },
 ];
 
-/** The figures above, rendered for either background — ink panel or paper. */
-function TrackRecord({ tone, className = "" }: { tone: "light" | "dark"; className?: string }) {
-  const light = tone === "light";
+/**
+ * The figures above, sitting at the top of the sign-in column — so the first thing a visitor
+ * reads is the scale of the work, and the form follows it. Bottom border rather than top: it
+ * leads the column rather than closing it.
+ */
+function WorkInHand({ className = "" }: { className?: string }) {
   return (
-    <div className={`border-t pt-6 ${light ? "border-[rgba(234,232,227,0.18)]" : "border-edge"} ${className}`}>
-      <p
-        className={`text-[10px] uppercase tracking-[0.22em] ${
-          light ? "text-[rgba(245,244,239,0.45)]" : "text-fg-subtle"
-        }`}
-      >
-        Ten years of glass and window systems across South India
-      </p>
-      <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-5 xl:grid-cols-4">
+    <div className={`border-b border-edge pb-6 ${className}`}>
+      <p className="text-[10px] uppercase tracking-[0.22em] text-fg-subtle">{WORK_IN_HAND_HEADING}</p>
+      <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-5">
         {PORTAL_STATS.map((stat) => (
           <div key={stat.label}>
             <dt className="sr-only">{stat.label}</dt>
-            <dd className={`text-[22px] leading-none sm:text-[26px] ${light ? "text-[#eae8e3]" : "text-fg"}`}>
-              {stat.value}
-            </dd>
-            <p
-              className={`mt-1.5 text-[10px] uppercase tracking-[0.18em] ${
-                light ? "text-[rgba(245,244,239,0.5)]" : "text-fg-muted"
-              }`}
-            >
-              {stat.label}
-            </p>
+            <dd className="text-[22px] leading-none text-fg sm:text-[26px]">{stat.value}</dd>
+            <p className="mt-1.5 text-[10px] uppercase tracking-[0.18em] text-fg-muted">{stat.label}</p>
           </div>
         ))}
       </dl>
@@ -93,9 +80,9 @@ export default function PortalLoginPage() {
     <div className="flex min-h-screen flex-col lg:flex-row">
       {/* Ink panel — the site's dark hero, carried over as the left half on a wide screen and a
           slim band on a phone. */}
-      <div className="portal-ink flex flex-col justify-between px-6 py-8 sm:px-10 lg:w-[46%] lg:py-14">
+      <div className="portal-ink flex flex-col justify-between px-6 py-6 sm:px-10 sm:py-8 lg:w-[46%] lg:py-14">
         <PortalWordmark tone="light" />
-        <div className="mt-10 lg:mt-0">
+        <div className="mt-8 lg:mt-0">
           <h1 className="max-w-md text-[30px] leading-[1.12] text-[#eae8e3] sm:text-[40px] lg:text-[46px]">
             Follow your installation, stage by stage.
           </h1>
@@ -104,15 +91,15 @@ export default function PortalLoginPage() {
             and what comes next.
           </p>
         </div>
-        {/* Below lg the panel is a band above the form, and anything added here pushes the
-            inputs off the screen — so the track record moves under the form at those widths
-            (see the second TrackRecord below) and only shares the panel on a wide screen. */}
-        <TrackRecord tone="light" className="mt-10 hidden lg:block" />
+        <p className="mt-10 hidden text-[10px] uppercase tracking-[0.22em] text-[rgba(245,244,239,0.45)] lg:block">
+          Expert glass &amp; window solutions
+        </p>
       </div>
 
       {/* Paper panel — the form. */}
-      <div className="flex flex-1 items-center justify-center px-6 py-12 sm:px-10">
+      <div className="flex flex-1 items-center justify-center px-6 py-8 sm:px-10 sm:py-12">
         <div className="w-full max-w-sm">
+          <WorkInHand className="mb-6 sm:mb-8" />
           <h2 className="text-[26px] text-fg">Sign in</h2>
           <p className="mt-2 text-sm text-fg-muted">Use the phone number you gave us for this project.</p>
 
@@ -173,8 +160,6 @@ export default function PortalLoginPage() {
           <p className="mt-10 text-xs leading-relaxed text-fg-subtle">
             Can&apos;t get in? Call the SGD office and we&apos;ll check the number we have on file.
           </p>
-
-          <TrackRecord tone="dark" className="mt-10 lg:hidden" />
         </div>
       </div>
     </div>
