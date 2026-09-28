@@ -156,3 +156,36 @@ export const DELAY_CATEGORY_LABELS: Record<DelayCategory, string> = {
 export const DELAY_CATEGORY_OPTIONS: DelayCategory[] = Object.keys(
   DELAY_CATEGORY_LABELS
 ) as DelayCategory[];
+
+// The rows inside each tracker table, as their headers word them. Kept here — in the one module
+// that is safe to import from a client component — so the "which sub-task is this follow-up
+// about?" dropdown can offer the same list the table itself shows (see FollowUpsButton).
+// unified-tasks.ts has its own field->label map for the same stages; this is the display order.
+const PROCUREMENT_STAGE_LABELS_BASE = [
+  "Requirement created",
+  "Quote created",
+  "Payment done",
+  "Order confirmed",
+] as const;
+
+/** Section alone carries despatch and powder coating between Order confirmed and Arrival. */
+const SECTION_ONLY_STAGE_LABELS = ["Material despatch", "Arrived for powder coating"] as const;
+
+const PROCUREMENT_STAGE_LABELS_TAIL = ["Actual arrival", "QC checked"] as const;
+
+export function procurementStageLabels(itemType: string): string[] {
+  return [
+    ...PROCUREMENT_STAGE_LABELS_BASE,
+    ...(itemType === "section" ? SECTION_ONLY_STAGE_LABELS : []),
+    ...PROCUREMENT_STAGE_LABELS_TAIL,
+  ];
+}
+
+export const GLASS_PO_STAGE_LABELS = [
+  "Requirement created",
+  "Quote created",
+  "Payment done",
+  "Order confirmed",
+  "Actual arrival",
+  "QC checked",
+];

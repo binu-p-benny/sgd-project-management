@@ -153,3 +153,45 @@ describe("follow-up ownership", () => {
     expect(grouped[anchorKey({ kind: "phase_step", id: oneA.id })][0].createdByName).toBeTruthy();
   });
 });
+
+describe("sub-task on a follow-up", () => {
+  it("keeps the table row it was raised against, and shows it in /my-tasks", async () => {
+    const project = await createTestProject({});
+    const item = await prisma.procurementItem.create({ data: { projectId: project.id, itemType: "section" } });
+    const followUp = await prisma.followUpTask.create({
+      data: {
+        projectId: project.id,
+        procurementItemId: item.id,
+        taskLabel: "Chase the requirement sheet",
+        stageLabel: "Requirement created",
+        department: "purchase",
+        plannedDate: new Date(),
+      },
+    });
+
+    const grouped = await getProjectFollowUps(project.id);
+    expect(grouped[anchorKey({ kind: "procurement_item", id: item.id })][0].stageLabel).toBe("Requirement created");
+
+    const tasks = await getUnifiedMyTasks("purchase");
+    const mine = tasks.find((t) => t.refId === followUp.id)!;
+    expect(mine.subTaskLabel).toBe("Follow-up · Section procurement · Requirement created");
+  });
+
+  it("says just the card when no row was picked", async () => {
+    const project = await createTestProject({});
+    const item = await prisma.procurementItem.create({ data: { projectId: project.id, itemType: "gasket" } });
+    const followUp = await prisma.followUpTask.create({
+      data: {
+        projectId: project.id,
+        procurementItemId: item.id,
+        taskLabel: "Chase the whole item",
+        department: "purchase",
+        plannedDate: new Date(),
+      },
+    });
+
+    const tasks = await getUnifiedMyTasks("purchase");
+    const mine = tasks.find((t) => t.refId === followUp.id)!;
+    expect(mine.subTaskLabel).toBe("Follow-up · Gasket procurement");
+  });
+});

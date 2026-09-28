@@ -32,12 +32,16 @@ export function FollowUpsButton({
   projectId,
   anchor,
   followUps,
+  stages,
   canEdit,
   className = "",
 }: {
   projectId: string;
   anchor: FollowUpAnchor;
   followUps: FollowUpRow[];
+  /** The rows of this card's table, for the sub-task picker. Omitted for a card that has none
+   *  — a phase step is a single thing, so its follow-ups are simply about the step. */
+  stages?: string[];
   /** Admin editors raise and close follow-ups here; everyone else gets a read-only list. */
   canEdit: boolean;
   className?: string;
@@ -70,6 +74,7 @@ export function FollowUpsButton({
           projectId={projectId}
           anchor={anchor}
           followUps={followUps}
+          stages={stages}
           canEdit={canEdit}
           onClose={() => setOpen(false)}
         />
@@ -82,12 +87,14 @@ function FollowUpsModal({
   projectId,
   anchor,
   followUps,
+  stages,
   canEdit,
   onClose,
 }: {
   projectId: string;
   anchor: FollowUpAnchor;
   followUps: FollowUpRow[];
+  stages?: string[];
   canEdit: boolean;
   onClose: () => void;
 }) {
@@ -96,6 +103,8 @@ function FollowUpsModal({
   const [department, setDepartment] = useState<Department>("project_engineer");
   const [plannedDate, setPlannedDate] = useState(todayInput());
   const [note, setNote] = useState("");
+  // "" means the card as a whole, which is also what a card without a table always sends.
+  const [stageLabel, setStageLabel] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,6 +129,7 @@ function FollowUpsModal({
           department,
           plannedDate: new Date(plannedDate).toISOString(),
           note: note.trim() || undefined,
+          stageLabel: stageLabel || undefined,
           anchorKind: anchor.kind,
           anchorId: anchor.id,
         }),
@@ -131,6 +141,7 @@ function FollowUpsModal({
       }
       setTaskLabel("");
       setNote("");
+      setStageLabel("");
       router.refresh();
     } catch {
       setError("Could not reach the server. Try again.");
@@ -218,7 +229,16 @@ function FollowUpsModal({
                   className={`flex flex-col gap-1 rounded-lg border border-edge p-2.5 ${done ? "bg-overlay/60" : ""}`}
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <span className={`text-sm ${done ? "text-fg-muted line-through" : "text-fg"}`}>{f.taskLabel}</span>
+                    <span className="min-w-0">
+                      <span className={`text-sm ${done ? "text-fg-muted line-through" : "text-fg"}`}>
+                        {f.taskLabel}
+                      </span>
+                      {f.stageLabel && (
+                        <span className="ml-2 rounded-full bg-overlay px-2 py-0.5 text-[10px] font-medium text-fg-muted ring-1 ring-inset ring-edge">
+                          {f.stageLabel}
+                        </span>
+                      )}
+                    </span>
                     {canEdit && (
                       <div className="flex shrink-0 items-center gap-2">
                         {busyId === f.id && <Spinner className="h-3.5 w-3.5" />}
@@ -284,6 +304,21 @@ function FollowUpsModal({
                 onChange={(e) => setPlannedDate(e.target.value)}
               />
             </div>
+            {stages && stages.length > 0 && (
+              <select
+                className={fieldCls}
+                value={stageLabel}
+                disabled={saving}
+                onChange={(e) => setStageLabel(e.target.value)}
+              >
+                <option value="">Whole card (no particular row)</option>
+                {stages.map((stage) => (
+                  <option key={stage} value={stage}>
+                    {stage}
+                  </option>
+                ))}
+              </select>
+            )}
             <input
               className={fieldCls}
               placeholder="Note (optional)"

@@ -61,8 +61,15 @@ export function FollowUpsSection({ groups }: { groups: FollowUpGroup[] }) {
                   return (
                     <li key={row.id} className="flex flex-col gap-0.5 py-2 first:pt-0 last:pb-0">
                       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
-                        <span className={`text-sm ${done ? "text-fg-muted line-through" : "text-fg"}`}>
-                          {row.taskLabel}
+                        <span className="min-w-0">
+                          <span className={`text-sm ${done ? "text-fg-muted line-through" : "text-fg"}`}>
+                            {row.taskLabel}
+                          </span>
+                          {row.stageLabel && (
+                            <span className="ml-2 rounded-full bg-overlay px-2 py-0.5 text-[10px] font-medium text-fg-muted ring-1 ring-inset ring-edge">
+                              {row.stageLabel}
+                            </span>
+                          )}
                         </span>
                         <span
                           className={`text-xs font-medium ${

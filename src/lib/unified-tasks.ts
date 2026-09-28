@@ -827,11 +827,14 @@ async function buildFollowUpTasks(department: Department | null): Promise<Unifie
   });
 
   return rows.map((row) => {
-    const anchorLabel = row.phaseStep
+    const cardLabel = row.phaseStep
       ? `${row.phaseStep.stepCode} ${row.phaseStep.stepName}`
       : row.procurementItem
         ? `${capitalize(row.procurementItem.itemType)} procurement`
         : "Glass PO";
+    // The row it is about travels with it, so the task list can say "Section procurement ·
+    // Requirement created" instead of leaving the reader to open the project to find out.
+    const anchorLabel = row.stageLabel ? `${cardLabel} · ${row.stageLabel}` : cardLabel;
     return {
       id: `follow_up:${row.id}`,
       kind: "follow_up" as const,

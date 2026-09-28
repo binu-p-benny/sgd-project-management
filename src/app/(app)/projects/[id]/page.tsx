@@ -50,6 +50,8 @@ import {
   STEP_STATUS_COLORS,
   DEPARTMENT_LABELS,
   BLOCKED_REASON_LABELS,
+  procurementStageLabels,
+  GLASS_PO_STAGE_LABELS,
 } from "@/lib/labels";
 import type { ItemType, PhaseStep, StepPhase } from "@prisma/client";
 
@@ -339,12 +341,13 @@ export default async function ProjectDetailPage({
   };
 
   /** One card's "Follow ups" button, wired to that card's own slice of the follow-up list. */
-  function followUpsFor(anchor: FollowUpAnchor) {
+  function followUpsFor(anchor: FollowUpAnchor, stages?: string[]) {
     return (
       <FollowUpsButton
         projectId={id}
         anchor={anchor}
         followUps={followUpsByAnchor[anchorKey(anchor)] ?? []}
+        stages={stages}
         canEdit={canEditEverything}
       />
     );
@@ -535,7 +538,10 @@ export default async function ProjectDetailPage({
     threeE && threeE.qcPassed === false ? (
       <div className="sm:col-span-2">
         <SiteQCTracker
-          followUps={followUpsFor({ kind: "phase_step", id: threeE.id, label: `${threeE.stepCode} ${threeE.stepName}` })}
+          followUps={followUpsFor(
+            { kind: "phase_step", id: threeE.id, label: `${threeE.stepCode} ${threeE.stepName}` },
+            ["Action plan", ...threeE.actionItems.map((a) => a.taskLabel)]
+          )}
           phaseStepId={threeE.id}
           actionPlanAt={threeE.actionPlanAt?.toISOString() ?? null}
           actionPlanPlannedDate={
@@ -623,11 +629,14 @@ export default async function ProjectDetailPage({
       followUpsByItem={Object.fromEntries(
         project.procurementItems.map((item) => [
           item.id,
-          followUpsFor({
-            kind: "procurement_item",
-            id: item.id,
-            label: `${item.itemType.charAt(0).toUpperCase()}${item.itemType.slice(1)} procurement`,
-          }),
+          followUpsFor(
+            {
+              kind: "procurement_item",
+              id: item.id,
+              label: `${item.itemType.charAt(0).toUpperCase()}${item.itemType.slice(1)} procurement`,
+            },
+            procurementStageLabels(item.itemType)
+          ),
         ])
       )}
       canEdit={!!session && (isAdminEditor(session) || session.department === "purchase")}
@@ -1015,7 +1024,7 @@ export default async function ProjectDetailPage({
   const glassTracker = glassPO ? (
     <GlassTracker
       id={glassPO.id}
-      followUps={followUpsFor({ kind: "glass_po", id: glassPO.id, label: "Glass PO" })}
+      followUps={followUpsFor({ kind: "glass_po", id: glassPO.id, label: "Glass PO" }, GLASS_PO_STAGE_LABELS)}
       canEdit={canEditGlass}
       canEditRequirement={canEditGlassRequirement}
       canEditPayment={canEditGlassPayment}

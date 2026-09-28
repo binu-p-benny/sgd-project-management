@@ -9,6 +9,9 @@ const createSchema = z.object({
   department: z.enum(ASSIGNABLE_DEPARTMENTS),
   plannedDate: z.string().datetime(),
   note: z.string().trim().max(1000).optional(),
+  // Free text rather than an enum: the row lists differ per item type and are display labels,
+  // not keys (see procurementStageLabels in labels.ts). Absent means the card as a whole.
+  stageLabel: z.string().trim().max(120).optional(),
   anchorKind: z.enum(["phase_step", "procurement_item", "glass_po"]),
   anchorId: z.string().min(1),
 });
@@ -47,7 +50,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { taskLabel, department, plannedDate, note, anchorKind, anchorId } = parsed.data;
+  const { taskLabel, department, plannedDate, note, stageLabel, anchorKind, anchorId } = parsed.data;
 
   const anchorExists =
     anchorKind === "phase_step"
@@ -66,6 +69,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       department,
       plannedDate: new Date(plannedDate),
       note: note || null,
+      stageLabel: stageLabel || null,
       createdByUserId: session.userId,
       ...(anchorKind === "phase_step" ? { phaseStepId: anchorId } : {}),
       ...(anchorKind === "procurement_item" ? { procurementItemId: anchorId } : {}),

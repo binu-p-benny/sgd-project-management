@@ -20,6 +20,8 @@ export interface FollowUpAnchor {
 export interface FollowUpRow {
   id: string;
   taskLabel: string;
+  /** The table row it is about, or null for the card as a whole. */
+  stageLabel: string | null;
   department: Department;
   plannedDate: string;
   actualDate: string | null;
@@ -43,6 +45,7 @@ export function anchorKey(anchor: Pick<FollowUpAnchor, "kind" | "id">): string {
 const SELECT = {
   id: true,
   taskLabel: true,
+  stageLabel: true,
   department: true,
   plannedDate: true,
   actualDate: true,
@@ -57,6 +60,7 @@ const SELECT = {
 type Selected = {
   id: string;
   taskLabel: string;
+  stageLabel: string | null;
   department: Department;
   plannedDate: Date;
   actualDate: Date | null;
@@ -72,6 +76,7 @@ function toRow(row: Selected): FollowUpRow {
   return {
     id: row.id,
     taskLabel: row.taskLabel,
+    stageLabel: row.stageLabel,
     department: row.department,
     plannedDate: row.plannedDate.toISOString(),
     actualDate: row.actualDate?.toISOString() ?? null,
@@ -127,11 +132,11 @@ export async function getDepartmentFollowUps(department: Department | null): Pro
       ...toRow(row),
       projectId: row.project.id,
       projectName: row.project.name,
-      anchorLabel: row.phaseStep
+      anchorLabel: (row.phaseStep
         ? `${row.phaseStep.stepCode} ${row.phaseStep.stepName}`
         : row.procurementItem
           ? `${row.procurementItem.itemType.charAt(0).toUpperCase()}${row.procurementItem.itemType.slice(1)} procurement`
-          : "Glass PO",
+          : "Glass PO") + (row.stageLabel ? ` · ${row.stageLabel}` : ""),
     }))
     .sort((a, b) => {
       if (!a.actualDate !== !b.actualDate) return a.actualDate ? 1 : -1;

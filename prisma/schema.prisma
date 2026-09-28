@@ -855,6 +855,12 @@ model FollowUpTask {
   glassPurchaseOrder   GlassPurchaseOrder? @relation(fields: [glassPurchaseOrderId], references: [id], onDelete: Cascade)
 
   taskLabel   String     @map("task_label")
+  // Which row of the card's table this is about — "Requirement created", "QC checked" and so on,
+  // exactly as that table words it (see procurementStageLabels/GLASS_PO_STAGE_LABELS in
+  // labels.ts). Null means the card as a whole, which is all a phase step card ever has.
+  // Stored as the label rather than a field name: it is display text, the lists differ per item
+  // type, and nothing keys off it.
+  stageLabel  String?    @map("stage_label")
   // Who the follow-up is for — picked at creation from the same list every other assignable row
   // uses (see ASSIGNABLE_DEPARTMENTS), and editable afterwards, unlike WorkTask.department.
   department  Department @default(project_engineer)
