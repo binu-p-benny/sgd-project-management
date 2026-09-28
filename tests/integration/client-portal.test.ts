@@ -172,3 +172,44 @@ describe("getPortalProjects", () => {
     expect(await getPortalProjects([])).toEqual([]);
   });
 });
+
+describe("phases a project hasn't reached yet", () => {
+  it("still shows Installation, as planned steps with no dates", async () => {
+    const client = await makeClient("PORTAL PHASES", "9990000020");
+    await makeProject(client.id, "Early days");
+
+    const [project] = await getPortalProjects([client.id]);
+    const phases = new Set(project.steps.map((s) => s.phase));
+    expect(phases.has("phase_3")).toBe(true);
+
+    const phase3 = project.steps.filter((s) => s.phase === "phase_3");
+    expect(phase3.map((s) => s.stepCode)).toEqual(["3A", "3B", "3C1", "3C2", "3E"]);
+    expect(phase3.every((s) => s.status === "not_started")).toBe(true);
+    // Nothing has been planned for them yet, so they carry no dates to promise.
+    expect(phase3.every((s) => !s.plannedStartDate && !s.plannedEndDate && !s.actualEndDate)).toBe(true);
+  });
+
+  it("does not let those planned steps change how far along the project looks", async () => {
+    const client = await makeClient("PORTAL PERCENT", "9990000021");
+    await makeProject(client.id, "Half done");
+
+    const [project] = await getPortalProjects([client.id]);
+    // The project has two real steps, one of them complete — the Phase 2 and 3 placeholders
+    // appended for display must not count against it.
+    expect(project.totalSteps).toBe(2);
+    expect(project.completedSteps).toBe(1);
+    expect(project.percentComplete).toBe(50);
+    expect(project.steps.length).toBeGreaterThan(2);
+  });
+
+  it("leaves a real phase alone", async () => {
+    const client = await makeClient("PORTAL REAL", "9990000022");
+    await makeProject(client.id, "Has real steps");
+
+    const [portal] = await getPortalProjects([client.id]);
+    const phase1 = portal.steps.filter((s) => s.phase === "phase_1");
+    // The two seeded rows, not the four-step template.
+    expect(phase1).toHaveLength(2);
+    expect(phase1.every((s) => !s.id.startsWith("planned:"))).toBe(true);
+  });
+});

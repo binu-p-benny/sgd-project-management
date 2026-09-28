@@ -1,6 +1,29 @@
 import { prisma } from "@/lib/prisma";
 import { phoneMatches, portalPasswordMatches } from "@/lib/client-auth";
+import { PORTAL_PHASE_STEP_CODES } from "@/lib/portal-labels";
 import type { StepPhase, StepStatus } from "@prisma/client";
+
+const PORTAL_PHASES: StepPhase[] = ["phase_1", "phase_2", "phase_3"];
+
+/**
+ * A phase whose steps don't exist yet, shown as what is planned rather than left out. A project
+ * only gets its Phase 3 rows when it reaches Phase 3, and a client seeing the timeline stop after
+ * Materials has no way to know installation is still coming. These carry no dates and no status
+ * beyond "not started", and they are added after the percentage is worked out, so they never
+ * make a project look less far along than it is.
+ */
+function placeholderSteps(phase: StepPhase): PortalStep[] {
+  return PORTAL_PHASE_STEP_CODES[phase].map((stepCode) => ({
+    id: `planned:${phase}:${stepCode}`,
+    stepCode,
+    stepName: stepCode,
+    phase,
+    status: "not_started" as StepStatus,
+    plannedStartDate: null,
+    plannedEndDate: null,
+    actualEndDate: null,
+  }));
+}
 
 /**
  * Data behind the client portal. Everything here is read-only and scoped to the client ids on
@@ -97,8 +120,25 @@ export async function getPortalProjects(clientIds: string[]): Promise<PortalProj
   });
 
   return projects.map((project) => {
+    // Real steps only: the percentage and the "x of y steps" line describe work that exists,
+    // not the phases still to be seeded.
     const totalSteps = project.phaseSteps.length;
     const completedSteps = project.phaseSteps.filter((s) => s.status === "completed").length;
+
+    const steps: PortalStep[] = project.phaseSteps.map((s) => ({
+      id: s.id,
+      stepCode: s.stepCode,
+      stepName: s.stepName,
+      phase: s.phase,
+      status: s.status,
+      plannedStartDate: s.plannedStartDate?.toISOString() ?? null,
+      plannedEndDate: s.plannedEndDate?.toISOString() ?? null,
+      actualEndDate: s.actualEndDate?.toISOString() ?? null,
+    }));
+    for (const phase of PORTAL_PHASES) {
+      if (!steps.some((s) => s.phase === phase)) steps.push(...placeholderSteps(phase));
+    }
+
     return {
       id: project.id,
       name: project.name,
@@ -109,16 +149,7 @@ export async function getPortalProjects(clientIds: string[]): Promise<PortalProj
       totalSteps,
       percentComplete: totalSteps === 0 ? 0 : Math.round((completedSteps / totalSteps) * 100),
       isComplete: totalSteps > 0 && completedSteps === totalSteps,
-      steps: project.phaseSteps.map((s) => ({
-        id: s.id,
-        stepCode: s.stepCode,
-        stepName: s.stepName,
-        phase: s.phase,
-        status: s.status,
-        plannedStartDate: s.plannedStartDate?.toISOString() ?? null,
-        plannedEndDate: s.plannedEndDate?.toISOString() ?? null,
-        actualEndDate: s.actualEndDate?.toISOString() ?? null,
-      })),
+      steps,
     };
   });
 }

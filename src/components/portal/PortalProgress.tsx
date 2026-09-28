@@ -44,6 +44,41 @@ function NodeMark({ status }: { status: StepStatus }) {
  * legibly across 320px, and a cramped row is worse than a swipe. The negative margin lets that
  * scroll area bleed to the screen edge while its content keeps the page gutter.
  */
+/** One node and its two lines of text, shared by both layouts. */
+function StepNode({ step, align }: { step: PortalStep; align: "center" | "left" }) {
+  const style = PORTAL_STATUS_STYLES[step.status];
+  const label = portalStepLabel(step.stepCode, step.stepName);
+  const note = portalStepNote(step);
+  return (
+    <div className={align === "center" ? "text-center" : "text-left"}>
+      <span className={`block text-[12px] leading-tight sm:text-[11px] ${style.text}`}>{label}</span>
+      {note && <span className="mt-0.5 block text-[11px] leading-tight text-fg-subtle sm:text-[10px]">{note}</span>}
+    </div>
+  );
+}
+
+function NodeCircle({ step }: { step: PortalStep }) {
+  const style = PORTAL_STATUS_STYLES[step.status];
+  const label = portalStepLabel(step.stepCode, step.stepName);
+  return (
+    <span
+      title={portalStepTitle(label, step)}
+      aria-label={`${label}: ${PORTAL_STATUS_LABELS[step.status]}`}
+      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${style.node} sm:h-7 sm:w-7`}
+    >
+      <NodeMark status={step.status} />
+    </span>
+  );
+}
+
+/**
+ * One phase, drawn two ways for two widths rather than one way that has to squeeze.
+ *
+ * Below sm it runs down the page — node, label beside it, a rule dropping to the next — because
+ * five nodes cannot sit legibly across 320px, and the sideways-scrolling version this replaces
+ * hid half a phase off the edge of the screen behind a swipe nobody was told about. From sm up
+ * there is room for the run the project page itself uses, left to right.
+ */
 function PhaseRun({ phase, steps }: { phase: StepPhase; steps: PortalStep[] }) {
   if (steps.length === 0) return null;
   const done = steps.filter((s) => s.status === "completed").length;
@@ -57,44 +92,51 @@ function PhaseRun({ phase, steps }: { phase: StepPhase; steps: PortalStep[] }) {
         </span>
       </div>
 
-      <div className="relative -mx-6 sm:mx-0">
-        <div className="overflow-x-auto px-6 pb-1 sm:px-0">
-        <div className="flex min-w-max items-start sm:min-w-0">
-          {steps.map((step, i) => {
-            const style = PORTAL_STATUS_STYLES[step.status];
-            const label = portalStepLabel(step.stepCode, step.stepName);
-            const note = portalStepNote(step);
-            return (
-              <div key={step.id} className="flex flex-1 items-start last:flex-none">
-                <div className="flex w-[88px] shrink-0 flex-col items-center gap-1.5 sm:w-[104px]">
+      {/* Vertical, below sm */}
+      <ol className="flex flex-col sm:hidden">
+        {steps.map((step, i) => {
+          const style = PORTAL_STATUS_STYLES[step.status];
+          const last = i === steps.length - 1;
+          return (
+            <li key={step.id} className="flex gap-3">
+              <div className="flex flex-col items-center">
+                <NodeCircle step={step} />
+                {!last && (
                   <span
-                    title={portalStepTitle(label, step)}
-                    aria-label={`${label}: ${PORTAL_STATUS_LABELS[step.status]}`}
-                    className={`flex h-6 w-6 items-center justify-center rounded-full border ${style.node} sm:h-7 sm:w-7`}
-                  >
-                    <NodeMark status={step.status} />
-                  </span>
-                  <span className={`text-center text-[11px] leading-tight ${style.text}`}>{label}</span>
-                  {note && <span className="text-center text-[10px] leading-tight text-fg-subtle">{note}</span>}
-                </div>
-                {i < steps.length - 1 && (
-                  <div
-                    className={`mx-1 mt-3 h-px min-w-[14px] flex-1 sm:mt-3.5 ${
-                      step.status === "completed" ? style.connector : "bg-[rgba(17,17,17,0.18)]"
-                    }`}
+                    aria-hidden
+                    className={`w-px flex-1 ${step.status === "completed" ? style.connector : "bg-[rgba(17,17,17,0.18)]"}`}
                   />
                 )}
               </div>
-            );
-          })}
-        </div>
-        </div>
-        {/* A run only overflows below sm, where the last node is clipped at the screen edge —
-            this fade is the cue that there is more of the phase to swipe to. */}
-        <span
-          aria-hidden
-          className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-[#eae8e3] to-transparent sm:hidden"
-        />
+              <div className={last ? "pt-0.5" : "pb-5 pt-0.5"}>
+                <StepNode step={step} align="left" />
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+
+      {/* Horizontal, from sm up */}
+      <div className="hidden items-start sm:flex">
+        {steps.map((step, i) => {
+          const style = PORTAL_STATUS_STYLES[step.status];
+          return (
+            <div key={step.id} className="flex flex-1 items-start last:flex-none">
+              <div className="flex w-[104px] shrink-0 flex-col items-center gap-1.5">
+                <NodeCircle step={step} />
+                <StepNode step={step} align="center" />
+              </div>
+              {i < steps.length - 1 && (
+                <div
+                  aria-hidden
+                  className={`mx-1 mt-3.5 h-px min-w-[14px] flex-1 ${
+                    step.status === "completed" ? style.connector : "bg-[rgba(17,17,17,0.18)]"
+                  }`}
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
     </section>
   );

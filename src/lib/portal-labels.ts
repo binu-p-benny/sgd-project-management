@@ -111,3 +111,16 @@ export function portalStepTitle(name: string, step: PortalStepDates): string {
   const starts = formatPortalDate(step.plannedStartDate);
   return starts ? `${name} — planned from ${starts}` : `${name} — ${status}`;
 }
+
+/**
+ * The steps each phase is made of, in order. A project only gets its Phase 3 rows seeded when it
+ * actually reaches Phase 3 (29 of the 42 live projects have none yet), so without this the
+ * portal would simply stop after Materials and a client would have no idea installation was
+ * still to come. getPortalProjects fills a missing phase from this list as not-started steps
+ * with no dates — what is planned, not what has happened.
+ */
+export const PORTAL_PHASE_STEP_CODES: Record<StepPhase, string[]> = {
+  phase_1: ["1A", "1B", "1C", "1D"],
+  phase_2: ["2A", "2D1", "2D2", "2F"],
+  phase_3: ["3A", "3B", "3C1", "3C2", "3E"],
+};
