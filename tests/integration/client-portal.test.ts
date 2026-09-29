@@ -224,7 +224,15 @@ describe("the material chain (Phase 2)", () => {
     };
   }
 
-  async function makeSectionItem(projectId: string, data: Partial<Parameters<typeof prisma.procurementItem.create>[0]["data"]>) {
+  async function makeSectionItem(
+    projectId: string,
+    data: {
+      orderConfirmedAt?: Date;
+      materialDespatchAt?: Date;
+      arrivedForPowderCoatingAt?: Date;
+      actualArrivalDate?: Date | null;
+    }
+  ) {
     return prisma.procurementItem.create({ data: { projectId, itemType: "section", ...data } });
   }
 

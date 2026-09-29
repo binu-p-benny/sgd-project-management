@@ -6,7 +6,6 @@ import {
   PORTAL_PHASE_LABELS,
   PORTAL_STATUS_LABELS,
   PORTAL_STATUS_STYLES,
-  formatPortalDate,
   portalStepLabel,
   portalStepNote,
   portalStepTitle,
@@ -229,10 +228,8 @@ export function PortalProgress({ projects, firstName }: { projects: PortalProjec
           </p>
           <h2 className="mt-2 text-[26px] leading-[1.12] text-fg sm:text-[34px]">{project.name}</h2>
           <p className="mt-2 text-[12px] text-fg-muted">
-            Started {formatPortalDate(project.startedOn) ?? "—"} · {PORTAL_PHASE_LABELS[
-              (project.currentPhase === "completed" ? "phase_3" : project.currentPhase) as StepPhase
-            ]}
-            {project.currentPhase === "completed" && " · finished"}
+            {PORTAL_PHASE_LABELS[(project.currentPhase === "completed" ? "phase_3" : project.currentPhase) as StepPhase]}
+            {project.currentPhase === "completed" ? " · finished" : " in progress"}
           </p>
         </div>
 
