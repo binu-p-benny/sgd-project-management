@@ -44,7 +44,11 @@ function NodeMark({ status }: { status: StepStatus }) {
  * legibly across 320px, and a cramped row is worse than a swipe. The negative margin lets that
  * scroll area bleed to the screen edge while its content keeps the page gutter.
  */
-/** One node and its two lines of text, shared by both layouts. */
+/**
+ * One node and its lines of text, shared by both layouts. `gapCaption` is what's happening while
+ * this step waits for the next one (e.g. "In transit - material dispatched") — shown as an extra
+ * line so it reads as "here's the wait", not part of the node's own status.
+ */
 function StepNode({ step, align }: { step: PortalStep; align: "center" | "left" }) {
   const style = PORTAL_STATUS_STYLES[step.status];
   const label = portalStepLabel(step.stepCode, step.stepName);
@@ -53,6 +57,15 @@ function StepNode({ step, align }: { step: PortalStep; align: "center" | "left" 
     <div className={align === "center" ? "text-center" : "text-left"}>
       <span className={`block text-[12px] leading-tight sm:text-[11px] ${style.text}`}>{label}</span>
       {note && <span className="mt-0.5 block text-[11px] leading-tight text-fg-subtle sm:text-[10px]">{note}</span>}
+      {step.gapCaption && (
+        <span
+          className={`mt-0.5 block text-[11px] leading-tight sm:text-[10px] ${
+            step.gapDelayed ? "text-[#9a6b1f]" : "text-fg-subtle italic"
+          }`}
+        >
+          {step.gapCaption}
+        </span>
+      )}
     </div>
   );
 }
@@ -104,7 +117,13 @@ function PhaseRun({ phase, steps }: { phase: StepPhase; steps: PortalStep[] }) {
                 {!last && (
                   <span
                     aria-hidden
-                    className={`w-px flex-1 ${step.status === "completed" ? style.connector : "bg-[rgba(17,17,17,0.18)]"}`}
+                    className={`w-px flex-1 ${
+                      step.status === "completed"
+                        ? style.connector
+                        : step.gapDelayed
+                          ? "bg-[#9a6b1f]"
+                          : "bg-[rgba(17,17,17,0.18)]"
+                    }`}
                   />
                 )}
               </div>
@@ -130,7 +149,11 @@ function PhaseRun({ phase, steps }: { phase: StepPhase; steps: PortalStep[] }) {
                 <div
                   aria-hidden
                   className={`mx-1 mt-3.5 h-px min-w-[14px] flex-1 ${
-                    step.status === "completed" ? style.connector : "bg-[rgba(17,17,17,0.18)]"
+                    step.status === "completed"
+                      ? style.connector
+                      : step.gapDelayed
+                        ? "bg-[#9a6b1f]"
+                        : "bg-[rgba(17,17,17,0.18)]"
                   }`}
                 />
               )}

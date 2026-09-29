@@ -13,8 +13,6 @@ export const PORTAL_STEP_LABELS: Record<string, string> = {
   "1B": "Site visit",
   "1C": "Drawing confirmation",
   "1D": "Quote confirmation and payment",
-  "2A": "Material requirement prepared",
-  "2D1": "Materials arrived",
   "2D2": "Final measurement at site",
   "2F": "Material quality check",
   "3A": "Glass order placed",
@@ -121,6 +119,9 @@ export function portalStepTitle(name: string, step: PortalStepDates): string {
  */
 export const PORTAL_PHASE_STEP_CODES: Record<StepPhase, string[]> = {
   phase_1: ["1A", "1B", "1C", "1D"],
-  phase_2: ["2A", "2D1", "2D2", "2F"],
+  // 2A/2D1 are no longer listed: the material chain (order confirmed -> dispatched -> arrived for
+  // powder coating -> materials arrived), built from the section procurement item in
+  // client-portal.ts, replaces them on screen. 2D2/2F still come from real PhaseStep rows.
+  phase_2: ["2D2", "2F"],
   phase_3: ["3A", "3B", "3C1", "3C2", "3E"],
 };

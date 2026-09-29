@@ -213,3 +213,141 @@ describe("phases a project hasn't reached yet", () => {
     expect(phase1.every((s) => !s.id.startsWith("planned:"))).toBe(true);
   });
 });
+
+describe("the material chain (Phase 2)", () => {
+  function materialChain(steps: Awaited<ReturnType<typeof getPortalProjects>>[number]["steps"]) {
+    return {
+      order: steps.find((s) => s.id === "material:order_confirmed")!,
+      dispatched: steps.find((s) => s.id === "material:dispatched")!,
+      powderCoating: steps.find((s) => s.id === "material:powder_coating")!,
+      arrived: steps.find((s) => s.id === "material:arrived")!,
+    };
+  }
+
+  async function makeSectionItem(projectId: string, data: Partial<Parameters<typeof prisma.procurementItem.create>[0]["data"]>) {
+    return prisma.procurementItem.create({ data: { projectId, itemType: "section", ...data } });
+  }
+
+  it("shows every stage as not started before the project reaches Phase 2", async () => {
+    const client = await makeClient("PORTAL CHAIN NONE", "9990000030");
+    const project = await makeProject(client.id, "No procurement yet");
+
+    const [portal] = await getPortalProjects([client.id]);
+    const chain = materialChain(portal.steps);
+    expect(chain.order.status).toBe("not_started");
+    expect(chain.dispatched.status).toBe("not_started");
+    expect(chain.powderCoating.status).toBe("not_started");
+    expect(chain.arrived.status).toBe("not_started");
+    expect(chain.order.gapCaption).toBeFalsy();
+    void project;
+  });
+
+  it("moves order confirmed to in progress once procurement items exist", async () => {
+    const client = await makeClient("PORTAL CHAIN STARTED", "9990000031");
+    const project = await makeProject(client.id, "Procurement started");
+    await makeSectionItem(project.id, {});
+    await prisma.procurementItem.create({ data: { projectId: project.id, itemType: "hardware" } });
+    await prisma.procurementItem.create({ data: { projectId: project.id, itemType: "gasket" } });
+
+    const [portal] = await getPortalProjects([client.id]);
+    const chain = materialChain(portal.steps);
+    expect(chain.order.status).toBe("in_progress");
+    expect(chain.dispatched.status).toBe("not_started");
+  });
+
+  it("shows 'production ongoing' between order confirmed and dispatch when on time", async () => {
+    const client = await makeClient("PORTAL CHAIN ONTIME", "9990000032");
+    const project = await makeProject(client.id, "On time order");
+    await makeSectionItem(project.id, { orderConfirmedAt: new Date() });
+
+    const [portal] = await getPortalProjects([client.id]);
+    const chain = materialChain(portal.steps);
+    expect(chain.order.status).toBe("completed");
+    expect(chain.dispatched.status).toBe("in_progress");
+    expect(chain.order.gapCaption).toBe("Production ongoing");
+    expect(chain.order.gapDelayed).toBe(false);
+  });
+
+  it("shows 'production delayed' once dispatch is overdue", async () => {
+    const client = await makeClient("PORTAL CHAIN LATE", "9990000033");
+    const project = await makeProject(client.id, "Late order");
+    // 7 working days have long since passed.
+    await makeSectionItem(project.id, { orderConfirmedAt: new Date(Date.now() - 20 * 86_400_000) });
+
+    const [portal] = await getPortalProjects([client.id]);
+    const chain = materialChain(portal.steps);
+    expect(chain.order.gapCaption).toBe("Production delayed");
+    expect(chain.order.gapDelayed).toBe(true);
+  });
+
+  it("shows the in-transit caption once material has dispatched", async () => {
+    const client = await makeClient("PORTAL CHAIN TRANSIT", "9990000034");
+    const project = await makeProject(client.id, "In transit");
+    await makeSectionItem(project.id, {
+      orderConfirmedAt: new Date(Date.now() - 10 * 86_400_000),
+      materialDespatchAt: new Date(),
+    });
+
+    const [portal] = await getPortalProjects([client.id]);
+    const chain = materialChain(portal.steps);
+    expect(chain.dispatched.status).toBe("completed");
+    expect(chain.powderCoating.status).toBe("in_progress");
+    expect(chain.dispatched.gapCaption).toBe("In transit — material dispatched");
+    expect(chain.dispatched.gapDelayed).toBe(false);
+  });
+
+  it("completes the chain once every item has arrived", async () => {
+    const client = await makeClient("PORTAL CHAIN DONE", "9990000035");
+    const project = await makeProject(client.id, "All arrived");
+    const arrivedAt = new Date();
+    await makeSectionItem(project.id, {
+      orderConfirmedAt: new Date(Date.now() - 30 * 86_400_000),
+      materialDespatchAt: new Date(Date.now() - 20 * 86_400_000),
+      arrivedForPowderCoatingAt: new Date(Date.now() - 10 * 86_400_000),
+      actualArrivalDate: arrivedAt,
+    });
+    await prisma.procurementItem.create({
+      data: { projectId: project.id, itemType: "hardware", actualArrivalDate: arrivedAt },
+    });
+    await prisma.procurementItem.create({
+      data: { projectId: project.id, itemType: "gasket", actualArrivalDate: arrivedAt },
+    });
+
+    const [portal] = await getPortalProjects([client.id]);
+    const chain = materialChain(portal.steps);
+    expect(chain.powderCoating.status).toBe("completed");
+    expect(chain.arrived.status).toBe("completed");
+    expect(chain.powderCoating.gapCaption).toBeFalsy();
+  });
+
+  it("doesn't count materials arrived until hardware and gasket have too", async () => {
+    const client = await makeClient("PORTAL CHAIN PARTIAL", "9990000036");
+    const project = await makeProject(client.id, "Section only arrived");
+    await makeSectionItem(project.id, {
+      orderConfirmedAt: new Date(Date.now() - 30 * 86_400_000),
+      materialDespatchAt: new Date(Date.now() - 20 * 86_400_000),
+      arrivedForPowderCoatingAt: new Date(),
+      actualArrivalDate: null,
+    });
+    await prisma.procurementItem.create({ data: { projectId: project.id, itemType: "hardware" } });
+    await prisma.procurementItem.create({ data: { projectId: project.id, itemType: "gasket" } });
+
+    const [portal] = await getPortalProjects([client.id]);
+    const chain = materialChain(portal.steps);
+    expect(chain.arrived.status).toBe("in_progress");
+    expect(chain.powderCoating.gapCaption).toBe("Arrived for powder coating — ongoing");
+  });
+
+  it("no longer shows 2A or 2D1, but keeps 2D2 and 2F", async () => {
+    const client = await makeClient("PORTAL CHAIN CODES", "9990000037");
+    const project = await makeProject(client.id, "Codes check");
+    await makeSectionItem(project.id, {});
+
+    const [portal] = await getPortalProjects([client.id]);
+    const phase2Codes = portal.steps.filter((s) => s.phase === "phase_2").map((s) => s.stepCode);
+    expect(phase2Codes).not.toContain("2A");
+    expect(phase2Codes).not.toContain("2D1");
+    expect(phase2Codes).toContain("2D2");
+    expect(phase2Codes).toContain("2F");
+  });
+});

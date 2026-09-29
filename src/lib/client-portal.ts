@@ -1,6 +1,11 @@
 import { prisma } from "@/lib/prisma";
 import { phoneMatches, portalPasswordMatches } from "@/lib/client-auth";
 import { PORTAL_PHASE_STEP_CODES } from "@/lib/portal-labels";
+import {
+  computeExpectedMaterialDespatchDate,
+  computeExpectedPowderCoatingArrivalDate,
+  computeExpectedSectionArrivalDate,
+} from "@/lib/procurement";
 import type { StepPhase, StepStatus } from "@prisma/client";
 
 const PORTAL_PHASES: StepPhase[] = ["phase_1", "phase_2", "phase_3"];
@@ -64,6 +69,120 @@ export interface PortalStep {
   plannedStartDate: string | null;
   plannedEndDate: string | null;
   actualEndDate: string | null;
+  /**
+   * What's happening while this step waits for the next one — shown on the connector leading
+   * out of it (e.g. "In transit - material dispatched"). Only the material-chain steps in Phase
+   * 2 ever set this; every other step is null.
+   */
+  gapCaption?: string | null;
+  gapDelayed?: boolean;
+}
+
+interface SectionItemDates {
+  orderConfirmedAt: Date | null;
+  materialDespatchAt: Date | null;
+  arrivedForPowderCoatingAt: Date | null;
+}
+
+/**
+ * Phase 2's material journey, replacing the internal "2A"/"2D1" steps with the section item's own
+ * despatch chain (order confirmed -> dispatched -> arrived for powder coating -> arrived), the
+ * physical journey a client actually cares about. Hardware/gasket have no despatch/powder-coating
+ * stages of their own (see computeSectionChainDates in procurement.ts), so "Materials arrived"
+ * still gates on all three items the same way the internal 2D1 step does — the client's timeline
+ * just uses the section item's dates to explain the wait, since section is the one with the
+ * multi-stage shipping in between.
+ *
+ * `reachedPhase2` is whether the project's procurement items exist at all (created the moment 1D
+ * completes) — before that, the whole chain reads as planned-but-not-started, same as any other
+ * phase a project hasn't reached yet.
+ */
+function buildMaterialChainSteps(
+  section: SectionItemDates | undefined,
+  materialsArrivedComplete: boolean,
+  materialsArrivedDate: Date | null,
+  reachedPhase2: boolean
+): PortalStep[] {
+  const orderConfirmedAt = section?.orderConfirmedAt ?? null;
+  const materialDespatchAt = section?.materialDespatchAt ?? null;
+  const arrivedForPowderCoatingAt = section?.arrivedForPowderCoatingAt ?? null;
+
+  const materialDespatchPlanned = orderConfirmedAt ? computeExpectedMaterialDespatchDate(orderConfirmedAt) : null;
+  const powderCoatingPlanned = materialDespatchAt ? computeExpectedPowderCoatingArrivalDate(materialDespatchAt) : null;
+  const sectionArrivalPlanned = arrivedForPowderCoatingAt ? computeExpectedSectionArrivalDate(arrivedForPowderCoatingAt) : null;
+
+  const now = Date.now();
+  const isDue = (planned: Date | null) => planned !== null && planned.getTime() < now;
+
+  const orderGap =
+    orderConfirmedAt && !materialDespatchAt
+      ? { caption: isDue(materialDespatchPlanned) ? "Production delayed" : "Production ongoing", delayed: isDue(materialDespatchPlanned) }
+      : null;
+  const dispatchGap =
+    materialDespatchAt && !arrivedForPowderCoatingAt
+      ? {
+          caption: isDue(powderCoatingPlanned) ? "Dispatch delayed" : "In transit — material dispatched",
+          delayed: isDue(powderCoatingPlanned),
+        }
+      : null;
+  const powderCoatingGap =
+    arrivedForPowderCoatingAt && !materialsArrivedComplete
+      ? {
+          caption: isDue(sectionArrivalPlanned) ? "Powder coating delayed" : "Arrived for powder coating — ongoing",
+          delayed: isDue(sectionArrivalPlanned),
+        }
+      : null;
+
+  return [
+    {
+      id: "material:order_confirmed",
+      stepCode: "M-ORDER",
+      stepName: "Order confirmed",
+      phase: "phase_2",
+      status: orderConfirmedAt ? "completed" : reachedPhase2 ? "in_progress" : "not_started",
+      plannedStartDate: null,
+      plannedEndDate: null,
+      actualEndDate: orderConfirmedAt?.toISOString() ?? null,
+      gapCaption: orderGap?.caption ?? null,
+      gapDelayed: orderGap?.delayed ?? false,
+    },
+    {
+      id: "material:dispatched",
+      stepCode: "M-DISPATCH",
+      stepName: "Material dispatched",
+      phase: "phase_2",
+      status: materialDespatchAt ? "completed" : orderConfirmedAt ? "in_progress" : "not_started",
+      plannedStartDate: null,
+      plannedEndDate: materialDespatchAt ? null : materialDespatchPlanned?.toISOString() ?? null,
+      actualEndDate: materialDespatchAt?.toISOString() ?? null,
+      gapCaption: dispatchGap?.caption ?? null,
+      gapDelayed: dispatchGap?.delayed ?? false,
+    },
+    {
+      id: "material:powder_coating",
+      stepCode: "M-POWDER",
+      stepName: "Arrived for powder coating",
+      phase: "phase_2",
+      status: arrivedForPowderCoatingAt ? "completed" : materialDespatchAt ? "in_progress" : "not_started",
+      plannedStartDate: null,
+      plannedEndDate: arrivedForPowderCoatingAt ? null : powderCoatingPlanned?.toISOString() ?? null,
+      actualEndDate: arrivedForPowderCoatingAt?.toISOString() ?? null,
+      gapCaption: powderCoatingGap?.caption ?? null,
+      gapDelayed: powderCoatingGap?.delayed ?? false,
+    },
+    {
+      id: "material:arrived",
+      stepCode: "M-ARRIVED",
+      stepName: "Materials arrived",
+      phase: "phase_2",
+      status: materialsArrivedComplete ? "completed" : arrivedForPowderCoatingAt ? "in_progress" : "not_started",
+      plannedStartDate: null,
+      plannedEndDate: materialsArrivedComplete ? null : sectionArrivalPlanned?.toISOString() ?? null,
+      actualEndDate: materialsArrivedComplete ? materialsArrivedDate?.toISOString() ?? null : null,
+      gapCaption: null,
+      gapDelayed: false,
+    },
+  ];
 }
 
 export interface PortalProject {
@@ -116,6 +235,15 @@ export async function getPortalProjects(clientIds: string[]): Promise<PortalProj
           actualEndDate: true,
         },
       },
+      procurementItems: {
+        select: {
+          itemType: true,
+          orderConfirmedAt: true,
+          materialDespatchAt: true,
+          arrivedForPowderCoatingAt: true,
+          actualArrivalDate: true,
+        },
+      },
     },
   });
 
@@ -125,19 +253,45 @@ export async function getPortalProjects(clientIds: string[]): Promise<PortalProj
     const totalSteps = project.phaseSteps.length;
     const completedSteps = project.phaseSteps.filter((s) => s.status === "completed").length;
 
-    const steps: PortalStep[] = project.phaseSteps.map((s) => ({
-      id: s.id,
-      stepCode: s.stepCode,
-      stepName: s.stepName,
-      phase: s.phase,
-      status: s.status,
-      plannedStartDate: s.plannedStartDate?.toISOString() ?? null,
-      plannedEndDate: s.plannedEndDate?.toISOString() ?? null,
-      actualEndDate: s.actualEndDate?.toISOString() ?? null,
-    }));
+    // 2A/2D1 are dropped here — the material chain built below replaces them on screen.
+    const steps: PortalStep[] = project.phaseSteps
+      .filter((s) => !(s.phase === "phase_2" && (s.stepCode === "2A" || s.stepCode === "2D1")))
+      .map((s) => ({
+        id: s.id,
+        stepCode: s.stepCode,
+        stepName: s.stepName,
+        phase: s.phase,
+        status: s.status,
+        plannedStartDate: s.plannedStartDate?.toISOString() ?? null,
+        plannedEndDate: s.plannedEndDate?.toISOString() ?? null,
+        actualEndDate: s.actualEndDate?.toISOString() ?? null,
+      }));
+
+    // Fill any wholly-missing phase (including Phase 2's own 2D2/2F) with not-started
+    // placeholders BEFORE the material chain goes in below — otherwise every project would
+    // already have a phase_2 entry (the material chain itself) and 2D2/2F would never get
+    // seeded as placeholders for a project that hasn't reached them yet.
     for (const phase of PORTAL_PHASES) {
       if (!steps.some((s) => s.phase === phase)) steps.push(...placeholderSteps(phase));
     }
+
+    const sectionItem = project.procurementItems.find((i) => i.itemType === "section");
+    const materialsArrivedComplete =
+      project.procurementItems.length === 3 && project.procurementItems.every((i) => i.actualArrivalDate !== null);
+    const materialsArrivedDate = materialsArrivedComplete
+      ? new Date(Math.max(...project.procurementItems.map((i) => i.actualArrivalDate!.getTime())))
+      : null;
+    const materialChainSteps = buildMaterialChainSteps(
+      sectionItem,
+      materialsArrivedComplete,
+      materialsArrivedDate,
+      project.procurementItems.length > 0
+    );
+    // Spliced in wherever Phase 2 currently starts (real 2D2/2F rows or their placeholders);
+    // PhaseRun only cares about each step's own `phase` field, so where the rest of the array
+    // sits doesn't matter.
+    const phase2Index = steps.findIndex((s) => s.phase === "phase_2");
+    steps.splice(phase2Index === -1 ? steps.length : phase2Index, 0, ...materialChainSteps);
 
     return {
       id: project.id,
