@@ -151,20 +151,21 @@ describe("getPortalProjects", () => {
     expect(project.isComplete).toBe(false);
   });
 
-  it("carries no internal fields on the steps it returns", async () => {
+  it("carries the blocked reason, but never the internal note, on the steps it returns", async () => {
     const client = await makeClient("PORTAL PRIVACY", "9990000014");
     await makeProject(client.id, "Private");
 
     const [project] = await getPortalProjects([client.id]);
     const blocked = project.steps.find((s) => s.status === "blocked")!;
 
-    // The step is blocked, and the client is told only that — not why, and not the note.
+    // The client is told *why* now (per the new "Currently blocked due to ..." messaging), but
+    // never the free-text note behind it — that's staff-only detail.
     expect(blocked).toBeDefined();
-    expect(JSON.stringify(project)).not.toContain("site_not_ready");
+    expect(blocked.blockedReason).toBe("site_not_ready");
     expect(JSON.stringify(project)).not.toContain("client has not cleared the site");
     expect(JSON.stringify(project)).not.toContain("internal only");
     expect(Object.keys(blocked).sort()).toEqual(
-      ["actualEndDate", "id", "phase", "plannedEndDate", "plannedStartDate", "status", "stepCode", "stepName"].sort()
+      ["actualEndDate", "blockedReason", "id", "phase", "plannedEndDate", "plannedStartDate", "status", "stepCode", "stepName"].sort()
     );
   });
 
@@ -183,7 +184,15 @@ describe("phases a project hasn't reached yet", () => {
     expect(phases.has("phase_3")).toBe(true);
 
     const phase3 = project.steps.filter((s) => s.phase === "phase_3");
-    expect(phase3.map((s) => s.stepCode)).toEqual(["3A", "3B", "3C1", "3C2", "3E"]);
+    expect(phase3.map((s) => s.stepCode)).toEqual([
+      "3A",
+      "3B",
+      "3C1-START",
+      "3C1-END",
+      "3C2-START",
+      "3C2-END",
+      "3E",
+    ]);
     expect(phase3.every((s) => s.status === "not_started")).toBe(true);
     // Nothing has been planned for them yet, so they carry no dates to promise.
     expect(phase3.every((s) => !s.plannedStartDate && !s.plannedEndDate && !s.actualEndDate)).toBe(true);
@@ -357,5 +366,150 @@ describe("the material chain (Phase 2)", () => {
     expect(phase2Codes).not.toContain("2D1");
     expect(phase2Codes).toContain("2D2");
     expect(phase2Codes).toContain("2F");
+  });
+});
+
+describe("Aluminium framework and Installation split into start/end", () => {
+  function findStep(steps: Awaited<ReturnType<typeof getPortalProjects>>[number]["steps"], stepCode: string) {
+    return steps.find((s) => s.stepCode === stepCode)!;
+  }
+
+  async function makePhase3Step(
+    projectId: string,
+    stepCode: "3C1" | "3C2",
+    data: {
+      status?: "not_started" | "in_progress" | "blocked" | "completed";
+      actualStartDate?: Date;
+      actualEndDate?: Date;
+      plannedStartDate?: Date;
+      plannedEndDate?: Date;
+      blockedReason?: "site_not_ready" | "vendor_issue_section";
+    }
+  ) {
+    return prisma.phaseStep.create({
+      data: {
+        projectId,
+        phase: "phase_3",
+        stepCode,
+        stepName: stepCode,
+        owningDepartment: "project_engineer",
+        dependsOn: [],
+        status: "not_started",
+        ...data,
+      },
+    });
+  }
+
+  /**
+   * 3A and 3E, seeded alongside whichever 3C1/3C2 a test cares about — a project only ever gets
+   * to Phase 3 with the *whole* template at once (see buildPhase3Steps), never 3C1/3C2 alone.
+   * Without at least one other real phase_3 row, getPortalProjects would treat the phase as
+   * wholly missing and layer not-started placeholders for 3C1-START etc. on top of the real
+   * split pair this test is seeding — a test artifact this helper avoids, not a real scenario.
+   */
+  async function makePhase3Skeleton(projectId: string) {
+    await prisma.phaseStep.createMany({
+      data: [
+        { projectId, phase: "phase_3", stepCode: "3A", stepName: "3A", owningDepartment: "purchase", dependsOn: [] },
+        { projectId, phase: "phase_3", stepCode: "3B", stepName: "3B", owningDepartment: "purchase", dependsOn: [] },
+        { projectId, phase: "phase_3", stepCode: "3E", stepName: "3E", owningDepartment: "purchase", dependsOn: [] },
+      ],
+    });
+  }
+
+  it("shows 3C1/3C2 as their own start/end nodes, not the original codes", async () => {
+    const client = await makeClient("PORTAL SPLIT CODES", "9990000040");
+    const project = await makeProject(client.id, "Split codes");
+    await makePhase3Skeleton(project.id);
+    await makePhase3Step(project.id, "3C1", {});
+    await makePhase3Step(project.id, "3C2", {});
+
+    const [portal] = await getPortalProjects([client.id]);
+    const codes = portal.steps.filter((s) => s.phase === "phase_3").map((s) => s.stepCode);
+    expect(codes).not.toContain("3C1");
+    expect(codes).not.toContain("3C2");
+    expect(codes).toEqual(["3A", "3B", "3C1-START", "3C1-END", "3C2-START", "3C2-END", "3E"]);
+  });
+
+  it("marks start complete and end not-started before the step has begun", async () => {
+    const client = await makeClient("PORTAL SPLIT NOTYET", "9990000041");
+    const project = await makeProject(client.id, "Not begun");
+    await makePhase3Skeleton(project.id);
+    await makePhase3Step(project.id, "3C1", {});
+
+    const [portal] = await getPortalProjects([client.id]);
+    expect(findStep(portal.steps, "3C1-START").status).toBe("not_started");
+    expect(findStep(portal.steps, "3C1-END").status).toBe("not_started");
+  });
+
+  it("marks start complete and end in progress once the step has actually started", async () => {
+    const client = await makeClient("PORTAL SPLIT STARTED", "9990000042");
+    const project = await makeProject(client.id, "Underway");
+    await makePhase3Skeleton(project.id);
+    await makePhase3Step(project.id, "3C2", { status: "in_progress", actualStartDate: new Date() });
+
+    const [portal] = await getPortalProjects([client.id]);
+    expect(findStep(portal.steps, "3C2-START").status).toBe("completed");
+    expect(findStep(portal.steps, "3C2-END").status).toBe("in_progress");
+  });
+
+  it("marks both complete once the step is done", async () => {
+    const client = await makeClient("PORTAL SPLIT DONE", "9990000043");
+    const project = await makeProject(client.id, "Finished");
+    await makePhase3Skeleton(project.id);
+    await makePhase3Step(project.id, "3C1", {
+      status: "completed",
+      actualStartDate: new Date(Date.now() - 5 * 86_400_000),
+      actualEndDate: new Date(),
+    });
+
+    const [portal] = await getPortalProjects([client.id]);
+    expect(findStep(portal.steps, "3C1-START").status).toBe("completed");
+    expect(findStep(portal.steps, "3C1-END").status).toBe("completed");
+  });
+
+  it("puts a pre-start block on the start node, reason and all", async () => {
+    const client = await makeClient("PORTAL SPLIT BLOCKED PRE", "9990000044");
+    const project = await makeProject(client.id, "Blocked before starting");
+    await makePhase3Skeleton(project.id);
+    await makePhase3Step(project.id, "3C2", { status: "blocked", blockedReason: "site_not_ready" });
+
+    const [portal] = await getPortalProjects([client.id]);
+    const start = findStep(portal.steps, "3C2-START");
+    const end = findStep(portal.steps, "3C2-END");
+    expect(start.status).toBe("blocked");
+    expect(start.blockedReason).toBe("site_not_ready");
+    expect(end.status).toBe("not_started");
+  });
+
+  it("puts a mid-way block on the end node instead, once work has begun", async () => {
+    const client = await makeClient("PORTAL SPLIT BLOCKED MID", "9990000045");
+    const project = await makeProject(client.id, "Blocked mid-way");
+    await makePhase3Skeleton(project.id);
+    await makePhase3Step(project.id, "3C1", {
+      status: "blocked",
+      actualStartDate: new Date(),
+      blockedReason: "vendor_issue_section",
+    });
+
+    const [portal] = await getPortalProjects([client.id]);
+    const start = findStep(portal.steps, "3C1-START");
+    const end = findStep(portal.steps, "3C1-END");
+    expect(start.status).toBe("completed");
+    expect(start.blockedReason).toBeFalsy();
+    expect(end.status).toBe("blocked");
+    expect(end.blockedReason).toBe("vendor_issue_section");
+  });
+
+  it("marks only Installation's dates as approximate, not Aluminium framework's", async () => {
+    const client = await makeClient("PORTAL SPLIT ESTIMATE", "9990000046");
+    const project = await makeProject(client.id, "Estimates");
+    await makePhase3Skeleton(project.id);
+    await makePhase3Step(project.id, "3C1", { plannedStartDate: new Date(Date.now() + 5 * 86_400_000) });
+    await makePhase3Step(project.id, "3C2", { plannedStartDate: new Date(Date.now() + 10 * 86_400_000) });
+
+    const [portal] = await getPortalProjects([client.id]);
+    expect(findStep(portal.steps, "3C1-START").datesAreEstimates).toBeFalsy();
+    expect(findStep(portal.steps, "3C2-START").datesAreEstimates).toBe(true);
   });
 });

@@ -1,4 +1,5 @@
-import type { StepPhase, StepStatus } from "@prisma/client";
+import type { BlockedReason, StepPhase, StepStatus } from "@prisma/client";
+import { BLOCKED_REASON_LABELS } from "@/lib/labels";
 
 /**
  * Wording for the client portal. Pure — no prisma, no server-only imports — so the portal's
@@ -17,8 +18,13 @@ export const PORTAL_STEP_LABELS: Record<string, string> = {
   "2F": "Material quality check",
   "3A": "Glass order placed",
   "3B": "Glass delivery",
-  "3C1": "Aluminium framework",
-  "3C2": "Installation",
+  // 3C1/3C2 are each split into their own start/end nodes (see buildSplitStepPair in
+  // client-portal.ts) rather than shown as one node — a framework/installation visit is long
+  // enough that a client wants to know it started, not just that it eventually finished.
+  "3C1-START": "Aluminium framework start",
+  "3C1-END": "Aluminium framework end",
+  "3C2-START": "Installation start",
+  "3C2-END": "Installation end",
   "3E": "Final quality check",
 };
 
@@ -30,6 +36,12 @@ export const PORTAL_PHASE_LABELS: Record<StepPhase, string> = {
   phase_1: "Planning",
   phase_2: "Materials",
   phase_3: "Installation",
+};
+
+export const PORTAL_PHASE_NUMBERS: Record<StepPhase, number> = {
+  phase_1: 1,
+  phase_2: 2,
+  phase_3: 3,
 };
 
 /**
@@ -78,20 +90,34 @@ export interface PortalStepDates {
   plannedStartDate: string | null;
   plannedEndDate: string | null;
   actualEndDate: string | null;
+  /** Set only when status is "blocked" — named to the client so they know what's being worked. */
+  blockedReason?: BlockedReason | null;
+  /**
+   * True for a step whose planned date is a rough estimate rather than a firm commitment (the
+   * Installation start/end nodes) — shown as "Approximate: <date>" instead of "from"/"by".
+   */
+  datesAreEstimates?: boolean;
+}
+
+function blockedMessage(step: PortalStepDates): string {
+  const reason = step.blockedReason ? BLOCKED_REASON_LABELS[step.blockedReason] : null;
+  return reason
+    ? `Currently blocked due to ${reason} — team will contact you`
+    : "Currently blocked — team will contact you";
 }
 
 /** The one short line under a timeline node — a date wherever there is one to give. */
 export function portalStepNote(step: PortalStepDates): string | null {
   if (step.status === "completed") return formatPortalDateShort(step.actualEndDate);
+  if (step.status === "blocked") return blockedMessage(step);
   if (step.status === "in_progress") {
     const due = formatPortalDateShort(step.plannedEndDate);
-    return due ? `by ${due}` : "underway";
+    if (!due) return "underway";
+    return step.datesAreEstimates ? `Approximate: ${due}` : `by ${due}`;
   }
-  // Deliberately no date on hold: those planned dates are the ones most likely to move, and
-  // quoting one would read as a promise.
-  if (step.status === "blocked") return "on hold";
   const starts = formatPortalDateShort(step.plannedStartDate);
-  return starts ? `from ${starts}` : null;
+  if (!starts) return null;
+  return step.datesAreEstimates ? `Approximate: ${starts}` : `from ${starts}`;
 }
 
 /** The full sentence, kept for the node's hover title where there's room for it. */
@@ -101,13 +127,17 @@ export function portalStepTitle(name: string, step: PortalStepDates): string {
     const done = formatPortalDate(step.actualEndDate);
     return done ? `${name} — completed ${done}` : `${name} — ${status}`;
   }
+  if (step.status === "blocked") return `${name} — ${blockedMessage(step)}`;
   if (step.status === "in_progress") {
     const due = formatPortalDate(step.plannedEndDate);
-    return due ? `${name} — in progress, expected by ${due}` : `${name} — in progress`;
+    if (!due) return `${name} — in progress`;
+    return step.datesAreEstimates
+      ? `${name} — in progress, approximately ${due}`
+      : `${name} — in progress, expected by ${due}`;
   }
-  if (step.status === "blocked") return `${name} — paused, our team will be in touch`;
   const starts = formatPortalDate(step.plannedStartDate);
-  return starts ? `${name} — planned from ${starts}` : `${name} — ${status}`;
+  if (!starts) return `${name} — ${status}`;
+  return step.datesAreEstimates ? `${name} — approximately ${starts}` : `${name} — planned from ${starts}`;
 }
 
 /**
@@ -123,5 +153,5 @@ export const PORTAL_PHASE_STEP_CODES: Record<StepPhase, string[]> = {
   // powder coating -> materials arrived), built from the section procurement item in
   // client-portal.ts, replaces them on screen. 2D2/2F still come from real PhaseStep rows.
   phase_2: ["2D2", "2F"],
-  phase_3: ["3A", "3B", "3C1", "3C2", "3E"],
+  phase_3: ["3A", "3B", "3C1-START", "3C1-END", "3C2-START", "3C2-END", "3E"],
 };

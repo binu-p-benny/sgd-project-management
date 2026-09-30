@@ -6,7 +6,7 @@ import {
   computeExpectedPowderCoatingArrivalDate,
   computeExpectedSectionArrivalDate,
 } from "@/lib/procurement";
-import type { StepPhase, StepStatus } from "@prisma/client";
+import type { BlockedReason, StepPhase, StepStatus } from "@prisma/client";
 
 const PORTAL_PHASES: StepPhase[] = ["phase_1", "phase_2", "phase_3"];
 
@@ -76,6 +76,10 @@ export interface PortalStep {
    */
   gapCaption?: string | null;
   gapDelayed?: boolean;
+  /** Set only when status is "blocked" — portalStepNote/Title name it to the client directly. */
+  blockedReason?: BlockedReason | null;
+  /** Marks a step's planned dates as rough estimates — see portalStepNote's "Approximate:" case. */
+  datesAreEstimates?: boolean;
 }
 
 interface SectionItemDates {
@@ -185,6 +189,59 @@ function buildMaterialChainSteps(
   ];
 }
 
+interface RawSplitStep {
+  id: string;
+  status: StepStatus;
+  plannedStartDate: Date | null;
+  plannedEndDate: Date | null;
+  actualStartDate: Date | null;
+  actualEndDate: Date | null;
+  blockedReason: BlockedReason | null;
+}
+
+/**
+ * Splits one internal step (3C1 "Aluminium framework", 3C2 "Installation") into its own start and
+ * end nodes on the client timeline — each is long enough on site that a client wants to know it
+ * began, not just that it eventually finished. A step blocked before it's begun shows the block on
+ * its start node; blocked mid-way shows it on the end node instead, since that's the one actually
+ * stuck. `datesAreEstimates` marks Installation's own planned dates as rough ("Approximate:
+ * <date>") rather than a firm promise — its planned window is a computed default that moves until
+ * an admin locks it in (see computeInstallationPlannedWindow in reschedule.ts).
+ */
+function buildSplitStepPair(raw: RawSplitStep | undefined, codePrefix: string, datesAreEstimates: boolean): PortalStep[] {
+  if (!raw) return [];
+  const started = raw.actualStartDate !== null;
+  const startStatus: StepStatus = started ? "completed" : raw.status === "blocked" ? "blocked" : "not_started";
+  const endStatus: StepStatus = !started ? "not_started" : raw.status;
+
+  return [
+    {
+      id: `${raw.id}:start`,
+      stepCode: `${codePrefix}-START`,
+      stepName: `${codePrefix}-START`,
+      phase: "phase_3",
+      status: startStatus,
+      plannedStartDate: raw.plannedStartDate?.toISOString() ?? null,
+      plannedEndDate: null,
+      actualEndDate: raw.actualStartDate?.toISOString() ?? null,
+      blockedReason: startStatus === "blocked" ? raw.blockedReason : null,
+      datesAreEstimates,
+    },
+    {
+      id: `${raw.id}:end`,
+      stepCode: `${codePrefix}-END`,
+      stepName: `${codePrefix}-END`,
+      phase: "phase_3",
+      status: endStatus,
+      plannedStartDate: null,
+      plannedEndDate: raw.plannedEndDate?.toISOString() ?? null,
+      actualEndDate: raw.actualEndDate?.toISOString() ?? null,
+      blockedReason: endStatus === "blocked" ? raw.blockedReason : null,
+      datesAreEstimates,
+    },
+  ];
+}
+
 export interface PortalProject {
   id: string;
   name: string;
@@ -232,7 +289,9 @@ export async function getPortalProjects(clientIds: string[]): Promise<PortalProj
           status: true,
           plannedStartDate: true,
           plannedEndDate: true,
+          actualStartDate: true,
           actualEndDate: true,
+          blockedReason: true,
         },
       },
       procurementItems: {
@@ -253,9 +312,11 @@ export async function getPortalProjects(clientIds: string[]): Promise<PortalProj
     const totalSteps = project.phaseSteps.length;
     const completedSteps = project.phaseSteps.filter((s) => s.status === "completed").length;
 
-    // 2A/2D1 are dropped here — the material chain built below replaces them on screen.
+    // 2A/2D1 are dropped here — the material chain built below replaces them. 3C1/3C2 are dropped
+    // the same way — buildSplitStepPair replaces each with its own start/end pair below.
+    const SUPERSEDED_CODES = new Set(["2A", "2D1", "3C1", "3C2"]);
     const steps: PortalStep[] = project.phaseSteps
-      .filter((s) => !(s.phase === "phase_2" && (s.stepCode === "2A" || s.stepCode === "2D1")))
+      .filter((s) => !SUPERSEDED_CODES.has(s.stepCode))
       .map((s) => ({
         id: s.id,
         stepCode: s.stepCode,
@@ -265,6 +326,7 @@ export async function getPortalProjects(clientIds: string[]): Promise<PortalProj
         plannedStartDate: s.plannedStartDate?.toISOString() ?? null,
         plannedEndDate: s.plannedEndDate?.toISOString() ?? null,
         actualEndDate: s.actualEndDate?.toISOString() ?? null,
+        blockedReason: s.status === "blocked" ? s.blockedReason : null,
       }));
 
     // Fill any wholly-missing phase (including Phase 2's own 2D2/2F) with not-started
@@ -292,6 +354,16 @@ export async function getPortalProjects(clientIds: string[]): Promise<PortalProj
     // sits doesn't matter.
     const phase2Index = steps.findIndex((s) => s.phase === "phase_2");
     steps.splice(phase2Index === -1 ? steps.length : phase2Index, 0, ...materialChainSteps);
+
+    const rawC1 = project.phaseSteps.find((s) => s.stepCode === "3C1");
+    const rawC2 = project.phaseSteps.find((s) => s.stepCode === "3C2");
+    const splitSteps = [...buildSplitStepPair(rawC1, "3C1", false), ...buildSplitStepPair(rawC2, "3C2", true)];
+    if (splitSteps.length > 0) {
+      // 3E (real or placeholder) always exists by now — the placeholder fill above seeds every
+      // phase_3 code, split ones included, the moment the whole phase is missing.
+      const beforeFinalQC = steps.findIndex((s) => s.stepCode === "3E");
+      steps.splice(beforeFinalQC === -1 ? steps.length : beforeFinalQC, 0, ...splitSteps);
+    }
 
     return {
       id: project.id,

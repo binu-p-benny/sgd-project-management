@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { PortalProject, PortalStep } from "@/lib/client-portal";
 import {
   PORTAL_PHASE_LABELS,
+  PORTAL_PHASE_NUMBERS,
   PORTAL_STATUS_LABELS,
   PORTAL_STATUS_STYLES,
   portalStepLabel,
@@ -98,7 +99,9 @@ function PhaseRun({ phase, steps }: { phase: StepPhase; steps: PortalStep[] }) {
   return (
     <section className="flex flex-col gap-2.5">
       <div className="flex items-baseline justify-between gap-4">
-        <h3 className="text-[13px] uppercase tracking-[0.18em] text-fg-muted">{PORTAL_PHASE_LABELS[phase]}</h3>
+        <h3 className="text-[13px] uppercase tracking-[0.18em] text-fg-muted">
+          Phase {PORTAL_PHASE_NUMBERS[phase]} - {PORTAL_PHASE_LABELS[phase]}
+        </h3>
         <span className="shrink-0 font-mono text-[11px] tabular-nums text-fg-subtle">
           {done}/{steps.length}
         </span>
@@ -228,8 +231,14 @@ export function PortalProgress({ projects, firstName }: { projects: PortalProjec
           </p>
           <h2 className="mt-2 text-[26px] leading-[1.12] text-fg sm:text-[34px]">{project.name}</h2>
           <p className="mt-2 text-[12px] text-fg-muted">
-            {PORTAL_PHASE_LABELS[(project.currentPhase === "completed" ? "phase_3" : project.currentPhase) as StepPhase]}
-            {project.currentPhase === "completed" ? " · finished" : " in progress"}
+            {project.currentPhase === "completed" ? (
+              "Completed"
+            ) : (
+              <>
+                Current step: Phase {PORTAL_PHASE_NUMBERS[project.currentPhase as StepPhase]}{" "}
+                {PORTAL_PHASE_LABELS[project.currentPhase as StepPhase]}
+              </>
+            )}
           </p>
         </div>
 
