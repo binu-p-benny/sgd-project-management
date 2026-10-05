@@ -17,6 +17,7 @@ import {
   MANUAL_PLANNED_END_ONLY_STEP_CODES,
 } from "@/lib/step-actions";
 import { checkDependencyGate } from "@/lib/dependency-gate";
+import { RECURRENCE_LABELS } from "@/lib/labels";
 
 export type TaskKind =
   | "phase_step"
@@ -49,7 +50,10 @@ export type TaskKind =
   // Built by task-reviews.ts, not this file — a completed unit of work (of any other kind
   // above) the operation manager hasn't reviewed yet. Kept in this union rather than its own
   // type so it can flow through the same UnifiedTask shape and TaskTable UI as everything else.
-  | "review_completed";
+  | "review_completed"
+  // A CommonTask (see schema.prisma) — a day-to-day/recurring admin chore with no project of
+  // its own. Same date+note shape as work_task/follow_up; see buildCommonTaskTasks.
+  | "common_task";
 
 // Field -> human label/note-field, shared by procurement items and the glass PO tracker (which
 // reuse the exact same stage names) — see the fixed stage arrays built inline in the project
@@ -80,8 +84,10 @@ export interface UnifiedTask {
   id: string;
   kind: TaskKind;
   // "service" for kind === "service_item" — a Service has no phase concept at all, this is
-  // just the least-bad fit for a field every other kind already needs.
-  phase: "phase_1" | "phase_2" | "phase_3" | "service";
+  // just the least-bad fit for a field every other kind already needs. "general" is the same
+  // idea for kind === "common_task" — it isn't about any project, so none of the other three
+  // phases apply either.
+  phase: "phase_1" | "phase_2" | "phase_3" | "service" | "general";
   taskLabel: string;
   subTaskLabel: string | null;
   // The project this task belongs to — or, for kind === "service_item", the Service instead
@@ -871,6 +877,57 @@ async function buildFollowUpTasks(department: Department | null): Promise<Unifie
 }
 
 /**
+ * Open CommonTask rows (see schema.prisma) as tasks — day-to-day/recurring admin chores raised
+ * by an admin editor, with no project of their own. `project` is given a placeholder rather than
+ * made optional, same as every other field on UnifiedTask that only some kinds need — its empty
+ * id (rather than isAdmin alone) is what TaskTable checks before rendering a "view project" link,
+ * since there's nowhere for one to go. The client-name slot is repurposed to carry the task's own
+ * recurrence label (see RECURRENCE_LABELS) instead of sitting blank.
+ */
+async function buildCommonTaskTasks(department: Department | null): Promise<UnifiedTask[]> {
+  const rows = await prisma.commonTask.findMany({
+    where: {
+      deletedAt: null,
+      actualDate: null,
+      ...(department ? { department } : {}),
+    },
+  });
+
+  return rows.map((row) => ({
+    id: `common_task:${row.id}`,
+    kind: "common_task" as const,
+    phase: "general" as const,
+    taskLabel: row.taskLabel,
+    subTaskLabel: null,
+    project: { id: "", name: "Common task", client: { name: RECURRENCE_LABELS[row.recurrence] } },
+    department: row.department,
+    secondaryDepartment: null,
+    status: "not_started" as const,
+    plannedDate: row.plannedDate.toISOString(),
+    actualDate: null,
+    overrun: isProcurementStageOverrun(row.plannedDate, null),
+    qcPassed: null,
+    notes: row.note,
+    blockedReason: null,
+    blockedNote: null,
+    gateBlockedBy: null,
+    isPassFail: false,
+    refId: row.id,
+    dateField: "actualDate",
+    noteField: "note",
+    stepCode: null,
+    actionItemSource: null,
+    contractorId: null,
+    contractorName: null,
+    contractorPlannedDate: null,
+    contractorOverdue: false,
+    manualPlannedStartDate: null,
+    manualPlannedEndDate: null,
+    completedByDepartment: null,
+  }));
+}
+
+/**
  * The Phase 1/3 "customer review" cards (see PhaseReviewCard.tsx and the comment on Project in
  * schema.prisma) as open tasks — HR & Admin's only, so every other department gets none. Each
  * card's own "Planned end date" is a read-only mirror of another step's (2A for Phase 1, 3E for
@@ -1059,6 +1116,7 @@ export async function getUnifiedMyTasks(department: Department | null): Promise<
     serviceItems,
     workTasks,
     followUps,
+    commonTasks,
     customerReviews,
   ] =
     await Promise.all([
@@ -1070,6 +1128,7 @@ export async function getUnifiedMyTasks(department: Department | null): Promise<
       buildServiceItemTasks(department),
       buildWorkTaskTasks(department),
       buildFollowUpTasks(department),
+      buildCommonTaskTasks(department),
       buildCustomerReviewTasks(department),
     ]);
 
@@ -1082,6 +1141,7 @@ export async function getUnifiedMyTasks(department: Department | null): Promise<
     ...serviceItems,
     ...workTasks,
     ...followUps,
+    ...commonTasks,
     ...customerReviews,
   ];
   return all.sort((a, b) => {

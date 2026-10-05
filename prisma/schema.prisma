@@ -29,6 +29,17 @@ enum PaymentStatus {
   received
 }
 
+// How often a CommonTask recurs — "none" is a plain one-off admin task, same as any other
+// simple kind in unified-tasks.ts; the other three advance the task's own planned date forward
+// by that interval the moment it's marked complete (see PATCH /api/common-tasks/[id]), so it
+// never needs a cron to regenerate itself.
+enum RecurrenceFrequency {
+  none
+  daily
+  weekly
+  monthly
+}
+
 enum GlassType {
   normal
   laminated
@@ -131,6 +142,7 @@ model User {
   qcCheckedGlassOrders GlassPurchaseOrder[] @relation("GlassQcCheckedBy")
   notifications        Notification[]
   followUpsCreated     FollowUpTask[]       @relation("FollowUpCreatedBy")
+  commonTasksCreated   CommonTask[]         @relation("CommonTaskCreatedBy")
 
   @@index([department])
   @@map("users")
@@ -881,4 +893,47 @@ model FollowUpTask {
   @@index([glassPurchaseOrderId])
   @@index([department, actualDate])
   @@map("follow_up_tasks")
+}
+
+/**
+ * A recurring or one-off chore that isn't about any project — "water the plants", "weekly
+ * stock check", "renew the trade license" — raised by an admin editor (see isAdminEditor) and
+ * handed to a department exactly like a FollowUpTask is, except it has no project to hang off.
+ * Surfaced in that department's /my-tasks via buildCommonTaskTasks in unified-tasks.ts, and
+ * completed the same "Mark complete" way as any other simple kind there.
+ *
+ * recurrence === "none" behaves exactly like a FollowUpTask: completing it sets actualDate and
+ * it drops out of the open-tasks list for good. Anything else advances plannedDate forward by
+ * its own interval the moment it's completed (see PATCH /api/common-tasks/[id]) and resets
+ * actualDate to null, so the task simply reappears for its next cycle — lastCompletedAt is the
+ * only trace that it was ever done, since actualDate itself never stays set for a recurring row.
+ */
+model CommonTask {
+  id String @id @default(cuid())
+
+  taskLabel  String              @map("task_label")
+  department Department
+  recurrence RecurrenceFrequency @default(none)
+
+  plannedDate DateTime  @map("planned_date") @db.Timestamptz(3)
+  actualDate  DateTime? @map("actual_date") @db.Timestamptz(3)
+  // Persists through a recurring task's own actualDate resets (see the model comment) — the
+  // only record that it was ever done, and what the admin list (/common-tasks) shows as "last
+  // completed" since actualDate itself is never a reliable signal for a recurring row.
+  lastCompletedAt DateTime? @map("last_completed_at") @db.Timestamptz(3)
+  note            String?   @db.Text
+
+  createdByUserId String? @map("created_by_user_id")
+  createdBy       User?   @relation("CommonTaskCreatedBy", fields: [createdByUserId], references: [id])
+
+  // Soft delete, same convention as WorkBlock/Project/Service — retiring a chore nobody wants
+  // tracked anymore keeps its history instead of erasing it.
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([department, actualDate])
+  @@index([deletedAt])
+  @@map("common_tasks")
 }

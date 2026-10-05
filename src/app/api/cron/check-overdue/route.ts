@@ -2,13 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { notifyOverdueSteps } from "@/lib/notify-overdue";
 import {
   notifyContractorNotAssigned,
+  notifyOverdueCommonTasks,
   notifyOverdueProcurement,
   notifyWebsiteReviewDue,
 } from "@/lib/notify-cron";
 
 /**
  * Scheduled entry point for every notification a daily sweep produces — overdue steps, overdue
- * procurement/Glass PO stages, unassigned contractors and the pending website review. No session
+ * procurement/Glass PO stages, unassigned contractors, overdue common tasks and the pending
+ * website review. No session
  * cookie (crons don't carry one), authenticated instead via a bearer secret. Vercel Cron sends
  * this header automatically when CRON_SECRET is set on the project; any other scheduler
  * (cron-job.org, a GitHub Actions workflow, etc.) can hit this same URL with the same header.
@@ -31,6 +33,7 @@ export async function GET(request: NextRequest) {
   const steps = await notifyOverdueSteps();
   const procurement = await notifyOverdueProcurement();
   const contractors = await notifyContractorNotAssigned();
+  const commonTasks = await notifyOverdueCommonTasks();
   const websiteReviews = await notifyWebsiteReviewDue();
 
   return NextResponse.json({
@@ -40,6 +43,7 @@ export async function GET(request: NextRequest) {
     overdueSteps: steps.notified,
     overdueProcurement: procurement.notified,
     contractorNotAssigned: contractors.notified,
+    overdueCommonTasks: commonTasks.notified,
     websiteReviewsDue: websiteReviews.notified,
   });
 }

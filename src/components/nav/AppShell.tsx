@@ -62,6 +62,13 @@ const DASHBOARD_ICON = (
   </svg>
 );
 
+const COMMON_TASKS_ICON = (
+  <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-full w-full stroke-current">
+    <path d="M12 7v5l3 2" strokeLinecap="round" strokeLinejoin="round" />
+    <circle cx="12" cy="12" r="8.5" />
+  </svg>
+);
+
 const ADMIN_ICON = (
   <svg viewBox="0 0 24 24" fill="none" strokeWidth={2} className="h-full w-full stroke-current">
     <path d="M12 3.5 18.5 6v5.5c0 4.5-2.8 7.7-6.5 9-3.7-1.3-6.5-4.5-6.5-9V6L12 3.5Z" strokeLinecap="round" strokeLinejoin="round" />
@@ -143,6 +150,7 @@ function navItemsFor(department: Department): NavItem[] {
       { href: "/contractors", label: "Contractors", icon: CONTRACTORS_ICON },
       { href: "/projects", label: "Projects", icon: PROJECTS_ICON },
       { href: "/services", label: "Services", icon: SERVICES_ICON },
+      { href: "/common-tasks", label: "Common Tasks", icon: COMMON_TASKS_ICON },
       { href: "/admin", label: "Admin", icon: ADMIN_ICON }
     );
   }

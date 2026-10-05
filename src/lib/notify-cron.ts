@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { formatShortDate, notifyDepartments } from "@/lib/notifications";
 import { GLASS_PO_OVERRUN_SELECT, PROCUREMENT_ITEM_OVERRUN_SELECT } from "@/lib/dashboard";
-import { getProjectDelayReasons, isContractorSelectionOverdue } from "@/lib/overrun";
+import { getProjectDelayReasons, isContractorSelectionOverdue, isProcurementStageOverrun } from "@/lib/overrun";
 import { withLiveExpectedArrivalDates } from "@/lib/procurement";
 import { MANUAL_CONTRACTOR_STEP_CODES } from "@/lib/step-actions";
 import { addDays } from "@/lib/step-template";
@@ -129,6 +129,37 @@ export async function notifyContractorNotAssigned(): Promise<{ notified: number 
       projectId: step.projectId,
       phaseStepId: step.id,
       dedupeKey: `contractor_overdue:${step.id}:${dayStamp(plannedDate!)}`,
+    });
+    if (written > 0) notified += 1;
+  }
+
+  return { notified };
+}
+
+/**
+ * A CommonTask (see schema.prisma) sitting past its own plannedDate with nobody done — the one
+ * kind of open work the overdue-step/procurement crons above never look at, since it isn't a
+ * phase step or a procurement stage. Same overrun test unified-tasks.ts' own buildCommonTaskTasks
+ * uses, so "overdue" here means exactly what the amber "Overdue Nd" badge on /my-tasks means.
+ * Goes to the task's own department plus the admin departments (see notifyDepartments'
+ * includeAdmins default) — the admins who can edit or retire it should hear about a chore
+ * nobody's getting to, not just whoever it was handed to.
+ */
+export async function notifyOverdueCommonTasks(): Promise<{ notified: number }> {
+  const tasks = await prisma.commonTask.findMany({
+    where: { deletedAt: null, actualDate: null },
+  });
+
+  let notified = 0;
+
+  for (const task of tasks) {
+    if (!isProcurementStageOverrun(task.plannedDate, null)) continue;
+
+    const written = await notifyDepartments({
+      type: "common_task_overdue",
+      message: `${task.taskLabel} is overdue — was due ${formatShortDate(task.plannedDate)}`,
+      departments: [task.department],
+      dedupeKey: `common_task:${task.id}:${dayStamp(task.plannedDate)}`,
     });
     if (written > 0) notified += 1;
   }

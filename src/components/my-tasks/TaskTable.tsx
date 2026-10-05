@@ -71,6 +71,7 @@ function plannedDateLabel(task: UnifiedTask): string {
 }
 function formatPhase(phase: UnifiedTask["phase"]): string {
   if (phase === "service") return "Service";
+  if (phase === "general") return "Common task";
   return phase === "phase_1" ? "Phase 1" : phase === "phase_2" ? "Phase 2" : "Phase 3";
 }
 
@@ -116,6 +117,7 @@ function simpleStageEndpoint(task: UnifiedTask): string {
   if (task.kind === "service_item") return `/api/service-items/${task.refId}`;
   if (task.kind === "work_task") return `/api/work-tasks/${task.refId}`;
   if (task.kind === "follow_up") return `/api/follow-ups/${task.refId}`;
+  if (task.kind === "common_task") return `/api/common-tasks/${task.refId}`;
   if (task.kind === "customer_review" || task.kind === "website_review") return `/api/projects/${task.refId}`;
   // action_item
   if (task.actionItemSource === "procurement") return `/api/procurement-action-items/${task.refId}`;
@@ -1194,7 +1196,7 @@ function TaskRow({ task, isAdmin }: { task: UnifiedTask; isAdmin: boolean }) {
           )}
         </td>
         <td className="px-3 py-2.5">
-          {isAdmin ? (
+          {isAdmin && task.project.id ? (
             <Link
               href={s.isServiceTask ? `/services/${task.project.id}` : `/projects/${task.project.id}`}
               className="text-sm font-medium text-fg hover:underline"
@@ -1363,7 +1365,7 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
           {task.kind !== "contractor_selection" && s.isManualContractorStep && !s.needsContractor && (
             <div className="text-xs text-fg-muted">Contractor: {task.contractorName}</div>
           )}
-          {isAdmin && (
+          {isAdmin && task.project.id && (
             <Link
               href={s.isServiceTask ? `/services/${task.project.id}` : `/projects/${task.project.id}`}
               className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline"

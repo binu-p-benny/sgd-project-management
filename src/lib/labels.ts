@@ -6,6 +6,7 @@ import type {
   StepStatus,
   BlockedReason,
   DelayCategory,
+  RecurrenceFrequency,
 } from "@prisma/client";
 import type { EffectiveOverallStatus } from "@/lib/overrun";
 import type { ServiceStatus } from "@/lib/service";
@@ -28,6 +29,17 @@ export const DEPARTMENT_LABELS: Record<Department, string> = {
 // which still excludes owner_admin from the performance leaderboard on purpose.
 // `as const satisfies` (not `: Department[]`) so this is also a non-empty tuple of literal
 // strings — the shape z.enum() needs directly, with no runtime array to keep in sync by hand.
+// A CommonTask's own cadence — shown on /common-tasks and (as the "client" line's stand-in,
+// since a common task has no project/client of its own — see unified-tasks.ts) on /my-tasks.
+export const RECURRENCE_LABELS: Record<RecurrenceFrequency, string> = {
+  none: "One-off",
+  daily: "Daily",
+  weekly: "Weekly",
+  monthly: "Monthly",
+};
+
+export const RECURRENCE_OPTIONS = ["none", "daily", "weekly", "monthly"] as const satisfies readonly RecurrenceFrequency[];
+
 export const ASSIGNABLE_DEPARTMENTS = [
   "hr_admin",
   "project_engineer",
