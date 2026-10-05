@@ -900,13 +900,18 @@ model FollowUpTask {
  * stock check", "renew the trade license" — raised by an admin editor (see isAdminEditor) and
  * handed to a department exactly like a FollowUpTask is, except it has no project to hang off.
  * Surfaced in that department's /my-tasks via buildCommonTaskTasks in unified-tasks.ts, and
- * completed the same "Mark complete" way as any other simple kind there.
+ * completed the same "Mark complete" way as any other simple kind there — or directly from the
+ * admin list (/common-tasks) itself.
  *
  * recurrence === "none" behaves exactly like a FollowUpTask: completing it sets actualDate and
  * it drops out of the open-tasks list for good. Anything else advances plannedDate forward by
  * its own interval the moment it's completed (see PATCH /api/common-tasks/[id]) and resets
  * actualDate to null, so the task simply reappears for its next cycle — lastCompletedAt is the
  * only trace that it was ever done, since actualDate itself never stays set for a recurring row.
+ *
+ * A recurring task can also be *skipped* (the same PATCH route, `skip: true`) — advances
+ * plannedDate the same way completing it would, but leaves lastCompletedAt/lastCompletionNote
+ * untouched, for a cycle that falls on a holiday and genuinely has nothing to record.
  */
 model CommonTask {
   id String @id @default(cuid())
@@ -921,7 +926,16 @@ model CommonTask {
   // only record that it was ever done, and what the admin list (/common-tasks) shows as "last
   // completed" since actualDate itself is never a reliable signal for a recurring row.
   lastCompletedAt DateTime? @map("last_completed_at") @db.Timestamptz(3)
-  note            String?   @db.Text
+  // The standing instructions for the chore itself — set on creation, editable by an admin
+  // editor same as taskLabel/department/recurrence. Deliberately never touched by completing
+  // the task (see lastCompletionNote below) — a recurring task's own "what this is" shouldn't
+  // get overwritten by whatever the last person who did it happened to type.
+  note String? @db.Text
+  // Whatever note was given *while completing* the task's current/most recent cycle — a
+  // separate field from `note` above so a department's "did it, bin was already half full"
+  // doesn't clobber the admin's own standing instructions. Reset to null on each new cycle's
+  // completion, same reasoning as actualDate's own reset (see the model comment).
+  lastCompletionNote String? @map("last_completion_note") @db.Text
 
   createdByUserId String? @map("created_by_user_id")
   createdBy       User?   @relation("CommonTaskCreatedBy", fields: [createdByUserId], references: [id])

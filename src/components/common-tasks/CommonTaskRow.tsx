@@ -14,6 +14,7 @@ export interface CommonTaskRowData {
   recurrence: RecurrenceFrequency;
   plannedDate: string;
   lastCompletedAt: string | null;
+  lastCompletionNote: string | null;
   note: string | null;
 }
 
@@ -26,6 +27,8 @@ function toDateInputValue(iso: string): string {
 
 const inputCls =
   "h-9 w-full min-w-0 rounded-lg border border-edge bg-bg px-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30";
+const smallBtnCls =
+  "rounded-lg border border-edge px-2.5 py-1 text-xs font-medium text-fg-muted transition-colors hover:border-edge-2 hover:bg-overlay hover:text-fg disabled:opacity-40";
 
 /**
  * Everything editing a common task *does* — form state, save/cancel — shared by the desktop row
@@ -113,6 +116,76 @@ function useCommonTaskEdit(task: CommonTaskRowData) {
 }
 type Edit = ReturnType<typeof useCommonTaskEdit>;
 
+/**
+ * The two "move this task along without opening the full edit form" actions — complete it right
+ * now (so an admin working the /common-tasks list doesn't have to detour through /my-tasks), or
+ * skip its current cycle (for a recurring task whose date genuinely has nothing to record, e.g.
+ * a holiday) without that counting as having done it. Both hit the same PATCH endpoint the edit
+ * form and /my-tasks already use. completeNow clears lastCompletionNote (passed as null) rather
+ * than leaving it untouched — a quick-complete with no note means no note *this* cycle, not
+ * "still shows whatever was typed last time".
+ */
+function useCommonTaskQuickActions(task: CommonTaskRowData) {
+  const router = useRouter();
+  const [completing, setCompleting] = useState(false);
+  const [skipping, setSkipping] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function patch(body: Record<string, unknown>, setBusy: (v: boolean) => void) {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/common-tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(typeof data.error === "string" ? data.error : "Could not update task");
+        setBusy(false);
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("Could not reach the server");
+      setBusy(false);
+    }
+  }
+
+  function completeNow() {
+    void patch({ actualDate: new Date().toISOString(), lastCompletionNote: null }, setCompleting);
+  }
+  function skipCycle() {
+    void patch({ skip: true }, setSkipping);
+  }
+
+  return { completing, skipping, error, completeNow, skipCycle };
+}
+type QuickActions = ReturnType<typeof useCommonTaskQuickActions>;
+
+function QuickActionButtons({ task, q }: { task: CommonTaskRowData; q: QuickActions }) {
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-1.5">
+      <button type="button" onClick={q.completeNow} disabled={q.completing || q.skipping} className={smallBtnCls}>
+        {q.completing ? <Spinner className="h-3.5 w-3.5" /> : "Complete"}
+      </button>
+      {task.recurrence !== "none" && (
+        <button
+          type="button"
+          onClick={q.skipCycle}
+          disabled={q.completing || q.skipping}
+          title="Advance to the next cycle without recording a completion"
+          className={smallBtnCls}
+        >
+          {q.skipping ? <Spinner className="h-3.5 w-3.5" /> : "Skip"}
+        </button>
+      )}
+      <RetireCommonTaskButton taskId={task.id} taskLabel={task.taskLabel} />
+    </div>
+  );
+}
+
 function EditFields({ e }: { e: Edit }) {
   return (
     <div className="flex flex-col gap-2">
@@ -194,6 +267,7 @@ function EditPencilButton({ onClick }: { onClick: () => void }) {
 
 export function CommonTaskMobileCard({ task }: { task: CommonTaskRowData }) {
   const e = useCommonTaskEdit(task);
+  const q = useCommonTaskQuickActions(task);
 
   if (e.editing) {
     return (
@@ -213,10 +287,16 @@ export function CommonTaskMobileCard({ task }: { task: CommonTaskRowData }) {
         {DEPARTMENT_LABELS[task.department]} · {RECURRENCE_LABELS[task.recurrence]}
       </div>
       <div className="text-sm text-fg-muted">Due {formatDate(task.plannedDate)}</div>
-      {task.lastCompletedAt && <div className="text-xs text-fg-subtle">Last done {formatDate(task.lastCompletedAt)}</div>}
+      {task.lastCompletedAt && (
+        <div className="text-xs text-fg-subtle">
+          Last done {formatDate(task.lastCompletedAt)}
+          {task.lastCompletionNote ? ` — ${task.lastCompletionNote}` : ""}
+        </div>
+      )}
       {task.note && <div className="text-xs text-fg-subtle">{task.note}</div>}
+      {q.error && <p className="text-[11px] text-red-600 dark:text-red-400">{q.error}</p>}
       <div className="flex justify-end border-t border-edge pt-2">
-        <RetireCommonTaskButton taskId={task.id} taskLabel={task.taskLabel} />
+        <QuickActionButtons task={task} q={q} />
       </div>
     </div>
   );
@@ -224,6 +304,7 @@ export function CommonTaskMobileCard({ task }: { task: CommonTaskRowData }) {
 
 export function CommonTaskDesktopRow({ task }: { task: CommonTaskRowData }) {
   const e = useCommonTaskEdit(task);
+  const q = useCommonTaskQuickActions(task);
 
   if (e.editing) {
     return (
@@ -249,9 +330,15 @@ export function CommonTaskDesktopRow({ task }: { task: CommonTaskRowData }) {
       <td className="px-4 py-3 text-fg-muted">{DEPARTMENT_LABELS[task.department]}</td>
       <td className="px-4 py-3 text-fg-muted">{RECURRENCE_LABELS[task.recurrence]}</td>
       <td className="px-4 py-3 text-fg-muted">{formatDate(task.plannedDate)}</td>
-      <td className="px-4 py-3 text-fg-muted">{task.lastCompletedAt ? formatDate(task.lastCompletedAt) : "—"}</td>
+      <td className="px-4 py-3 text-fg-muted">
+        {task.lastCompletedAt ? formatDate(task.lastCompletedAt) : "—"}
+        {task.lastCompletedAt && task.lastCompletionNote && (
+          <div className="text-xs text-fg-subtle">{task.lastCompletionNote}</div>
+        )}
+      </td>
       <td className="px-4 py-3 text-right">
-        <RetireCommonTaskButton taskId={task.id} taskLabel={task.taskLabel} />
+        <QuickActionButtons task={task} q={q} />
+        {q.error && <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">{q.error}</p>}
       </td>
     </tr>
   );

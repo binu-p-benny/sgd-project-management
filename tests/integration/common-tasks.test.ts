@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { getUnifiedMyTasks } from "@/lib/unified-tasks";
-import { nextRecurrenceDate } from "@/lib/common-tasks";
+import { nextRecurrenceDate, listCommonTasks } from "@/lib/common-tasks";
 import { notifyOverdueCommonTasks } from "@/lib/notify-cron";
 import { ensureTestUsers, prisma } from "../helpers/db";
 import type { Department, RecurrenceFrequency } from "@prisma/client";
@@ -32,6 +32,7 @@ async function raise(overrides: Partial<{
   plannedDate: Date;
   actualDate: Date | null;
   deletedAt: Date | null;
+  note: string | null;
 }> = {}) {
   const task = await prisma.commonTask.create({
     data: {
@@ -41,6 +42,7 @@ async function raise(overrides: Partial<{
       plannedDate: overrides.plannedDate ?? new Date(),
       actualDate: overrides.actualDate ?? null,
       deletedAt: overrides.deletedAt ?? null,
+      note: overrides.note ?? null,
     },
   });
   createdIds.push(task.id);
@@ -154,5 +156,54 @@ describe("common_task_overdue", () => {
     await notifyOverdueCommonTasks();
 
     expect(await notificationsFor(task.id)).toHaveLength(0);
+  });
+});
+
+describe("standing note vs completion note", () => {
+  it("surfaces lastCompletionNote as the /my-tasks completion field, leaving note (the standing description) alone", async () => {
+    const task = await raise({ taskLabel: "Check the fire extinguishers", note: "Check the pressure gauge is in the green" });
+
+    const mine = (await getUnifiedMyTasks(task.department)).find((t) => t.refId === task.id)!;
+    expect(mine.noteField).toBe("lastCompletionNote");
+    expect(mine.notes).toBe("Check the pressure gauge is in the green");
+
+    // Simulates what PATCH /api/common-tasks/[id] does when completing it with a note — writes
+    // lastCompletionNote, never touches note.
+    await prisma.commonTask.update({
+      where: { id: task.id },
+      data: { actualDate: new Date(), lastCompletedAt: new Date(), lastCompletionNote: "Topped up, all good" },
+    });
+
+    const updated = (await listCommonTasks()).find((t) => t.id === task.id)!;
+    expect(updated.note).toBe("Check the pressure gauge is in the green");
+    expect(updated.lastCompletionNote).toBe("Topped up, all good");
+  });
+});
+
+describe("skipping a recurring cycle", () => {
+  it("advances plannedDate the same way a completion would, without touching lastCompletedAt", async () => {
+    const task = await raise({
+      recurrence: "weekly",
+      plannedDate: new Date("2026-01-05T00:00:00.000Z"),
+      department: "hr_admin",
+    });
+
+    // Mirrors the `skip: true` branch in PATCH /api/common-tasks/[id].
+    const skippedTo = nextRecurrenceDate(task.plannedDate, new Date("2026-01-06T00:00:00.000Z"), "weekly");
+    await prisma.commonTask.update({ where: { id: task.id }, data: { plannedDate: skippedTo } });
+
+    const updated = (await listCommonTasks()).find((t) => t.id === task.id)!;
+    expect(updated.plannedDate.slice(0, 10)).toBe("2026-01-13");
+    expect(updated.lastCompletedAt).toBeNull();
+  });
+
+  it("still reaches /my-tasks after being skipped — a skip reopens the row, it doesn't close it", async () => {
+    const task = await raise({ recurrence: "weekly", department: "purchase" });
+    const skippedTo = nextRecurrenceDate(task.plannedDate, new Date(), "weekly");
+    await prisma.commonTask.update({ where: { id: task.id }, data: { plannedDate: skippedTo } });
+
+    const mine = (await getUnifiedMyTasks("purchase")).find((t) => t.refId === task.id);
+    expect(mine).toBeDefined();
+    expect(mine!.plannedDate?.slice(0, 10)).toBe(skippedTo.toISOString().slice(0, 10));
   });
 });

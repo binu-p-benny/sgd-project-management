@@ -18,13 +18,21 @@ const updateSchema = z.object({
   recurrence: z.enum(RECURRENCE_OPTIONS).optional(),
   plannedDate: z.string().datetime().optional(),
   actualDate: dateOrNull,
+  // The task's own standing description — see the model comment on CommonTask.note.
   note: z.string().nullable().optional(),
+  // What's being recorded *this cycle*, alongside actualDate — see CommonTask.lastCompletionNote.
+  lastCompletionNote: z.string().nullable().optional(),
+  // Advances a recurring task to its next cycle without recording a completion — a cycle that
+  // falls on a holiday and genuinely has nothing to do. Mutually exclusive with every other
+  // field here; see the skip branch below, which ignores the rest of the body when set.
+  skip: z.literal(true).optional(),
 });
 
 /**
- * Records progress on a common task, or (admin editors only) edits it. Open to an admin editor
- * or to the department it was assigned to — same rule as PATCH /api/follow-ups/[id], which is
- * what lets a department close one from /my-tasks.
+ * Records progress on a common task, or (admin editors only) edits or skips it. Open to an admin
+ * editor or to the department it was assigned to — same rule as PATCH /api/follow-ups/[id], which
+ * is what lets a department close one from /my-tasks. An admin editor can also complete one
+ * directly from the /common-tasks list, same endpoint either way.
  *
  * Completing a `recurrence: "none"` task behaves exactly like a follow-up: actualDate gets set
  * and it drops out of the open list for good. Completing anything else instead advances
@@ -54,7 +62,22 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { taskLabel, department, recurrence, plannedDate, actualDate, note } = parsed.data;
+  const { taskLabel, department, recurrence, plannedDate, actualDate, note, lastCompletionNote, skip } = parsed.data;
+
+  if (skip) {
+    if (!admin) {
+      return NextResponse.json({ error: "Forbidden — only an admin editor can skip a cycle" }, { status: 403 });
+    }
+    const effectiveRecurrence = recurrence ?? task.recurrence;
+    if (effectiveRecurrence === "none") {
+      return NextResponse.json({ error: "A one-off task can't be skipped — retire it instead" }, { status: 400 });
+    }
+    const updated = await prisma.commonTask.update({
+      where: { id },
+      data: { plannedDate: nextRecurrenceDate(task.plannedDate, new Date(), effectiveRecurrence) },
+    });
+    return NextResponse.json(updated);
+  }
 
   // Renaming, reassigning, rescheduling or changing the cadence is an admin-editor call, same
   // carve-out as a follow-up's own PATCH — the department that owns this can record what
@@ -78,7 +101,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const effectiveRecurrence = recurrence ?? task.recurrence;
     if (actualDate === null || effectiveRecurrence === "none") {
       data.actualDate = actualDate;
-      if (actualDate !== null) data.lastCompletedAt = actualDate;
+      if (actualDate !== null) {
+        data.lastCompletedAt = actualDate;
+        if (lastCompletionNote !== undefined) data.lastCompletionNote = lastCompletionNote;
+      }
     } else {
       // Completing a recurring task never actually closes it — it just rolls straight to its
       // next cycle (see nextRecurrenceDate's own doc comment on why plannedDate, not just the
@@ -90,7 +116,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       );
       data.actualDate = null;
       data.lastCompletedAt = actualDate;
+      if (lastCompletionNote !== undefined) data.lastCompletionNote = lastCompletionNote;
     }
+  } else if (lastCompletionNote !== undefined) {
+    data.lastCompletionNote = lastCompletionNote;
   }
 
   const updated = await prisma.commonTask.update({ where: { id }, data });

@@ -883,6 +883,12 @@ async function buildFollowUpTasks(department: Department | null): Promise<Unifie
  * id (rather than isAdmin alone) is what TaskTable checks before rendering a "view project" link,
  * since there's nowhere for one to go. The client-name slot is repurposed to carry the task's own
  * recurrence label (see RECURRENCE_LABELS) instead of sitting blank.
+ *
+ * noteField points at lastCompletionNote, not note — CommonTask.note is the task's own standing
+ * description (set once, admin-editable), and completing it from here must never overwrite that
+ * with whatever the completer happened to type. `notes` below still surfaces the standing note,
+ * same as every other kind's `notes` field does, just read from a different column than what the
+ * completion form writes to.
  */
 async function buildCommonTaskTasks(department: Department | null): Promise<UnifiedTask[]> {
   const rows = await prisma.commonTask.findMany({
@@ -914,7 +920,7 @@ async function buildCommonTaskTasks(department: Department | null): Promise<Unif
     isPassFail: false,
     refId: row.id,
     dateField: "actualDate",
-    noteField: "note",
+    noteField: "lastCompletionNote",
     stepCode: null,
     actionItemSource: null,
     contractorId: null,
