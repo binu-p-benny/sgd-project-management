@@ -14,6 +14,61 @@ import type { UnifiedTask } from "@/lib/unified-tasks";
  *  which is a completely separate review (the client's, not internal QA). */
 export const REVIEW_DUE_DAYS = 1;
 
+/**
+ * Phase steps that never get their own `phase_step:` review row — same set
+ * phaseStepReviewTasks below excludes from the queue in the first place, because their own
+ * sub-parts already surface (and get reviewed) as procurement_stage/glass_po_stage rows instead.
+ * A derived/3A/3B step can never satisfy getReviewedPhaseStepIds, so "fully done" display logic
+ * (isStepFullyDone, below) treats these as exempt from the review gate rather than stuck
+ * "awaiting review" forever.
+ *
+ * Built lazily rather than as a top-level `const` — step-actions.ts imports markTaskReviewed
+ * from this file (for its own autoReviewed skip-phase backfill), so this file and step-actions.ts
+ * form an import cycle; reading DERIVED_STEP_CODES at module-evaluation time can run before
+ * step-actions.ts has finished initializing it. Every caller here already only needs the set
+ * once request handling is underway, by which point the cycle has long since resolved.
+ */
+let phaseStepReviewExemptCodesCache: ReadonlySet<string> | null = null;
+export function getPhaseStepReviewExemptCodes(): ReadonlySet<string> {
+  if (!phaseStepReviewExemptCodesCache) {
+    phaseStepReviewExemptCodesCache = new Set([...DERIVED_STEP_CODES, "3A", "3B"]);
+  }
+  return phaseStepReviewExemptCodesCache;
+}
+
+/**
+ * Which of the given projects' phase steps the operation manager has actually reviewed —
+ * batched over as many projects as needed in one query (TaskReview snapshots its own projectId,
+ * see the model comment in schema.prisma), so the portal's whole project list costs the same one
+ * round trip a single project's own page does. Used by "Progress overview" (project detail page)
+ * and the client portal's timeline to gate the green "Completed" state on review, not just on
+ * actualEndDate — see isStepFullyDone.
+ */
+export async function getReviewedPhaseStepIds(projectIds: string[]): Promise<Set<string>> {
+  if (projectIds.length === 0) return new Set();
+  const rows = await prisma.taskReview.findMany({
+    where: { projectId: { in: projectIds }, taskId: { startsWith: "phase_step:" } },
+    select: { taskId: true },
+  });
+  return new Set(rows.map((r) => r.taskId.slice("phase_step:".length)));
+}
+
+/**
+ * Whether a phase step counts as *fully* done for display — completed, and either exempt from
+ * the review gate (see getPhaseStepReviewExemptCodes) or actually reviewed by the operation
+ * manager. A step that's completed but still awaiting review reads as not-yet-fully-done to
+ * "Progress overview" and the portal, even though PhaseStep.status itself already says
+ * "completed" — the two questions ("is the work done" vs "is it signed off") are deliberately
+ * kept separate at the data layer; this is where they're combined for a single display verdict.
+ */
+export function isStepFullyDone(
+  step: { id: string; stepCode: string; status: string },
+  reviewedStepIds: Set<string>
+): boolean {
+  if (step.status !== "completed") return false;
+  return getPhaseStepReviewExemptCodes().has(step.stepCode) || reviewedStepIds.has(step.id);
+}
+
 // Mirrors unified-tasks.ts' own STAGE_LABEL — kept as a separate copy rather than exported from
 // there, since that one only needs to cover the *next unfilled* stage while this needs every
 // stage regardless of fill order.
@@ -98,7 +153,7 @@ function buildReviewTask(args: {
 // glass_po_stage rows below — reviewing the derived step too would just double up the same work.
 async function phaseStepReviewTasks(reviewed: Set<string>): Promise<UnifiedTask[]> {
   const steps = await prisma.phaseStep.findMany({
-    where: { status: "completed", stepCode: { notIn: [...DERIVED_STEP_CODES, "3A", "3B"] } },
+    where: { status: "completed", stepCode: { notIn: [...getPhaseStepReviewExemptCodes()] } },
     include: { project: { select: { id: true, name: true, client: { select: { name: true } } } } },
   });
 

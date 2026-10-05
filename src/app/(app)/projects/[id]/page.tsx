@@ -16,7 +16,7 @@ import { ProductionMaterialDeliveryTracker } from "@/components/projects/Product
 import { StepProgressBar } from "@/components/projects/StepProgressBar";
 import { TaskCard } from "@/components/my-tasks/TaskCard";
 import { getMyTasks, type MyTaskItem } from "@/lib/my-tasks";
-import { getTaskReviewsByIds } from "@/lib/task-reviews";
+import { getTaskReviewsByIds, getReviewedPhaseStepIds, isStepFullyDone } from "@/lib/task-reviews";
 import { getBlockerHistory } from "@/lib/blocker-history";
 import { FollowUpsButton } from "@/components/projects/FollowUpsButton";
 import { FollowUpsSection } from "@/components/projects/FollowUpsSection";
@@ -432,7 +432,16 @@ export default async function ProjectDetailPage({
       : []),
     ...project.phaseSteps.flatMap((step) => step.actionItems.map((a) => `action_item:phase_step:${a.id}`)),
   ];
-  const reviewedTaskIds = new Set((await getTaskReviewsByIds(reviewCandidateIds)).keys());
+  const [reviewedTaskIds, reviewedPhaseStepIds] = await Promise.all([
+    getTaskReviewsByIds(reviewCandidateIds).then((m) => new Set(m.keys())),
+    getReviewedPhaseStepIds([project.id]),
+  ]);
+  // Completed phase steps "Progress overview" shows as still awaiting the operation manager's
+  // sign-off (see isStepFullyDone) — derived/3A/3B steps are exempt and so never appear here,
+  // same reasoning as PHASE_STEP_REVIEW_EXEMPT_CODES' own doc comment.
+  const awaitingReviewStepIds = new Set(
+    project.phaseSteps.filter((step) => step.status === "completed" && !isStepFullyDone(step, reviewedPhaseStepIds)).map((step) => step.id)
+  );
 
   // See withLiveExpectedArrivalDates' own doc comment in procurement.ts — projectHasOverrun
   // needs each item's *live* stage-by-stage chain, not the frozen legacy expected_arrival_date
@@ -1117,7 +1126,7 @@ export default async function ProjectDetailPage({
         </div>
       </div>
 
-      <StepProgressBar steps={project.phaseSteps} />
+      <StepProgressBar steps={project.phaseSteps} awaitingReviewStepIds={awaitingReviewStepIds} />
 
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">

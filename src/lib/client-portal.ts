@@ -6,6 +6,7 @@ import {
   computeExpectedPowderCoatingArrivalDate,
   computeExpectedSectionArrivalDate,
 } from "@/lib/procurement";
+import { getReviewedPhaseStepIds, isStepFullyDone } from "@/lib/task-reviews";
 import type { BlockedReason, StepPhase, StepStatus } from "@prisma/client";
 
 const PORTAL_PHASES: StepPhase[] = ["phase_1", "phase_2", "phase_3"];
@@ -306,11 +307,18 @@ export async function getPortalProjects(clientIds: string[]): Promise<PortalProj
     },
   });
 
+  // One batched query for every project in this client's list (TaskReview snapshots its own
+  // projectId — see the model comment in schema.prisma) — the same "is this step fully done, not
+  // just completed" gate the project detail page's own Progress overview uses (see
+  // isStepFullyDone/getReviewedPhaseStepIds in task-reviews.ts), so a client never sees a step
+  // tick off before the operation manager has actually signed off on it.
+  const reviewedStepIds = await getReviewedPhaseStepIds(projects.map((p) => p.id));
+
   return projects.map((project) => {
     // Real steps only: the percentage and the "x of y steps" line describe work that exists,
     // not the phases still to be seeded.
     const totalSteps = project.phaseSteps.length;
-    const completedSteps = project.phaseSteps.filter((s) => s.status === "completed").length;
+    const completedSteps = project.phaseSteps.filter((s) => isStepFullyDone(s, reviewedStepIds)).length;
 
     // 2A/2D1 are dropped here — the material chain built below replaces them. 3C1/3C2 are dropped
     // the same way — buildSplitStepPair replaces each with its own start/end pair below.
@@ -322,7 +330,10 @@ export async function getPortalProjects(clientIds: string[]): Promise<PortalProj
         stepCode: s.stepCode,
         stepName: s.stepName,
         phase: s.phase,
-        status: s.status,
+        // Completed-but-not-yet-reviewed reads as still in progress to a client — "done" here
+        // means fully done, the same bar isStepFullyDone sets for staff. Never surfaces the word
+        // "review" itself (nothing internal leaks through this page), just holds the tick back.
+        status: s.status === "completed" && !isStepFullyDone(s, reviewedStepIds) ? "in_progress" : s.status,
         plannedStartDate: s.plannedStartDate?.toISOString() ?? null,
         plannedEndDate: s.plannedEndDate?.toISOString() ?? null,
         actualEndDate: s.actualEndDate?.toISOString() ?? null,

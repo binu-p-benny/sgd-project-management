@@ -1,6 +1,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { findPortalClients, getPortalProjects } from "@/lib/client-portal";
 import { derivePortalPassword } from "@/lib/client-auth";
+import { markTaskReviewed } from "@/lib/task-reviews";
 import { prisma, TEST_PREFIX, cleanupTestProjects } from "../helpers/db";
 
 const createdClientIds: string[] = [];
@@ -17,7 +18,13 @@ async function makeClient(name: string, phone: string) {
   return client;
 }
 
-async function makeProject(clientId: string, name: string, createdAt?: Date) {
+/**
+ * reviewOneA — most of this file's assertions are about step counting/labeling mechanics, not
+ * the review gate itself (see "operations manager review gating" below), so they opt into having
+ * 1A actually reviewed (as isStepFullyDone now requires for an ordinary, non-exempt step to count
+ * as done) rather than every one of them growing its own markTaskReviewed call.
+ */
+async function makeProject(clientId: string, name: string, createdAt?: Date, reviewOneA = false) {
   const project = await prisma.project.create({
     data: {
       name: `${TEST_PREFIX}${name}`,
@@ -55,6 +62,10 @@ async function makeProject(clientId: string, name: string, createdAt?: Date) {
       },
     ],
   });
+  if (reviewOneA) {
+    const oneA = await prisma.phaseStep.findFirstOrThrow({ where: { projectId: project.id, stepCode: "1A" } });
+    await markTaskReviewed(`phase_step:${oneA.id}`, null);
+  }
   return project;
 }
 
@@ -142,7 +153,7 @@ describe("getPortalProjects", () => {
 
   it("reports progress from the project's own step count", async () => {
     const client = await makeClient("PORTAL PROGRESS", "9990000013");
-    await makeProject(client.id, "Half done");
+    await makeProject(client.id, "Half done", undefined, true);
 
     const [project] = await getPortalProjects([client.id]);
     expect(project.totalSteps).toBe(2);
@@ -174,6 +185,32 @@ describe("getPortalProjects", () => {
   });
 });
 
+describe("operations manager review gating", () => {
+  it("a completed ordinary step reads as still in progress to the client until it's reviewed", async () => {
+    const client = await makeClient("PORTAL REVIEW GATE", "9990000040");
+    await makeProject(client.id, "Awaiting review");
+
+    const [project] = await getPortalProjects([client.id]);
+    const oneA = project.steps.find((s) => s.stepCode === "1A")!;
+    expect(oneA.status).toBe("in_progress");
+    expect(project.completedSteps).toBe(0);
+    expect(project.percentComplete).toBe(0);
+  });
+
+  it("flips to completed, and counts toward progress, once the operation manager reviews it", async () => {
+    const client = await makeClient("PORTAL REVIEW DONE", "9990000041");
+    const project = await makeProject(client.id, "Reviewed");
+    const oneA = await prisma.phaseStep.findFirstOrThrow({ where: { projectId: project.id, stepCode: "1A" } });
+    await markTaskReviewed(`phase_step:${oneA.id}`, null);
+
+    const [portal] = await getPortalProjects([client.id]);
+    const oneAStep = portal.steps.find((s) => s.stepCode === "1A")!;
+    expect(oneAStep.status).toBe("completed");
+    expect(portal.completedSteps).toBe(1);
+    expect(portal.percentComplete).toBe(50);
+  });
+});
+
 describe("phases a project hasn't reached yet", () => {
   it("still shows Installation, as planned steps with no dates", async () => {
     const client = await makeClient("PORTAL PHASES", "9990000020");
@@ -200,7 +237,7 @@ describe("phases a project hasn't reached yet", () => {
 
   it("does not let those planned steps change how far along the project looks", async () => {
     const client = await makeClient("PORTAL PERCENT", "9990000021");
-    await makeProject(client.id, "Half done");
+    await makeProject(client.id, "Half done", undefined, true);
 
     const [project] = await getPortalProjects([client.id]);
     // The project has two real steps, one of them complete — the Phase 2 and 3 placeholders

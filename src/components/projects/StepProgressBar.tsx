@@ -16,13 +16,18 @@ interface ProgressStep {
   updatedAt: Date;
 }
 
+// A 5th display-only state layered on top of StepStatus — completed work the operation manager
+// hasn't reviewed yet (see isStepFullyDone in task-reviews.ts) reads as this instead of a plain
+// "Completed", so the chart doesn't call something fully done before it's actually signed off.
+type DisplayStatus = StepStatus | "awaiting_review";
+
 function formatShortDate(date: Date): string {
   return new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short" }).format(date);
 }
 
 /** Status label plus the concrete detail behind it — the note, the date, the count. */
-function getStatusDetail(step: ProgressStep): { primary: string; secondary: string | null } {
-  if (step.status === "blocked") {
+function getStatusDetail(step: ProgressStep, display: DisplayStatus): { primary: string; secondary: string | null } {
+  if (display === "blocked") {
     const label = stepStatusLabel("blocked", step.phase);
     const reason = step.blockedReason ? BLOCKED_REASON_LABELS[step.blockedReason] : null;
     const days = daysBlocked(step.updatedAt);
@@ -30,14 +35,18 @@ function getStatusDetail(step: ProgressStep): { primary: string; secondary: stri
     return { primary: reason ? `${label}: ${reason}` : label, secondary: parts.join(" · ") || null };
   }
 
-  if (step.status === "completed") {
+  if (display === "awaiting_review") {
+    return { primary: "Completed", secondary: "awaiting review" };
+  }
+
+  if (display === "completed") {
     return {
       primary: "Completed",
       secondary: step.actualEndDate ? `on ${formatShortDate(step.actualEndDate)}` : null,
     };
   }
 
-  if (step.status === "in_progress") {
+  if (display === "in_progress") {
     const overdue = isStepOverrun(step.plannedEndDate, step.status);
     const dueToday = !overdue && step.plannedEndDate && isDueToday(step.plannedEndDate);
     return {
@@ -56,23 +65,25 @@ function getStatusDetail(step: ProgressStep): { primary: string; secondary: stri
   };
 }
 
-const ICON_RING: Record<StepStatus, string> = {
+const ICON_RING: Record<DisplayStatus, string> = {
   completed: "bg-emerald-500 border-emerald-500",
+  awaiting_review: "bg-violet-500 border-violet-500",
   in_progress: "bg-blue-500 border-blue-500",
   blocked: "bg-red-500 border-red-500",
   not_started: "bg-surface border-edge-2",
 };
 
-const LABEL_COLOR: Record<StepStatus, string> = {
+const LABEL_COLOR: Record<DisplayStatus, string> = {
   completed: "text-emerald-600 dark:text-emerald-400",
+  awaiting_review: "text-violet-600 dark:text-violet-400",
   in_progress: "text-blue-600 dark:text-blue-400",
   blocked: "text-red-600 dark:text-red-400",
   not_started: "text-fg-subtle",
 };
 
-function StepIcon({ status }: { status: StepStatus }) {
+function StepIcon({ status }: { status: DisplayStatus }) {
   const iconClass = "h-4 w-4 sm:h-5 sm:w-5";
-  if (status === "completed") {
+  if (status === "completed" || status === "awaiting_review") {
     return (
       <svg viewBox="0 0 24 24" fill="none" strokeWidth={2.5} className={`${iconClass} stroke-white`}>
         <path d="M5 12.5 10 17l9-10" strokeLinecap="round" strokeLinejoin="round" />
@@ -99,8 +110,19 @@ function StepIcon({ status }: { status: StepStatus }) {
  * still lives in the step timeline and blocker history below it. Order within each
  * phase follows the step template's topological order (matches how the timeline
  * already lists them), not a full dependency graph.
+ *
+ * awaitingReviewStepIds — step ids that are PhaseStep.status === "completed" but not yet fully
+ * done by isStepFullyDone's own reckoning (see task-reviews.ts): still waiting on the operation
+ * manager's review. Passed in pre-computed rather than derived here, so this stays a plain
+ * presentational component with no review-system import of its own.
  */
-export function StepProgressBar({ steps }: { steps: ProgressStep[] }) {
+export function StepProgressBar({
+  steps,
+  awaitingReviewStepIds = new Set(),
+}: {
+  steps: ProgressStep[];
+  awaitingReviewStepIds?: Set<string>;
+}) {
   const phases: StepPhase[] = ["phase_1", "phase_2", "phase_3"];
   const rows = phases
     .map((phase) => ({ phase, steps: steps.filter((s) => s.phase === phase) }))
@@ -128,16 +150,17 @@ export function StepProgressBar({ steps }: { steps: ProgressStep[] }) {
             {phaseSteps.map((step, i) => {
               const overdue = isStepOverrun(step.plannedEndDate, step.status);
               const dueToday = !overdue && step.plannedEndDate && isDueToday(step.plannedEndDate) && step.status !== "completed";
-              const { primary, secondary } = getStatusDetail(step);
+              const display: DisplayStatus = awaitingReviewStepIds.has(step.id) ? "awaiting_review" : step.status;
+              const { primary, secondary } = getStatusDetail(step, display);
               return (
                 <div key={step.id} className="flex flex-1 items-start last:flex-none">
                   <div className="flex w-20 flex-col items-center gap-1 sm:w-28">
                     <div className="relative">
                       <div
-                        className={`flex h-7 w-7 items-center justify-center rounded-full border-2 sm:h-9 sm:w-9 ${ICON_RING[step.status]}`}
-                        title={`${step.stepCode} ${step.stepName} — ${step.status.replace("_", " ")}`}
+                        className={`flex h-7 w-7 items-center justify-center rounded-full border-2 sm:h-9 sm:w-9 ${ICON_RING[display]}`}
+                        title={`${step.stepCode} ${step.stepName} — ${display.replace("_", " ")}`}
                       >
-                        <StepIcon status={step.status} />
+                        <StepIcon status={display} />
                       </div>
                       {overdue && (
                         <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface bg-amber-500" />
@@ -147,12 +170,12 @@ export function StepProgressBar({ steps }: { steps: ProgressStep[] }) {
                       )}
                     </div>
                     <span
-                      className={`line-clamp-2 text-center text-[10px] font-semibold leading-tight break-words sm:text-xs ${LABEL_COLOR[step.status]}`}
+                      className={`line-clamp-2 text-center text-[10px] font-semibold leading-tight break-words sm:text-xs ${LABEL_COLOR[display]}`}
                     >
                       {step.stepName}
                     </span>
                     <span
-                      className={`text-center text-[9px] font-medium leading-tight break-words sm:text-[11px] ${LABEL_COLOR[step.status]}`}
+                      className={`text-center text-[9px] font-medium leading-tight break-words sm:text-[11px] ${LABEL_COLOR[display]}`}
                     >
                       {primary}
                     </span>
@@ -165,7 +188,7 @@ export function StepProgressBar({ steps }: { steps: ProgressStep[] }) {
                   {i < phaseSteps.length - 1 && (
                     <div
                       className={`mx-1 mt-[14px] h-0.5 flex-1 sm:mx-2 sm:mt-[18px] ${
-                        step.status === "completed" ? "bg-emerald-500" : "bg-surface-3"
+                        display === "completed" ? "bg-emerald-500" : display === "awaiting_review" ? "bg-violet-500" : "bg-surface-3"
                       }`}
                     />
                   )}
@@ -178,6 +201,9 @@ export function StepProgressBar({ steps }: { steps: ProgressStep[] }) {
       <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-edge pt-3 text-xs text-fg-muted">
         <span className="flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> Completed
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-violet-500" /> Awaiting review
         </span>
         <span className="flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-full bg-blue-500" /> In progress
