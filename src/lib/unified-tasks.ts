@@ -789,7 +789,7 @@ async function buildWorkTaskTasks(department: Department | null): Promise<Unifie
     department: task.department,
     secondaryDepartment: null,
     status: "not_started" as const,
-    plannedDate: task.plannedDate.toISOString(),
+    plannedDate: task.plannedDate?.toISOString() ?? null,
     actualDate: null,
     overrun: isProcurementStageOverrun(task.plannedDate, null),
     qcPassed: task.qcPassed,

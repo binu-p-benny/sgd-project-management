@@ -773,7 +773,11 @@ model WorkTask {
   // When true, this row gets a Pass/Fail button pair instead of a single Mark complete button —
   // opted into at creation only, same as ServiceItem.isPassFail.
   isPassFail  Boolean    @default(false) @map("is_pass_fail")
-  plannedDate DateTime   @map("planned_date") @db.Timestamptz(3)
+  // Null for a row seeded with no due date yet (see ensureProductionMaterialDeliveryBlock in
+  // step-actions.ts) — every other creation path (the "+ Add row" form, BlockedWorkModal) still
+  // requires one up front, so this is only ever null until an admin editor (or the row's own
+  // department, from /my-tasks) fills it in.
+  plannedDate DateTime?  @map("planned_date") @db.Timestamptz(3)
   actualDate  DateTime?  @map("actual_date") @db.Timestamptz(3)
   // Only meaningful when isPassFail is true — null until that outcome is recorded.
   qcPassed    Boolean?   @map("qc_passed")

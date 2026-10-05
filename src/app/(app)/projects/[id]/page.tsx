@@ -367,7 +367,7 @@ export default async function ProjectDetailPage({
       department: task.department,
       isPassFail: task.isPassFail,
       qcPassed: task.qcPassed,
-      plannedDate: task.plannedDate.toISOString(),
+      plannedDate: task.plannedDate?.toISOString() ?? null,
       actualDate: task.actualDate?.toISOString() ?? null,
       note: task.note,
       overrun: isProcurementStageOverrun(task.plannedDate, task.actualDate),

@@ -9,6 +9,7 @@ import {
   PRODUCTION_MATERIAL_DELIVERY_TASKS,
 } from "@/lib/step-actions";
 import { checkDependencyGate } from "@/lib/dependency-gate";
+import { getUnifiedMyTasks } from "@/lib/unified-tasks";
 import {
   createTestProject,
   ensureTestUsers,
@@ -597,8 +598,46 @@ describe("ensureProductionMaterialDeliveryBlock — the fixed 'Production materi
       expect(row, `${expected.taskLabel} row`).toBeDefined();
       expect(row!.department).toBe(expected.department);
       expect(row!.actualDate).toBeNull();
-      expect(row!.plannedDate).not.toBeNull();
+      // No due date is set at seed time — there's nothing meaningful to default it to; see
+      // ensureProductionMaterialDeliveryBlock's own doc comment.
+      expect(row!.plannedDate).toBeNull();
     }
+  });
+
+  it("a dateless row still reaches its department's /my-tasks, sorted after everything with a real date", async () => {
+    const project = await projectAtPhase3();
+    await ensureProductionMaterialDeliveryBlock(project.id);
+
+    const purchaseTasks = await getUnifiedMyTasks("purchase");
+    const section = purchaseTasks.find((t) => t.kind === "work_task" && t.taskLabel === "Section");
+    expect(section).toBeDefined();
+    expect(section!.plannedDate).toBeNull();
+    expect(section!.overrun).toBe(false);
+
+    // Nulls sort last as a block (see getUnifiedMyTasks' own comparator) — everything before the
+    // first null-dated row must have a real date, and Section (itself null) can't be ahead of it.
+    const sectionIndex = purchaseTasks.findIndex((t) => t.refId === section!.refId);
+    const firstNullIndex = purchaseTasks.findIndex((t) => t.plannedDate === null);
+    expect(purchaseTasks.slice(0, firstNullIndex).every((t) => t.plannedDate !== null)).toBe(true);
+    expect(sectionIndex).toBeGreaterThanOrEqual(firstNullIndex);
+  });
+
+  it("an admin editor can set the planned date once they know it, the same PATCH every other WorkTask row uses", async () => {
+    const project = await projectAtPhase3();
+    await ensureProductionMaterialDeliveryBlock(project.id);
+    const section = (
+      await prisma.workTask.findFirstOrThrow({
+        where: { workBlock: { projectId: project.id, label: PRODUCTION_MATERIAL_DELIVERY_LABEL }, taskLabel: "Section" },
+      })
+    );
+    expect(section.plannedDate).toBeNull();
+
+    const due = new Date("2026-11-10T00:00:00.000Z");
+    await prisma.workTask.update({ where: { id: section.id }, data: { plannedDate: due } });
+
+    const purchaseTasks = await getUnifiedMyTasks("purchase");
+    const updated = purchaseTasks.find((t) => t.refId === section.id)!;
+    expect(updated.plannedDate).toBe(due.toISOString());
   });
 
   it("also seeds it the opportunistic way maybeEarlyUnlockPhase3 unlocks Phase 3 — same page-load pairing the project detail page uses", async () => {

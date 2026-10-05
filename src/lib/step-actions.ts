@@ -399,6 +399,12 @@ export const PRODUCTION_MATERIAL_DELIVERY_LABEL = "Production material Delivery"
  * for the dedicated card this renders as on the project detail page, and buildWorkTaskTasks in
  * unified-tasks.ts for how it reaches Purchase's/Design Engineer's own /my-tasks automatically.
  *
+ * Each row is seeded with no planned date at all (unlike every other WorkTask creation path,
+ * which always requires one up front) — there's nothing meaningful to default it to at seed
+ * time, so it's left for an admin editor (or the row's own department) to set once they actually
+ * know when the material's expected, rather than defaulting to "whenever Phase 3 happened to
+ * unlock" and silently never getting corrected.
+ *
  * Idempotent and safe to call on every page load, same "ensure it exists, do nothing if it
  * already does" shape as maybeEarlyUnlockPhase3 just above — seeded once Phase 3 is real (same
  * moment its own dedicated card starts having somewhere to show), covering both a project newly
@@ -417,13 +423,12 @@ export async function ensureProductionMaterialDeliveryBlock(projectId: string): 
   });
   if (existing) return;
 
-  const seededAt = new Date();
   await prisma.workBlock.create({
     data: {
       projectId,
       label: PRODUCTION_MATERIAL_DELIVERY_LABEL,
       tasks: {
-        create: PRODUCTION_MATERIAL_DELIVERY_TASKS.map((task) => ({ ...task, plannedDate: seededAt })),
+        create: PRODUCTION_MATERIAL_DELIVERY_TASKS.map((task) => ({ ...task, plannedDate: null })),
       },
     },
   });

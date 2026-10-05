@@ -191,7 +191,7 @@ describe("POST /api/work-blocks/[id]/tasks", () => {
       qcPassed: null,
       note: null,
     });
-    expect(stored[0].plannedDate.toISOString()).toBe(PLANNED);
+    expect(stored[0].plannedDate!.toISOString()).toBe(PLANNED);
   });
 
   it("isPassFail defaults to false, and rows keep their creation order across several adds", async () => {
@@ -287,7 +287,7 @@ describe("PATCH /api/work-tasks/[id]", () => {
     expect(response.status).toBe(200);
     const stored = await prisma.workTask.findUniqueOrThrow({ where: { id: task.id } });
     expect(stored.taskLabel).toBe("Corrected label");
-    expect(stored.plannedDate.toISOString()).toBe("2026-11-05T00:00:00.000Z");
+    expect(stored.plannedDate!.toISOString()).toBe("2026-11-05T00:00:00.000Z");
     // department and isPassFail are untouched — this PATCH only ever moves taskLabel/plannedDate.
     expect(stored.department).toBe("purchase");
   });

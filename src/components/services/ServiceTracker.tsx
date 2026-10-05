@@ -39,7 +39,10 @@ export interface ServiceItemData {
   department: Department;
   isPassFail: boolean;
   qcPassed: boolean | null;
-  plannedDate: string;
+  // Null only for a WorkTask row seeded with no due date yet (see
+  // ensureProductionMaterialDeliveryBlock in step-actions.ts) — a ServiceItem's own plannedDate
+  // is always set at creation, so this is never null for one of those.
+  plannedDate: string | null;
   actualDate: string | null;
   note: string | null;
   overrun: boolean;
@@ -122,7 +125,7 @@ export function ItemRow({
   const effectiveActualDate = dateDraft || toDateInputValue(new Date().toISOString());
   const plannedDateValue = toDateInputValue(item.plannedDate);
   const isLate = plannedDateValue !== "" && effectiveActualDate > plannedDateValue;
-  const isSavedLate = item.actualDate !== null && item.actualDate > item.plannedDate;
+  const isSavedLate = item.actualDate !== null && item.plannedDate !== null && item.actualDate > item.plannedDate;
   const needsReason = (isCorrection || isLate) && !noteDraft.trim();
   const isQC = item.isPassFail;
   const failNeedsNote = isQC && !noteDraft.trim();
