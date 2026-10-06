@@ -111,6 +111,21 @@ function addWorkingDays(date: Date, days: number): Date {
   return result;
 }
 
+/** The mirror of addWorkingDays for counting backward from a later anchor — walks one calendar
+ *  day at a time toward the past, skipping Sunday the same way, so neither end of a window
+ *  computed this way can ever land on one. */
+function subtractWorkingDays(date: Date, days: number): Date {
+  let result = date;
+  let remaining = days;
+  while (remaining > 0) {
+    result = addDays(result, -1);
+    if (result.getDay() !== 0) {
+      remaining -= 1;
+    }
+  }
+  return result;
+}
+
 /** Section only: material despatch is expected 7 working days after Order confirmed's own
  *  ground-truth date (see computeSectionChainDates) — chains off the previous stage rather than
  *  the shared anchor every stage before it uses. */
@@ -669,6 +684,37 @@ export function computeInstallationPlannedWindow(itemQCPlannedDates: (Date | nul
     qcPlanned,
     start: addWorkingDays(qcPlanned, INSTALLATION_WINDOW_START_OFFSET_DAYS),
     end: addWorkingDays(qcPlanned, INSTALLATION_WINDOW_END_OFFSET_DAYS),
+  };
+}
+
+/** The aluminum framework (3C1) is forecast to finish this many days before Installation's own
+ *  forecasted start, and to begin this many days before that same start. Counted backward the
+ *  same working-day way as every forward chain above (see subtractWorkingDays) — Sundays don't
+ *  count toward either span, so neither date can land on one. */
+export const ALUMINUM_FRAMEWORK_START_OFFSET_DAYS = 10;
+export const ALUMINUM_FRAMEWORK_END_OFFSET_DAYS = 1;
+
+export interface AluminumFrameworkPlannedWindow {
+  /** Installation's own forecasted start date both ends below are counted back from. */
+  installationStart: Date;
+  start: Date;
+  end: Date;
+}
+
+/**
+ * Forecast of when the aluminum framework (3C1) will run, counted backward from Installation's
+ * own forecasted start date (see computeInstallationPlannedWindow) rather than forward from
+ * anything of its own — the framework has to be done just before installation can begin, so its
+ * window is defined relative to that, the same "forecast ahead of the real step" idea
+ * InstallationWindowCard already uses for 3C2. Purely a read-only preview: like Installation's
+ * own forecast, this never writes to 3C1's actual plannedStartDate/plannedEndDate columns, which
+ * stay whatever an admin editor has set (or the step template's own default) independently.
+ */
+export function computeAluminumFrameworkPlannedWindow(installationStart: Date): AluminumFrameworkPlannedWindow {
+  return {
+    installationStart,
+    start: subtractWorkingDays(installationStart, ALUMINUM_FRAMEWORK_START_OFFSET_DAYS),
+    end: subtractWorkingDays(installationStart, ALUMINUM_FRAMEWORK_END_OFFSET_DAYS),
   };
 }
 

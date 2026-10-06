@@ -11,6 +11,7 @@ import { PaymentEditor } from "@/components/projects/PaymentEditor";
 import { PhaseReviewCard } from "@/components/projects/PhaseReviewCard";
 import { WebsiteReviewCard } from "@/components/projects/WebsiteReviewCard";
 import { InstallationWindowCard } from "@/components/projects/InstallationWindowCard";
+import { AluminumFrameworkWindowCard } from "@/components/projects/AluminumFrameworkWindowCard";
 import { AdditionalWorks, type WorkBlockData } from "@/components/projects/AdditionalWorks";
 import { ProductionMaterialDeliveryTracker } from "@/components/projects/ProductionMaterialDeliveryTracker";
 import { StepProgressBar } from "@/components/projects/StepProgressBar";
@@ -32,6 +33,7 @@ import {
   computePhase2PlanAnchor,
   computeAllProcurementPlannedDates,
   computeInstallationPlannedWindow,
+  computeAluminumFrameworkPlannedWindow,
   withLiveExpectedArrivalDates,
 } from "@/lib/procurement";
 import { findUpstreamDelay } from "@/lib/reschedule";
@@ -620,16 +622,22 @@ export default async function ProjectDetailPage({
   const sectionItem = project.procurementItems.find((i) => i.itemType === "section");
   const sectionQCPlanned = sectionItem ? computeSectionQCPlanned(sectionItem, phase2PlanAnchor) : null;
 
-  // Preview card between Phase 1 and Phase 2 — see InstallationWindowCard. Each item's QC planned
-  // date comes from the same computeAllProcurementPlannedDates the tracker's own "QC checked" row
-  // is kept in sync with (unified-tasks and the KPI report read it too), not re-derived here.
-  // Always shown, even once the real Phase 3 section exists (its 3C2 row is kept in sync with this
-  // exact computation by default — see reschedule.ts — unless an admin has since overridden it).
-  const installationWindowCard = (
-    <InstallationWindowCard
-      plannedWindow={computeInstallationPlannedWindow(
-        project.procurementItems.map((item) => computeAllProcurementPlannedDates(item, phase2PlanAnchor, sectionQCPlanned).qc)
-      )}
+  // Preview cards between Phase 1 and Phase 2 — see InstallationWindowCard/AluminumFrameworkWindowCard.
+  // Each item's QC planned date comes from the same computeAllProcurementPlannedDates the
+  // tracker's own "QC checked" row is kept in sync with (unified-tasks and the KPI report read it
+  // too), not re-derived here. Always shown, even once the real Phase 3 section exists (3C2's own
+  // row is kept in sync with this exact computation by default — see reschedule.ts — unless an
+  // admin has since overridden it). The aluminum framework forecast counts backward from this same
+  // installation window's own start, so it's computed once here and shared by both cards.
+  const installationPlannedWindow = computeInstallationPlannedWindow(
+    project.procurementItems.map((item) => computeAllProcurementPlannedDates(item, phase2PlanAnchor, sectionQCPlanned).qc)
+  );
+  const installationWindowCard = <InstallationWindowCard plannedWindow={installationPlannedWindow} />;
+  const aluminumFrameworkWindowCard = (
+    <AluminumFrameworkWindowCard
+      plannedWindow={
+        installationPlannedWindow ? computeAluminumFrameworkPlannedWindow(installationPlannedWindow.start) : null
+      }
     />
   );
 
@@ -1157,7 +1165,12 @@ export default async function ProjectDetailPage({
                   insertContent={phase === "phase_2" ? procurementTracker : undefined}
                   appendToBeforeGrid={phase === "phase_1" ? phase1ReviewCard : undefined}
                 />
-                {phase === "phase_1" && installationWindowCard}
+                {phase === "phase_1" && (
+                  <>
+                    {aluminumFrameworkWindowCard}
+                    {installationWindowCard}
+                  </>
+                )}
               </Fragment>
             ))
           : beforePhase3.map(({ phase, steps }) => (
@@ -1170,7 +1183,12 @@ export default async function ProjectDetailPage({
                   insertContent={phase === "phase_2" ? procurementTracker : undefined}
                   trailingContent={phase === "phase_1" ? phase1ReviewCard : undefined}
                 />
-                {phase === "phase_1" && installationWindowCard}
+                {phase === "phase_1" && (
+                  <>
+                    {aluminumFrameworkWindowCard}
+                    {installationWindowCard}
+                  </>
+                )}
               </Fragment>
             ))}
       </div>

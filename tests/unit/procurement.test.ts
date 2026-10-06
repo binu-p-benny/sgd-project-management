@@ -22,8 +22,11 @@ import {
   withLiveExpectedArrivalDates,
   computeInstallationPlannedWindow,
   computeProjectInstallationForecast,
+  computeAluminumFrameworkPlannedWindow,
   INSTALLATION_WINDOW_START_OFFSET_DAYS,
   INSTALLATION_WINDOW_END_OFFSET_DAYS,
+  ALUMINUM_FRAMEWORK_START_OFFSET_DAYS,
+  ALUMINUM_FRAMEWORK_END_OFFSET_DAYS,
   type ProcurementItemArrivalInputs,
 } from "@/lib/procurement";
 
@@ -705,6 +708,52 @@ describe("computeInstallationPlannedWindow: QC checked planned date + 10 days (s
     ])!;
 
     expect(result.qcPlanned).toEqual(overrideQC);
+  });
+});
+
+describe("computeAluminumFrameworkPlannedWindow: Installation forecasted start - 10 days (start) / - 1 day (end), Sundays not counted", () => {
+  it("uses the offsets the spec names", () => {
+    expect(ALUMINUM_FRAMEWORK_START_OFFSET_DAYS).toBe(10);
+    expect(ALUMINUM_FRAMEWORK_END_OFFSET_DAYS).toBe(1);
+  });
+
+  it("end is Installation's forecasted start - 1 day, start is - 10 days, skipping Sundays", () => {
+    const installationStart = new Date("2026-12-22T00:00:00.000Z"); // Tuesday
+    const result = computeAluminumFrameworkPlannedWindow(installationStart);
+
+    expect(result.installationStart).toEqual(installationStart);
+    // Counting back 1 working day from Tuesday 22nd lands on Monday 21st — no Sunday in the way.
+    expect(result.end).toEqual(new Date("2026-12-21T00:00:00.000Z"));
+    // Counting back 10 working days from Tuesday 22nd: the 20th and 13th are Sundays, so those
+    // two calendar days don't count, pushing the result back two extra days.
+    expect(result.start).toEqual(new Date("2026-12-10T00:00:00.000Z"));
+  });
+
+  it("neither end can land on a Sunday — counting back from a Monday by exactly 1 working day would otherwise land on Sunday the 13th", () => {
+    const installationStart = new Date("2026-12-14T00:00:00.000Z"); // Monday
+    const result = computeAluminumFrameworkPlannedWindow(installationStart);
+
+    expect(result.end.getDay()).not.toBe(0);
+    expect(result.start.getDay()).not.toBe(0);
+    expect(result.end).toEqual(new Date("2026-12-12T00:00:00.000Z")); // Saturday, not Sunday the 13th
+  });
+
+  it("an Installation start that itself falls on a Sunday is just the counting-back point — the span starts the day before", () => {
+    const installationStart = new Date("2026-12-13T00:00:00.000Z"); // Sunday
+    const result = computeAluminumFrameworkPlannedWindow(installationStart);
+
+    expect(result.installationStart).toEqual(installationStart);
+    expect(result.end).toEqual(new Date("2026-12-12T00:00:00.000Z")); // Saturday
+  });
+
+  it("chains correctly with computeInstallationPlannedWindow's own output — the real wiring the project page uses", () => {
+    const qc = new Date("2026-12-10T00:00:00.000Z"); // Thursday
+    const installationWindow = computeInstallationPlannedWindow([qc])!;
+    expect(installationWindow.start).toEqual(new Date("2026-12-22T00:00:00.000Z"));
+
+    const framework = computeAluminumFrameworkPlannedWindow(installationWindow.start);
+    expect(framework.end).toEqual(new Date("2026-12-21T00:00:00.000Z"));
+    expect(framework.start).toEqual(new Date("2026-12-10T00:00:00.000Z"));
   });
 });
 
