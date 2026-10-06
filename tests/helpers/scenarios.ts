@@ -1,7 +1,7 @@
 import type { Department, ItemType, VisitUrgency } from "@prisma/client";
 import { updateStepStatus, syncDerivedStepStatus, syncGlassPOStepStatus } from "@/lib/step-actions";
 import { computeExpectedArrivalDate } from "@/lib/procurement";
-import { prisma, getStep } from "./db";
+import { prisma, getStep, FULLY_CHECKED_WELCOME_CALL } from "./db";
 
 /** Drives a fresh project through 1A->1D completion. Not for visitUrgency = site_not_ready (1B auto-blocks). */
 export async function advanceThroughPhase1(
@@ -10,7 +10,10 @@ export async function advanceThroughPhase1(
   urgency: Exclude<VisitUrgency, "site_not_ready"> = "emergency"
 ) {
   const oneA = await getStep(projectId, "1A");
-  await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: urgency });
+  await updateStepStatus(oneA.id, "completed", users.hr_admin, {
+    visitUrgency: urgency,
+    welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL,
+  });
   const oneB = await getStep(projectId, "1B");
   await updateStepStatus(oneB.id, "completed", users.design_engineer);
   const oneC = await getStep(projectId, "1C");

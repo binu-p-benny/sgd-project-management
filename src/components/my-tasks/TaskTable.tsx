@@ -40,6 +40,18 @@ const MANUAL_CONTRACTOR_STEP_CODES = new Set(["3C1"]);
 // here), so the label is fixed, not computed per row; it only ever appears for these two.
 const DATE_RANGE_STEP_CODES = new Set(["3C1", "3C2"]);
 
+// 1A only — the 5 fixed things the welcome call must cover before 1A can complete (see
+// checklistWelcomingMessage etc. on PhaseStep, and the matching requirement in
+// updateStepStatus). Order here is the order they're shown in, not meaningful otherwise.
+const WELCOME_CALL_CHECKLIST_ITEMS = [
+  { key: "welcomingMessage", label: "Welcoming message" },
+  { key: "paymentDetails", label: "Payment details" },
+  { key: "projectSchedule", label: "Project schedule" },
+  { key: "teamIntro", label: "Intro about team members" },
+  { key: "glassIssues", label: "Glass issues" },
+] as const;
+type WelcomeCallChecklistKey = (typeof WELCOME_CALL_CHECKLIST_ITEMS)[number]["key"];
+
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
   return new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" }).format(new Date(iso));
@@ -177,6 +189,18 @@ function useTaskActions(task: UnifiedTask) {
   const [blockedReason, setBlockedReason] = useState("");
   const [blockedNote, setBlockedNote] = useState("");
   const [visitUrgency, setVisitUrgency] = useState("");
+  // 1A only, collected alongside visitUrgency in the same panel (see VisitUrgencyPanelBody) —
+  // all 5 must be checked before 1A can complete; see WELCOME_CALL_CHECKLIST_ITEMS and
+  // confirmVisitUrgency below. Server-enforced too (see PATCH /api/phase-steps/[id]), this is
+  // just the early UX copy of that same rule.
+  const [checklist, setChecklist] = useState<Record<WelcomeCallChecklistKey, boolean>>({
+    welcomingMessage: false,
+    paymentDetails: false,
+    projectSchedule: false,
+    teamIntro: false,
+    glassIssues: false,
+  });
+  const checklistFullyChecked = Object.values(checklist).every(Boolean);
   const [delayCategory, setDelayCategory] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -530,7 +554,11 @@ function useTaskActions(task: UnifiedTask) {
       setError("Choose the visit urgency");
       return;
     }
-    completePhaseStep({ visitUrgency });
+    if (!checklistFullyChecked) {
+      setError("Check off all 5 welcome-call items first");
+      return;
+    }
+    completePhaseStep({ visitUrgency, welcomeCallChecklist: checklist });
   }
   function handleQCOutcome(passed: boolean) {
     if (passed) {
@@ -588,6 +616,9 @@ function useTaskActions(task: UnifiedTask) {
     setBlockedNote,
     visitUrgency,
     setVisitUrgency,
+    checklist,
+    setChecklist,
+    checklistFullyChecked,
     delayCategory,
     setDelayCategory,
     submitting,
@@ -1136,6 +1167,20 @@ function VisitUrgencyPanelBody({ s, size }: { s: TaskActions; size: Size }) {
           ))}
         </select>
       )}
+      <div className="flex w-full flex-col gap-1.5">
+        <span className="text-xs font-medium text-fg-muted">Covered on the call</span>
+        {WELCOME_CALL_CHECKLIST_ITEMS.map((item) => (
+          <label key={item.key} className="flex items-center gap-2 text-sm text-fg">
+            <input
+              type="checkbox"
+              checked={s.checklist[item.key]}
+              onChange={(e) => s.setChecklist((prev) => ({ ...prev, [item.key]: e.target.checked }))}
+              className="h-4 w-4 rounded border-edge-2 accent-accent"
+            />
+            {item.label}
+          </label>
+        ))}
+      </div>
       <div className="flex gap-2">
         <button className={btnCls("secondary", size)} onClick={() => s.setPanel("none")} disabled={s.submitting}>
           Cancel
@@ -1143,7 +1188,9 @@ function VisitUrgencyPanelBody({ s, size }: { s: TaskActions; size: Size }) {
         <button
           className={btnCls("primary", size)}
           onClick={s.confirmVisitUrgency}
-          disabled={s.submitting || s.needsLateReason || (s.needsDelayCategory && !s.delayCategory)}
+          disabled={
+            s.submitting || s.needsLateReason || (s.needsDelayCategory && !s.delayCategory) || !s.checklistFullyChecked
+          }
         >
           {s.submitting ? <Spinner className={spinnerCls(size)} /> : "Confirm complete"}
         </button>

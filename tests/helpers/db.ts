@@ -7,6 +7,16 @@ export { prisma };
 
 export const TEST_PREFIX = "__TEST__";
 
+/** All 5 welcome-call checklist items checked — what every test completing 1A needs to pass
+ *  alongside visitUrgency now that updateStepStatus requires it (see step-actions.ts). */
+export const FULLY_CHECKED_WELCOME_CALL = {
+  welcomingMessage: true,
+  paymentDetails: true,
+  projectSchedule: true,
+  teamIntro: true,
+  glassIssues: true,
+} as const;
+
 const ALL_DEPARTMENTS: Department[] = [
   "hr_admin",
   "project_engineer",

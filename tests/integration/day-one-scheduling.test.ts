@@ -38,6 +38,7 @@ import {
   findStep,
   getProcurementItems,
   cleanupTestProjects,
+  FULLY_CHECKED_WELCOME_CALL,
 } from "../helpers/db";
 import { advanceThroughPhase1, advanceThroughPhase2 } from "../helpers/scenarios";
 import type { Department } from "@prisma/client";
@@ -116,7 +117,7 @@ describe("Phase 3 never gets planned dates, except 3C2 (see computeInstallationP
   it("Phase 3 rows seed with null planned dates once 2F completes, except 3C2 which is backfilled immediately", async () => {
     const project = await createTestProjectDayOne({ visitUrgency: "emergency" });
     const oneA = await getStep(project.id, "1A");
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
     const oneB = await getStep(project.id, "1B");
     await updateStepStatus(oneB.id, "completed", users.project_engineer);
     const oneC = await getStep(project.id, "1C");
@@ -146,7 +147,7 @@ describe("Phase 3 never gets planned dates, except 3C2 (see computeInstallationP
   it("rescheduleProjectDates leaves Phase 3 rows untouched even when it runs (3C2 aside)", async () => {
     const project = await createTestProjectDayOne({ visitUrgency: "emergency" });
     const oneA = await getStep(project.id, "1A");
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
     const oneB = await getStep(project.id, "1B");
     await updateStepStatus(oneB.id, "completed", users.project_engineer);
     const oneC = await getStep(project.id, "1C");
@@ -359,7 +360,7 @@ describe("2D2's planned end date can be manually overridden — the formula is o
   async function projectAtPhase2() {
     const project = await createTestProjectDayOne({ visitUrgency: "hot" });
     const oneA = await getStep(project.id, "1A");
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
     const oneB = await getStep(project.id, "1B");
     await updateStepStatus(oneB.id, "completed", users.project_engineer);
     const oneC = await getStep(project.id, "1C");
@@ -482,7 +483,10 @@ describe("1B's delay_category controls whether a late completion moves 1C's plan
   async function completeOneAAndGoLate(visitUrgency: "hot" = "hot") {
     const project = await createTestProjectDayOne({ visitUrgency });
     const oneA = await getStep(project.id, "1A");
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, {
+      visitUrgency,
+      welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL,
+    });
 
     const oneCFirst = await getStep(project.id, "1C");
     const oneB = await getStep(project.id, "1B");
@@ -528,7 +532,7 @@ describe("1B's delay_category controls whether a late completion moves 1C's plan
   it("an on-time 1B never requires or stores a delay_category", async () => {
     const project = await createTestProjectDayOne({ visitUrgency: "hot" });
     const oneA = await getStep(project.id, "1A");
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
     const oneB = await getStep(project.id, "1B");
     await prisma.phaseStep.update({ where: { id: oneB.id }, data: { actualEndDate: oneB.plannedEndDate } });
 
@@ -560,7 +564,7 @@ describe("1B's delay_category controls whether a late completion moves 1C's plan
   it("getMyTasks reports no upstream delay once 1B completes on time", async () => {
     const project = await createTestProjectDayOne({ visitUrgency: "hot" });
     const oneA = await getStep(project.id, "1A");
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
     const oneB = await getStep(project.id, "1B");
     await updateStepStatus(oneB.id, "completed", users.project_engineer);
 
@@ -587,11 +591,15 @@ describe("The delay-category requirement now also covers 1A, 1C, 1D, 2D2 — not
     await prisma.phaseStep.update({ where: { id: oneA.id }, data: { actualEndDate: lateEnd } });
 
     await expect(
-      updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot" })
+      updateStepStatus(oneA.id, "completed", users.hr_admin, {
+        visitUrgency: "hot",
+        welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL,
+      })
     ).rejects.toMatchObject({ status: 400 });
 
     const updated = await updateStepStatus(oneA.id, "completed", users.hr_admin, {
       visitUrgency: "hot",
+      welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL,
       delayCategory: "client_side",
     });
     expect(updated.delayCategory).toBe("client_side");
@@ -604,7 +612,7 @@ describe("The delay-category requirement now also covers 1A, 1C, 1D, 2D2 — not
   it("rejects completing 1D late with no delayCategory; an in_house 1D freezes 2A's planned finish exactly where it was first set", async () => {
     const project = await createTestProjectDayOne({ visitUrgency: "hot" });
     const oneA = await getStep(project.id, "1A");
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
     const oneB = await getStep(project.id, "1B");
     await updateStepStatus(oneB.id, "completed", users.project_engineer);
     const oneC = await getStep(project.id, "1C");
@@ -631,7 +639,7 @@ describe("2D1's planned end date tracks the latest of Section/hardware/gasket's 
   async function projectAtPhase2() {
     const project = await createTestProjectDayOne({ visitUrgency: "hot" });
     const oneA = await getStep(project.id, "1A");
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
     const oneB = await getStep(project.id, "1B");
     await updateStepStatus(oneB.id, "completed", users.project_engineer);
     const oneC = await getStep(project.id, "1C");
@@ -705,7 +713,7 @@ describe("2D2's planned end date tracks Section's own Order confirmed planned da
   async function projectAtPhase2() {
     const project = await createTestProjectDayOne({ visitUrgency: "hot" });
     const oneA = await getStep(project.id, "1A");
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
     const oneB = await getStep(project.id, "1B");
     await updateStepStatus(oneB.id, "completed", users.project_engineer);
     const oneC = await getStep(project.id, "1C");

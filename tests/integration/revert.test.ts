@@ -11,6 +11,7 @@ import {
   getStatusLogs,
   cleanupTestProjects,
   prisma,
+  FULLY_CHECKED_WELCOME_CALL,
 } from "../helpers/db";
 import {
   advanceThroughPhase1,
@@ -38,7 +39,7 @@ describe("reverting a completed step reopens it for correction", () => {
   it("moves it back to in_progress and clears actual_end_date", async () => {
     const project = await createTestProject();
     const oneA = await getStep(project.id, "1A");
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
 
     expect((await getStep(project.id, "1A")).actualEndDate).not.toBeNull();
 
@@ -52,7 +53,7 @@ describe("reverting a completed step reopens it for correction", () => {
   it("records the reason on the step's status log", async () => {
     const project = await createTestProject();
     const oneA = await getStep(project.id, "1A");
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
     await revertStep(oneA.id, users.owner_admin, { reason: REASON });
 
     const logs = await getStatusLogs(oneA.id);
@@ -97,7 +98,7 @@ describe("reverting a completed step reopens it for correction", () => {
     });
 
     const oneA = await getStep(project.id, "1A");
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
     await expect(revertStep(oneA.id, users.owner_admin, { reason: "   " })).rejects.toMatchObject({
       status: 400,
     });
@@ -169,7 +170,7 @@ describe("a revert leaves nothing behind from after the step", () => {
   it("clears the visit urgency that completing 1A had set", async () => {
     const project = await createTestProject();
     const oneA = await getStep(project.id, "1A");
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
     expect((await getProject(project.id)).visitUrgency).toBe("hot");
 
     const plan = await planStepRevert(oneA.id);

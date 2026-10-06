@@ -9,6 +9,7 @@ import {
   getProject,
   getStatusLogs,
   cleanupTestProjects,
+  FULLY_CHECKED_WELCOME_CALL,
 } from "../helpers/db";
 import type { Department, VisitUrgency } from "@prisma/client";
 
@@ -41,7 +42,7 @@ describe("Phase 1 — server-side dependency gate", () => {
     const oneA = await getStep(project.id, "1A");
 
     await updateStepStatus(oneA.id, "in_progress", users.hr_admin);
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "hot", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
 
     const logs = await getStatusLogs(oneA.id);
     expect(logs.length).toBeGreaterThanOrEqual(2);
@@ -62,6 +63,59 @@ describe("Phase 1 — 1A completion requires visit_urgency", () => {
   });
 });
 
+describe("Phase 1 — 1A completion requires the full welcome-call checklist", () => {
+  it("rejects completing 1A with no checklist at all, even with visitUrgency supplied", async () => {
+    const project = await createTestProject();
+    const oneA = await getStep(project.id, "1A");
+
+    await expect(
+      updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency" })
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("rejects completing 1A when any single item is left unchecked", async () => {
+    const project = await createTestProject();
+    const oneA = await getStep(project.id, "1A");
+
+    for (const missing of Object.keys(FULLY_CHECKED_WELCOME_CALL) as (keyof typeof FULLY_CHECKED_WELCOME_CALL)[]) {
+      await expect(
+        updateStepStatus(oneA.id, "completed", users.hr_admin, {
+          visitUrgency: "emergency",
+          welcomeCallChecklist: { ...FULLY_CHECKED_WELCOME_CALL, [missing]: false },
+        }),
+        `should reject with ${missing} unchecked`
+      ).rejects.toMatchObject({ status: 400 });
+    }
+  });
+
+  it("accepts and persists the checklist once every item is checked", async () => {
+    const project = await createTestProject();
+    const oneA = await getStep(project.id, "1A");
+
+    const updated = await updateStepStatus(oneA.id, "completed", users.hr_admin, {
+      visitUrgency: "emergency",
+      welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL,
+    });
+
+    expect(updated.checklistWelcomingMessage).toBe(true);
+    expect(updated.checklistPaymentDetails).toBe(true);
+    expect(updated.checklistProjectSchedule).toBe(true);
+    expect(updated.checklistTeamIntro).toBe(true);
+    expect(updated.checklistGlassIssues).toBe(true);
+  });
+
+  it("defaults to all-false on a freshly created step, before 1A is ever completed", async () => {
+    const project = await createTestProject();
+    const oneA = await getStep(project.id, "1A");
+
+    expect(oneA.checklistWelcomingMessage).toBe(false);
+    expect(oneA.checklistPaymentDetails).toBe(false);
+    expect(oneA.checklistProjectSchedule).toBe(false);
+    expect(oneA.checklistTeamIntro).toBe(false);
+    expect(oneA.checklistGlassIssues).toBe(false);
+  });
+});
+
 describe("Phase 1 — 1B duration auto-derived from visit_urgency", () => {
   const cases: { urgency: VisitUrgency; expectedDays: number }[] = [
     { urgency: "emergency", expectedDays: 2 },
@@ -74,7 +128,7 @@ describe("Phase 1 — 1B duration auto-derived from visit_urgency", () => {
       const project = await createTestProject();
       const oneA = await getStep(project.id, "1A");
 
-      await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: urgency });
+      await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: urgency, welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
 
       const oneB = await getStep(project.id, "1B");
       expect(oneB.plannedDurationDays).toBe(expectedDays);
@@ -95,7 +149,7 @@ describe("Phase 1 — 1B duration auto-derived from visit_urgency", () => {
   it("completing 1B auto-starts 1C the same way 1A auto-starts 1B", async () => {
     const project = await createTestProject();
     const oneA = await getStep(project.id, "1A");
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
 
     const oneC = await getStep(project.id, "1C");
     expect(oneC.status).toBe("not_started"); // 1B isn't done yet
@@ -115,7 +169,7 @@ describe("Phase 1 — 1B duration auto-derived from visit_urgency", () => {
     const project = await createTestProject();
     const oneA = await getStep(project.id, "1A");
 
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "site_not_ready" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "site_not_ready", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
 
     const oneB = await getStep(project.id, "1B");
     expect(oneB.status).toBe("blocked");
@@ -135,7 +189,7 @@ describe("Phase 1 — full 1A->1B->1C->1D walk, phase 2 gated on 1D", () => {
   it("phase 2 steps do not exist until 1D is completed, and are created immediately once it is", async () => {
     const project = await createTestProject();
     const oneA = await getStep(project.id, "1A");
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
 
     const oneC = await getStep(project.id, "1C");
     await expect(
@@ -167,7 +221,7 @@ describe("Phase 1 — full 1A->1B->1C->1D walk, phase 2 gated on 1D", () => {
   it("blocking 1D with client_payment_hold blocks the step and the whole project, and still withholds phase 2", async () => {
     const project = await createTestProject();
     const oneA = await getStep(project.id, "1A");
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
     const oneB = await getStep(project.id, "1B");
     await updateStepStatus(oneB.id, "completed", users.project_engineer);
     const oneC = await getStep(project.id, "1C");
@@ -203,6 +257,7 @@ describe("updateStepStatus — caller-supplied actual dates (the /my-tasks table
     const backdated = new Date("2020-01-15T00:00:00.000Z");
     await updateStepStatus(oneA.id, "completed", users.hr_admin, {
       visitUrgency: "emergency",
+      welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL,
       actualEndDate: backdated,
     });
     const after = await getStep(project.id, "1A");
@@ -225,12 +280,14 @@ describe("updateStepStatus — caller-supplied actual dates (the /my-tasks table
     await expect(
       updateStepStatus(oneA.id, "completed", users.hr_admin, {
         visitUrgency: "emergency",
+        welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL,
         actualEndDate: wayAfterPlanned,
       })
     ).rejects.toThrow(StepActionError);
     await expect(
       updateStepStatus(oneA.id, "completed", users.hr_admin, {
         visitUrgency: "emergency",
+        welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL,
         actualEndDate: wayAfterPlanned,
         delayCategory: "client_side",
       })
@@ -241,7 +298,7 @@ describe("updateStepStatus — caller-supplied actual dates (the /my-tasks table
     const project = await createTestProject();
     const oneA = await getStep(project.id, "1A");
     const before = Date.now();
-    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency" });
+    await updateStepStatus(oneA.id, "completed", users.hr_admin, { visitUrgency: "emergency", welcomeCallChecklist: FULLY_CHECKED_WELCOME_CALL });
     const after = await getStep(project.id, "1A");
     expect(after.actualEndDate!.getTime()).toBeGreaterThanOrEqual(before);
   });

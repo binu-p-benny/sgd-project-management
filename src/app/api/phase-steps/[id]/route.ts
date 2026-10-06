@@ -19,6 +19,16 @@ const updateSchema = z.object({
   blockedNote: z.string().optional(),
   notes: z.string().optional(),
   visitUrgency: z.nativeEnum(VisitUrgency).optional(),
+  // 1A only, alongside visitUrgency — see updateStepStatus's own requiredness check.
+  welcomeCallChecklist: z
+    .object({
+      welcomingMessage: z.boolean(),
+      paymentDetails: z.boolean(),
+      projectSchedule: z.boolean(),
+      teamIntro: z.boolean(),
+      glassIssues: z.boolean(),
+    })
+    .optional(),
   delayCategory: z.nativeEnum(DelayCategory).optional(),
   // 3E only — see the branch below for why a Fail (qcPassed: false) never carries a status.
   qcPassed: z.boolean().optional(),

@@ -92,6 +92,16 @@ export interface UpdateStepStatusOptions {
   blockedNote?: string;
   notes?: string;
   visitUrgency?: VisitUrgency; // only meaningful when completing 1A
+  // Only meaningful when completing 1A, alongside visitUrgency — all 5 must be true to do so
+  // (see updateStepStatus). Persisted onto PhaseStep's own checklistXxx columns as a record
+  // that the welcome call actually covered them, not just a client-side gate.
+  welcomeCallChecklist?: {
+    welcomingMessage: boolean;
+    paymentDetails: boolean;
+    projectSchedule: boolean;
+    teamIntro: boolean;
+    glassIssues: boolean;
+  };
   delayCategory?: DelayCategory; // only meaningful when completing a DELAY_CATEGORY_STEP_CODES step after its planned finish
   // Only meaningful when completing 3E, and must be true to do so — a Fail is recorded through
   // the plain field-edit branch in /api/phase-steps/[id] instead, without a status transition
@@ -1093,6 +1103,21 @@ export async function updateStepStatus(
     throw new StepActionError(400, "visitUrgency is required to complete 1A");
   }
 
+  // All 5 welcome-call checklist items (welcoming message, payment details, project schedule,
+  // team intro, glass issues) must be checked before 1A can complete — same "required right
+  // alongside visitUrgency" treatment, not a softer client-side-only nudge.
+  const checklist = options.welcomeCallChecklist;
+  const checklistFullyChecked =
+    !!checklist &&
+    checklist.welcomingMessage &&
+    checklist.paymentDetails &&
+    checklist.projectSchedule &&
+    checklist.teamIntro &&
+    checklist.glassIssues;
+  if (step.stepCode === "1A" && newStatus === "completed" && !checklistFullyChecked) {
+    throw new StepActionError(400, "All 5 welcome-call checklist items must be checked to complete 1A");
+  }
+
   // 3E can only reach "completed" once QC has actually passed — a Fail is recorded without a
   // status transition at all (see /api/phase-steps/[id]), so reaching this point with newStatus
   // "completed" for 3E should always carry qcPassed: true. Guards against a stray direct call
@@ -1139,6 +1164,16 @@ export async function updateStepStatus(
       actualEndDate: newStatus === "completed" && !step.actualEndDate ? (options.actualEndDate ?? now) : undefined,
       // Guarded above to always be true by the time newStatus is "completed" for 3E.
       ...(step.stepCode === "3E" && newStatus === "completed" ? { qcPassed: true, qcCheckedAt: now } : {}),
+      // Guarded above to always be fully checked by the time newStatus is "completed" for 1A.
+      ...(step.stepCode === "1A" && newStatus === "completed" && checklist
+        ? {
+            checklistWelcomingMessage: checklist.welcomingMessage,
+            checklistPaymentDetails: checklist.paymentDetails,
+            checklistProjectSchedule: checklist.projectSchedule,
+            checklistTeamIntro: checklist.teamIntro,
+            checklistGlassIssues: checklist.glassIssues,
+          }
+        : {}),
     },
   });
 

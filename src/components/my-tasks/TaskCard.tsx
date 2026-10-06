@@ -140,6 +140,18 @@ const DELAY_CATEGORY_STEP_CODES = new Set(["1A", "1B", "1C", "1D", "2D2"]);
 // rows it unlocks live in a separate SiteQCTracker component below this card.
 const QC_STEP_CODES = new Set(["3E"]);
 
+// 1A only — the 5 fixed things the welcome call must cover before 1A can complete (mirrors
+// TaskTable.tsx's own copy of this same list — see that file's comment for why it's duplicated
+// rather than shared; the server-side requirement lives in updateStepStatus/step-actions.ts).
+const WELCOME_CALL_CHECKLIST_ITEMS = [
+  { key: "welcomingMessage", label: "Welcoming message" },
+  { key: "paymentDetails", label: "Payment details" },
+  { key: "projectSchedule", label: "Project schedule" },
+  { key: "teamIntro", label: "Intro about team members" },
+  { key: "glassIssues", label: "Glass issues" },
+] as const;
+type WelcomeCallChecklistKey = (typeof WELCOME_CALL_CHECKLIST_ITEMS)[number]["key"];
+
 const btnPrimary =
   "flex-1 flex h-11 items-center justify-center rounded-lg bg-accent px-3 text-sm font-medium text-white transition-colors hover:bg-accent-2 disabled:opacity-40";
 const btnSecondary =
@@ -246,6 +258,16 @@ export function TaskCard({
   const [blockedReason, setBlockedReason] = useState("");
   const [blockedNote, setBlockedNote] = useState("");
   const [visitUrgency, setVisitUrgency] = useState("");
+  // 1A only, collected alongside visitUrgency in the complete1a panel — all 5 must be checked
+  // before confirmComplete1A will submit; server-enforced too (see PATCH /api/phase-steps/[id]).
+  const [checklist, setChecklist] = useState<Record<WelcomeCallChecklistKey, boolean>>({
+    welcomingMessage: false,
+    paymentDetails: false,
+    projectSchedule: false,
+    teamIntro: false,
+    glassIssues: false,
+  });
+  const checklistFullyChecked = Object.values(checklist).every(Boolean);
   const [delayCategory, setDelayCategory] = useState("");
   // A plain useState would only ever seed this on first mount. router.refresh() re-fetches
   // server data and passes this same card fresh props (same item.id, so React reuses the
@@ -499,6 +521,10 @@ export function TaskCard({
       setError("Choose the visit urgency");
       return;
     }
+    if (!checklistFullyChecked) {
+      setError("Check off all 5 welcome-call items first");
+      return;
+    }
     if (!validateActualEnd()) return;
     if (needsLateReason) {
       setError("Actual end is after the planned finish — add a note explaining why before marking complete");
@@ -511,6 +537,7 @@ export function TaskCard({
     submitWithDates({
       status: "completed",
       visitUrgency,
+      welcomeCallChecklist: checklist,
       notes: note || undefined,
       delayCategory: delayCategory || undefined,
     });
@@ -1117,6 +1144,20 @@ export function TaskCard({
             <option value="cold">Cold (15 days)</option>
             <option value="site_not_ready">Site not ready (blocks 1B)</option>
           </select>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-fg-muted">Covered on the call</span>
+            {WELCOME_CALL_CHECKLIST_ITEMS.map((item) => (
+              <label key={item.key} className="flex items-center gap-2 text-sm text-fg">
+                <input
+                  type="checkbox"
+                  checked={checklist[item.key]}
+                  onChange={(e) => setChecklist((prev) => ({ ...prev, [item.key]: e.target.checked }))}
+                  className="h-4 w-4 rounded border-edge-2 accent-accent"
+                />
+                {item.label}
+              </label>
+            ))}
+          </div>
           {needsDelayCategoryChoice && (
             <select
               className={selectClass}
@@ -1153,7 +1194,7 @@ export function TaskCard({
             <button
               className={btnPrimary}
               onClick={confirmComplete1A}
-              disabled={submitting || needsLateReason || needsDelayCategory}
+              disabled={submitting || needsLateReason || needsDelayCategory || !checklistFullyChecked}
             >
               {submitting ? <Spinner className="h-3.5 w-3.5" /> : "Confirm complete"}
             </button>

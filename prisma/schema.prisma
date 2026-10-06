@@ -353,6 +353,18 @@ model PhaseStep {
   actionPlanAt   DateTime? @map("action_plan_at") @db.Timestamptz(3)
   actionPlanNote String?   @map("action_plan_note") @db.Text
 
+  // 1A only — the 5 fixed things HR & Admin/Project Engineer must cover on the welcome call
+  // before 1A can complete (see updateStepStatus's own check, mirroring how visitUrgency is
+  // required there). All five default false and must all be true at the moment 1A is marked
+  // complete; they then stand as a record that the call actually covered them. Not editable
+  // after completion through this flow — same "submitted once, together" convention as
+  // visitUrgency/delayCategory on this same step.
+  checklistWelcomingMessage Boolean @default(false) @map("checklist_welcoming_message")
+  checklistPaymentDetails   Boolean @default(false) @map("checklist_payment_details")
+  checklistProjectSchedule  Boolean @default(false) @map("checklist_project_schedule")
+  checklistTeamIntro        Boolean @default(false) @map("checklist_team_intro")
+  checklistGlassIssues      Boolean @default(false) @map("checklist_glass_issues")
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
