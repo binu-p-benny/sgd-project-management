@@ -821,7 +821,8 @@ model StepStatusLog {
 }
 
 // The operation manager's review of one unit of already-completed work — a PhaseStep, a single
-// procurement/glass-PO stage field, an action item, or a service item (see lib/task-reviews.ts).
+// procurement/glass-PO stage field, an action item, a service item, or a follow-up (see
+// lib/task-reviews.ts).
 // Deliberately not a row per source table: "pending review" is derived at read time (same
 // "compute, don't persist" convention as isStepOverrun/delayed in overrun.ts) by finding a
 // completed unit whose taskId has no row here yet, so nothing is written until someone actually

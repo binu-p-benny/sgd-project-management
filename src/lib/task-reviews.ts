@@ -389,6 +389,47 @@ async function serviceItemReviewTasks(reviewed: Set<string>): Promise<UnifiedTas
   return tasks;
 }
 
+// A follow-up's own completed (actualDate filled) row — reviewable once marked done, same
+// "already-completed work becomes reviewable" pattern as serviceItemReviewTasks above. The card
+// it hung off travels along as the sub-label, same "Follow-up · <card>" wording buildFollowUpTasks
+// uses in unified-tasks.ts, so the review queue reads the same way /my-tasks' own open follow-up
+// rows do.
+async function followUpReviewTasks(reviewed: Set<string>): Promise<UnifiedTask[]> {
+  const rows = await prisma.followUpTask.findMany({
+    where: { actualDate: { not: null } },
+    include: {
+      project: { select: { id: true, name: true, currentPhase: true, client: { select: { name: true } } } },
+      phaseStep: { select: { stepCode: true, stepName: true } },
+      procurementItem: { select: { itemType: true } },
+    },
+  });
+
+  const tasks: UnifiedTask[] = [];
+  for (const row of rows) {
+    if (!row.actualDate) continue;
+    const taskId = `follow_up:${row.id}`;
+    if (reviewed.has(taskId)) continue;
+    const cardLabel = row.phaseStep
+      ? `${row.phaseStep.stepCode} ${row.phaseStep.stepName}`
+      : row.procurementItem
+        ? `${capitalize(row.procurementItem.itemType)} procurement`
+        : "Glass PO";
+    const anchorLabel = row.stageLabel ? `${cardLabel} · ${row.stageLabel}` : cardLabel;
+    tasks.push(
+      buildReviewTask({
+        taskId,
+        taskLabel: row.taskLabel,
+        subTaskLabel: completedBySummary(`Follow-up · ${anchorLabel}`, row.department, row.actualDate),
+        phase: row.project.currentPhase === "completed" ? "phase_3" : row.project.currentPhase,
+        project: row.project,
+        completedAt: row.actualDate,
+        completedByDepartment: row.department,
+      })
+    );
+  }
+  return tasks;
+}
+
 /**
  * Every completed unit of work — across every project and service, every department — that the
  * operation manager hasn't reviewed yet (see TaskReview). This is the Operations Manager
@@ -405,15 +446,16 @@ async function serviceItemReviewTasks(reviewed: Set<string>): Promise<UnifiedTas
  */
 export async function getReviewQueueTasks(): Promise<UnifiedTask[]> {
   const reviewed = await reviewedTaskIdSet();
-  const [phaseSteps, procurementStages, glassPOStages, actionItems, serviceItems] = await Promise.all([
+  const [phaseSteps, procurementStages, glassPOStages, actionItems, serviceItems, followUps] = await Promise.all([
     phaseStepReviewTasks(reviewed),
     procurementStageReviewTasks(reviewed),
     glassPOStageReviewTasks(reviewed),
     actionItemReviewTasks(reviewed),
     serviceItemReviewTasks(reviewed),
+    followUpReviewTasks(reviewed),
   ]);
 
-  const all = [...phaseSteps, ...procurementStages, ...glassPOStages, ...actionItems, ...serviceItems];
+  const all = [...phaseSteps, ...procurementStages, ...glassPOStages, ...actionItems, ...serviceItems, ...followUps];
   return all.sort((a, b) => (a.plannedDate ?? "").localeCompare(b.plannedDate ?? ""));
 }
 
@@ -527,6 +569,15 @@ async function resolveReviewContext(taskId: string): Promise<ReviewContext | nul
     });
     if (!item?.actualDate) return null;
     return { completedAt: item.actualDate, taskLabel: item.taskLabel, contextName: item.service.title, projectId: item.service.id };
+  }
+
+  if (kind === "follow_up") {
+    const row = await prisma.followUpTask.findUnique({
+      where: { id: rest[0] },
+      include: { project: { select: { id: true, name: true } } },
+    });
+    if (!row?.actualDate) return null;
+    return { completedAt: row.actualDate, taskLabel: row.taskLabel, contextName: row.project.name, projectId: row.project.id };
   }
 
   return null;
