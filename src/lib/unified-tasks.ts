@@ -53,7 +53,13 @@ export type TaskKind =
   | "review_completed"
   // A CommonTask (see schema.prisma) — a day-to-day/recurring admin chore with no project of
   // its own. Same date+note shape as work_task/follow_up; see buildCommonTaskTasks.
-  | "common_task";
+  | "common_task"
+  // A not-yet-reachable PhaseStep — not_started and still blocked behind an earlier, unfinished
+  // dependency (see checkDependencyGate) — built by buildFutureStepTasks, the flip side of
+  // buildPhaseStepTasks' own `continue` for these same rows. Read-only: /my-tasks' own "coming
+  // up" pipeline preview, not a task to act on — the gate decides when it opens, not this
+  // department, so there's nothing here for TaskTable to offer a Start/Complete button for.
+  | "future_step";
 
 // Field -> human label/note-field, shared by procurement items and the glass PO tracker (which
 // reuse the exact same stage names) — see the fixed stage arrays built inline in the project
@@ -357,6 +363,87 @@ async function buildPhaseStepTasks(department: Department | null): Promise<Unifi
     });
   }
   return tasks;
+}
+
+/**
+ * The flip side of buildPhaseStepTasks' own `continue` above — every not_started step still
+ * gated behind an earlier, unfinished dependency, surfaced as a read-only "coming up" preview
+ * instead of being silently invisible. Nothing here is actionable (no Start/Complete, no date
+ * fields) since the gate itself decides when it opens, not this department — see TaskKind's own
+ * "future_step" doc comment. A separate query/loop from buildPhaseStepTasks rather than a shared
+ * one, since the two want opposite halves of the same not_started-and-gated condition; `overrun`
+ * is always false here on purpose — a gated step's planned date slipping into the past isn't
+ * this department's fault to flag, since they can't act on it either way until it clears.
+ */
+async function buildFutureStepTasks(department: Department | null): Promise<UnifiedTask[]> {
+  const steps = await prisma.phaseStep.findMany({
+    where: {
+      status: "not_started",
+      // Same exclusion as buildPhaseStepTasks, for the same reason — these are never
+      // independently actionable even once reachable.
+      stepCode: { notIn: [...DERIVED_STEP_CODES, "3A", "3B"] },
+      ...(department ? { OR: [{ owningDepartment: department }, { secondaryDepartment: department }] } : {}),
+    },
+    include: {
+      project: { select: { id: true, name: true, client: { select: { name: true } } } },
+    },
+  });
+
+  const tasks: UnifiedTask[] = [];
+  for (const step of steps) {
+    const gate = await checkDependencyGate(step.id);
+    if (gate.allowed) continue;
+
+    tasks.push({
+      id: `future_step:${step.id}`,
+      kind: "future_step",
+      phase: step.phase,
+      taskLabel: step.stepName,
+      subTaskLabel: null,
+      project: step.project,
+      department: step.owningDepartment,
+      secondaryDepartment: step.secondaryDepartment,
+      status: step.status,
+      plannedDate: step.plannedEndDate?.toISOString() ?? null,
+      actualDate: null,
+      overrun: false,
+      qcPassed: null,
+      notes: null,
+      blockedReason: null,
+      blockedNote: null,
+      gateBlockedBy: gate.blockedByLabels,
+      isPassFail: false,
+      refId: step.id,
+      dateField: null,
+      noteField: null,
+      stepCode: step.stepCode,
+      actionItemSource: null,
+      contractorId: null,
+      contractorName: null,
+      contractorPlannedDate: null,
+      contractorOverdue: false,
+      manualPlannedStartDate: null,
+      manualPlannedEndDate: null,
+      completedByDepartment: null,
+    });
+  }
+  return tasks;
+}
+
+/**
+ * Every department's own not-yet-reachable pipeline — /my-tasks' own "Coming up" section (see
+ * buildFutureStepTasks). Sorted by planned date, same "earliest first, nulls last" convention as
+ * getUnifiedMyTasks, though a future step without one yet should be rare in practice — planned
+ * dates are usually computed for the whole roadmap up front, at project creation.
+ */
+export async function getFutureWorkTasks(department: Department | null): Promise<UnifiedTask[]> {
+  const tasks = await buildFutureStepTasks(department);
+  return tasks.sort((a, b) => {
+    if (a.plannedDate === null && b.plannedDate === null) return 0;
+    if (a.plannedDate === null) return 1;
+    if (b.plannedDate === null) return -1;
+    return a.plannedDate.localeCompare(b.plannedDate);
+  });
 }
 
 /**

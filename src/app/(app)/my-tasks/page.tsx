@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { getSession, isAdminEditor, isOperationsManager } from "@/lib/auth";
-import { getUnifiedMyTasks } from "@/lib/unified-tasks";
+import { getUnifiedMyTasks, getFutureWorkTasks } from "@/lib/unified-tasks";
 import { getReviewQueueTasks } from "@/lib/task-reviews";
 import { TaskTable } from "@/components/my-tasks/TaskTable";
+import { FutureWorkSection } from "@/components/my-tasks/FutureWorkSection";
 import { DEPARTMENT_LABELS } from "@/lib/labels";
 import { FollowUpsDrawer } from "@/components/my-tasks/FollowUpsDrawer";
 import { getDepartmentFollowUps } from "@/lib/follow-ups";
@@ -16,11 +17,15 @@ export default async function MyTasksPage() {
   // ASSIGNABLE_DEPARTMENTS) — ownTasks below covers anything handed to it directly, same as
   // Owner or anyone else gets from the plain `getUnifiedMyTasks(department)` branch.
   const isReviewQueue = !!session && isOperationsManager(session);
-  const [items, ownTasks, followUps] = await Promise.all([
+  const [items, ownTasks, followUps, futureTasks] = await Promise.all([
     isReviewQueue ? getReviewQueueTasks() : department ? getUnifiedMyTasks(department) : Promise.resolve([]),
     isReviewQueue && department ? getUnifiedMyTasks(department) : Promise.resolve([]),
     // This department's own follow-ups, open plus recently closed — see getDepartmentFollowUps.
     getDepartmentFollowUps(department),
+    // The department's own not-yet-reachable pipeline — see FutureWorkSection. Review queue has
+    // no department-owned pipeline of its own to preview (Operations Manager reviews everyone
+    // else's finished work instead, see isReviewQueue above), so this stays empty there.
+    !isReviewQueue && department ? getFutureWorkTasks(department) : Promise.resolve([]),
   ]);
   // Only admin/owner can actually open /projects/[id] (see its own layout.tsx) — everyone else's
   // Project name here would just link to a page that immediately bounces them back here.
@@ -76,6 +81,8 @@ export default async function MyTasksPage() {
       ) : (
         <TaskTable tasks={items} isAdmin={isAdmin} groupByUrgency={isReviewQueue} />
       )}
+
+      <FutureWorkSection tasks={futureTasks} />
 
       {isReviewQueue && (
         <>
