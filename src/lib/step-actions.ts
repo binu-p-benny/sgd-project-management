@@ -390,6 +390,7 @@ export const PRODUCTION_MATERIAL_DELIVERY_TASKS: { taskLabel: string; department
   { taskLabel: "Section", department: "purchase" },
   { taskLabel: "Hardware", department: "purchase" },
   { taskLabel: "Gasket", department: "purchase" },
+  { taskLabel: "Comparison b/w Initial and tight measurements", department: "design_engineer" },
   { taskLabel: "Cutting list", department: "design_engineer" },
   { taskLabel: "Elevation drawing", department: "design_engineer" },
 ];
@@ -418,7 +419,12 @@ export const PRODUCTION_MATERIAL_DELIVERY_LABEL = "Production material Delivery"
  * Idempotent and safe to call on every page load, same "ensure it exists, do nothing if it
  * already does" shape as maybeEarlyUnlockPhase3 just above — seeded once Phase 3 is real (same
  * moment its own dedicated card starts having somewhere to show), covering both a project newly
- * reaching Phase 3 and every project already there before this feature existed.
+ * reaching Phase 3 and every project already there before this feature existed. Also reconciles
+ * an *existing* block against PRODUCTION_MATERIAL_DELIVERY_TASKS' own current row set (see below)
+ * — the same "ensure" idea, just per-row instead of per-block, so a task label added to that
+ * const later (e.g. a new checklist item inserted ahead of Cutting list) still backfills onto
+ * every project that already seeded this block before that row existed, without a one-off
+ * migration script or losing whatever progress its other rows already have.
  */
 export async function ensureProductionMaterialDeliveryBlock(projectId: string): Promise<void> {
   const hasPhase3 = await prisma.phaseStep.findFirst({
@@ -429,18 +435,28 @@ export async function ensureProductionMaterialDeliveryBlock(projectId: string): 
 
   const existing = await prisma.workBlock.findFirst({
     where: { projectId, label: PRODUCTION_MATERIAL_DELIVERY_LABEL },
-    select: { id: true },
+    select: { id: true, tasks: { select: { taskLabel: true } } },
   });
-  if (existing) return;
 
-  await prisma.workBlock.create({
-    data: {
-      projectId,
-      label: PRODUCTION_MATERIAL_DELIVERY_LABEL,
-      tasks: {
-        create: PRODUCTION_MATERIAL_DELIVERY_TASKS.map((task) => ({ ...task, plannedDate: null })),
+  if (!existing) {
+    await prisma.workBlock.create({
+      data: {
+        projectId,
+        label: PRODUCTION_MATERIAL_DELIVERY_LABEL,
+        tasks: {
+          create: PRODUCTION_MATERIAL_DELIVERY_TASKS.map((task) => ({ ...task, plannedDate: null })),
+        },
       },
-    },
+    });
+    return;
+  }
+
+  const existingLabels = new Set(existing.tasks.map((t) => t.taskLabel));
+  const missing = PRODUCTION_MATERIAL_DELIVERY_TASKS.filter((task) => !existingLabels.has(task.taskLabel));
+  if (missing.length === 0) return;
+
+  await prisma.workTask.createMany({
+    data: missing.map((task) => ({ workBlockId: existing.id, ...task, plannedDate: null })),
   });
 }
 
