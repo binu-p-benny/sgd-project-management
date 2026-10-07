@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import type { UnifiedTask } from "@/lib/unified-tasks";
+import { taskGroupTab, type TaskGroupTab } from "@/lib/task-tabs";
 import { isDueToday } from "@/lib/overrun";
 import { DEPARTMENT_LABELS } from "@/lib/labels";
 
@@ -35,6 +36,27 @@ interface Bucket {
   tasks: UnifiedTask[];
   defaultOpen: boolean;
   emptyText: string;
+}
+
+interface Tab {
+  key: TaskGroupTab;
+  label: string;
+  tasks: UnifiedTask[];
+}
+
+/** Splits every department's still-open work three ways — see taskGroupTab in unified-tasks.ts,
+ *  shared with /my-tasks' own TaskTable so both pages agree on which tab a task belongs under. */
+function splitByTab(tasks: UnifiedTask[]): Record<TaskGroupTab, UnifiedTask[]> {
+  const project: UnifiedTask[] = [];
+  const service: UnifiedTask[] = [];
+  const followUp: UnifiedTask[] = [];
+  for (const task of tasks) {
+    const tab = taskGroupTab(task);
+    if (tab === "follow_up") followUp.push(task);
+    else if (tab === "service") service.push(task);
+    else project.push(task);
+  }
+  return { project, service, follow_up: followUp };
 }
 
 /**
@@ -164,16 +186,8 @@ function AccordionSection({ bucket }: { bucket: Bucket }) {
   );
 }
 
-/**
- * A read-only, whole-company view of every department's still-open work, grouped by urgency —
- * the /open-work page this renders on (Owner/Admin and Operations Manager only, see
- * hasOwnerAccess). Managing every department means seeing what's still outstanding everywhere,
- * not just what's already done and waiting on Operations Manager's own review (see
- * task-reviews.ts, /my-tasks' own review queue) — this is the "before it gets there" half. No
- * action buttons here on purpose: acting on a task is still that department's own job (via their
- * own /my-tasks), this is visibility only.
- */
-export function DepartmentTaskOverview({ tasks }: { tasks: UnifiedTask[] }) {
+/** The same 4 urgency accordions, scoped to whichever tab's task slice is currently showing. */
+function UrgencyBuckets({ tasks }: { tasks: UnifiedTask[] }) {
   const { overdue, dueToday, upcoming, unscheduled } = bucketTasks(tasks);
 
   const buckets: Bucket[] = [
@@ -213,17 +227,65 @@ export function DepartmentTaskOverview({ tasks }: { tasks: UnifiedTask[] }) {
 
   return (
     <div className="flex flex-col gap-3">
+      {buckets.map((bucket) => (
+        <AccordionSection key={bucket.key} bucket={bucket} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A read-only, whole-company view of every department's still-open work, grouped by urgency —
+ * the /open-work page this renders on (Owner/Admin and Operations Manager only, see
+ * hasOwnerAccess). Managing every department means seeing what's still outstanding everywhere,
+ * not just what's already done and waiting on Operations Manager's own review (see
+ * task-reviews.ts, /my-tasks' own review queue) — this is the "before it gets there" half. No
+ * action buttons here on purpose: acting on a task is still that department's own job (via their
+ * own /my-tasks), this is visibility only.
+ *
+ * Split into three tabs — project work, service work, and follow-up tasks (see splitByTab) —
+ * so a department's ordinary project-phase work doesn't drown out the follow-ups raised against
+ * it, or vice versa; each tab keeps the same 4 urgency accordions underneath.
+ */
+export function DepartmentTaskOverview({ tasks }: { tasks: UnifiedTask[] }) {
+  const grouped = splitByTab(tasks);
+  const tabs: Tab[] = [
+    { key: "project", label: "Project work", tasks: grouped.project },
+    { key: "service", label: "Service work", tasks: grouped.service },
+    { key: "follow_up", label: "Follow-up tasks", tasks: grouped.follow_up },
+  ];
+  const [activeTab, setActiveTab] = useState<TaskGroupTab>("project");
+  const active = tabs.find((t) => t.key === activeTab) ?? tabs[0];
+
+  return (
+    <div className="flex flex-col gap-3">
       <div>
         <h2 className="text-lg font-semibold text-fg">Every department&apos;s open work</h2>
         <p className="text-sm text-fg-muted">
           {`A whole-company view — ${tasks.length} open task${tasks.length === 1 ? "" : "s"} across every department, so nothing is a surprise once it lands in Operations Manager's review queue.`}
         </p>
       </div>
-      <div className="flex flex-col gap-3">
-        {buckets.map((bucket) => (
-          <AccordionSection key={bucket.key} bucket={bucket} />
+      <div className="flex flex-wrap gap-2 border-b border-edge">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setActiveTab(tab.key)}
+            aria-current={tab.key === activeTab}
+            className={
+              tab.key === activeTab
+                ? "flex items-center gap-2 border-b-2 border-accent px-3 py-2 text-sm font-semibold text-fg"
+                : "flex items-center gap-2 border-b-2 border-transparent px-3 py-2 text-sm font-medium text-fg-muted hover:text-fg"
+            }
+          >
+            {tab.label}
+            <span className="rounded-full bg-overlay px-2 py-0.5 text-xs font-medium text-fg-muted ring-1 ring-inset ring-edge">
+              {tab.tasks.length}
+            </span>
+          </button>
         ))}
       </div>
+      <UrgencyBuckets tasks={active.tasks} />
     </div>
   );
 }

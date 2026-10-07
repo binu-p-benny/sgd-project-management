@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Department } from "@prisma/client";
 import type { UnifiedTask } from "@/lib/unified-tasks";
+import { taskGroupTab, type TaskGroupTab } from "@/lib/task-tabs";
 import { isDueToday } from "@/lib/overrun";
 import { Spinner } from "@/components/ui/Spinner";
 import {
@@ -1467,7 +1468,6 @@ function TaskAccordionItem({ task, isAdmin }: { task: UnifiedTask; isAdmin: bool
   );
 }
 
-type KindFilter = "all" | "project" | "service";
 type StatusFilter = "all" | "not_started" | "in_progress" | "delayed" | "blocked";
 type DepartmentFilter = "all" | Department;
 
@@ -1481,14 +1481,6 @@ const STATUS_FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
 
 const filterControlCls =
   "h-10 min-w-0 rounded-lg border border-edge bg-bg px-2 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 sm:h-8 sm:text-xs";
-
-function taskMatchesKindFilter(task: UnifiedTask, filter: KindFilter): boolean {
-  if (filter === "all") return true;
-  // phase === "service" rather than kind === "service_item" — see isServiceTask's own comment
-  // in useTaskActions for why a review_completed row needs the same check.
-  const isService = task.phase === "service";
-  return filter === "service" ? isService : !isService;
-}
 
 // A task's status as these filters think of it — deliberately loose, since several overlap (an
 // in-progress step can also be overdue). "not_started"/"in_progress"/"blocked" are the row's
@@ -1671,9 +1663,12 @@ export function TaskTable({
   // just one department's own open tasks (never more than a couple hundred rows), so
   // re-filtering on each change is cheap enough to not need debouncing.
   const [query, setQuery] = useState("");
-  const [kindFilter, setKindFilter] = useState<KindFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [departmentFilter, setDepartmentFilter] = useState<DepartmentFilter>("all");
+  // Which of the 3 tabs below is showing — replaces what used to be a "Projects only/Services
+  // only" dropdown (see taskGroupTab), so switching tabs resets to the same Overdue-first view
+  // groupByUrgency already gives each full list.
+  const [activeTab, setActiveTab] = useState<TaskGroupTab>("project");
 
   // Only the review queue (see taskMatchesDepartmentFilter's own comment) ever has anything to
   // filter here — hidden everywhere else rather than showing a dropdown that can never narrow
@@ -1681,31 +1676,64 @@ export function TaskTable({
   const showDepartmentFilter = tasks.some((t) => t.completedByDepartment !== null);
 
   const normalizedQuery = query.trim().toLowerCase();
-  const filtersActive =
-    normalizedQuery !== "" || kindFilter !== "all" || statusFilter !== "all" || departmentFilter !== "all";
-  const visibleTasks = tasks.filter(
-    (task) =>
+  const filtersActive = normalizedQuery !== "" || statusFilter !== "all" || departmentFilter !== "all";
+
+  function matchesFilters(task: UnifiedTask): boolean {
+    return (
       (!normalizedQuery || taskSearchText(task).includes(normalizedQuery)) &&
-      taskMatchesKindFilter(task, kindFilter) &&
       taskMatchesStatusFilter(task, statusFilter) &&
       taskMatchesDepartmentFilter(task, departmentFilter)
-  );
+    );
+  }
+
+  // Raw (unfiltered by search/status/department) per-tab counts — what the tab buttons' own
+  // badges show, same "how much is in this bucket overall" convention as /open-work's tabs,
+  // stable while someone types into the search box instead of jumping around.
+  const tabTasks: Record<TaskGroupTab, UnifiedTask[]> = { project: [], service: [], follow_up: [] };
+  for (const task of tasks) tabTasks[taskGroupTab(task)].push(task);
+  const tabs: { key: TaskGroupTab; label: string }[] = [
+    { key: "project", label: "Project work" },
+    { key: "service", label: "Service work" },
+    { key: "follow_up", label: "Follow-up tasks" },
+  ];
+
+  const activeTabTasks = tabTasks[activeTab];
+  const visibleTasks = activeTabTasks.filter(matchesFilters);
   // Bucketed off the already-filtered list, not the raw one — each section's count should
-  // reflect whatever search/kind/status/department filter is currently active, same as the
-  // flat list would. Computed unconditionally (cheap) rather than only under groupByUrgency, so
-  // the render below doesn't need TypeScript to narrow two separate ternaries against the same
-  // prop.
+  // reflect whatever search/status/department filter is currently active, same as the flat list
+  // would. Computed unconditionally (cheap) rather than only under groupByUrgency, so the render
+  // below doesn't need TypeScript to narrow two separate ternaries against the same prop.
   const urgencyBuckets = bucketTasksByUrgency(visibleTasks);
 
   function clearFilters() {
     setQuery("");
-    setKindFilter("all");
     setStatusFilter("all");
     setDepartmentFilter("all");
   }
 
   return (
     <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap gap-2 border-b border-edge">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setActiveTab(tab.key)}
+            aria-current={tab.key === activeTab}
+            className={
+              tab.key === activeTab
+                ? "flex items-center gap-2 border-b-2 border-accent px-3 py-2 text-sm font-semibold text-fg"
+                : "flex items-center gap-2 border-b-2 border-transparent px-3 py-2 text-sm font-medium text-fg-muted hover:text-fg"
+            }
+          >
+            {tab.label}
+            <span className="rounded-full bg-overlay px-2 py-0.5 text-xs font-medium text-fg-muted ring-1 ring-inset ring-edge">
+              {tabTasks[tab.key].length}
+            </span>
+          </button>
+        ))}
+      </div>
+
       <div className="flex flex-wrap items-center gap-2">
         <input
           type="text"
@@ -1714,16 +1742,6 @@ export function TaskTable({
           placeholder="Search project, service, client, task, phase, department…"
           className="h-10 w-full max-w-sm min-w-0 rounded-lg border border-edge bg-bg px-3 text-sm text-fg outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 sm:h-8 sm:px-2 sm:text-xs"
         />
-        <select
-          value={kindFilter}
-          onChange={(e) => setKindFilter(e.target.value as KindFilter)}
-          aria-label="Filter by project or service"
-          className={filterControlCls}
-        >
-          <option value="all">All work</option>
-          <option value="project">Projects only</option>
-          <option value="service">Services only</option>
-        </select>
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
@@ -1757,7 +1775,7 @@ export function TaskTable({
               Clear
             </button>
             <span className="text-xs text-fg-muted">
-              {visibleTasks.length} of {tasks.length}
+              {visibleTasks.length} of {activeTabTasks.length}
             </span>
           </>
         )}
