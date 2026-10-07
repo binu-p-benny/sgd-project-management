@@ -408,6 +408,7 @@ export default async function ProjectDetailPage({
   const reviewCandidateIds = [
     ...project.procurementItems.flatMap((item) => [
       "requirementCreatedAt",
+      "requirementCrossCheckAt",
       "quoteCreatedAt",
       "paymentSettledAt",
       "orderConfirmedAt",
@@ -730,6 +731,30 @@ export default async function ProjectDetailPage({
               paymentGated: false,
               qcPassed: null,
             },
+            // Section only — Design Engineer cross-checking the requirement against the cutting
+            // list, right after Requirement created. Shares that stage's own planned date exactly
+            // (see computeAllProcurementPlannedDates) rather than being independently computed or
+            // overridable, hence plannedDateField: null — there's nothing here for the date-edit
+            // control to write to.
+            ...(isSection
+              ? [
+                  {
+                    id: "requirementCrossCheck",
+                    label: "Requirement cross check with cutting list",
+                    dateField: "requirementCrossCheckAt" as const,
+                    noteField: "requirementCrossCheckNote" as const,
+                    actualDate: item.requirementCrossCheckAt,
+                    note: item.requirementCrossCheckNote,
+                    plannedDate: planned.requirement,
+                    plannedDateField: null,
+                    department: "design_engineer" as const,
+                    secondaryDepartment: null,
+                    requirementGated: true,
+                    paymentGated: false,
+                    qcPassed: null,
+                  },
+                ]
+              : []),
             {
               id: "quote",
               label: "Quote created",

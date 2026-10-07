@@ -29,6 +29,7 @@ export async function patchProcurementItem(
   userId: string,
   data: Partial<{
     requirementCreatedAt: Date | null;
+    requirementCrossCheckAt: Date | null; // section only
     quoteCreatedAt: Date | null;
     paymentSettledAt: Date | null;
     orderConfirmedAt: Date | null;

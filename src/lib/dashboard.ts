@@ -34,6 +34,7 @@ export const GLASS_PO_OVERRUN_SELECT = {
 export const PROCUREMENT_ITEM_OVERRUN_SELECT = {
   itemType: true,
   requirementCreatedAt: true,
+  requirementCrossCheckAt: true,
   quoteCreatedAt: true,
   paymentSettledAt: true,
   actualArrivalDate: true,

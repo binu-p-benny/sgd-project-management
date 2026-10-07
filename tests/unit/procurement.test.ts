@@ -524,6 +524,16 @@ describe("computeAllProcurementPlannedDates: every stage's Planned date for one 
     const result = computeAllProcurementPlannedDates(hardwareItem, phase2PlanAnchor, new Date("2026-01-01T00:00:00.000Z"));
     expect(result.qc).toEqual(overrideQC);
   });
+
+  it("section's requirementCrossCheck always equals its own requirement date — hardware/gasket never get one", () => {
+    const sectionItem = { itemType: "section" as const, ...emptyFields, requirementPlannedOverride: new Date("2026-09-01T00:00:00.000Z") };
+    const sectionResult = computeAllProcurementPlannedDates(sectionItem, phase2PlanAnchor, null);
+    expect(sectionResult.requirementCrossCheck).toEqual(sectionResult.requirement);
+
+    const hardwareItem = { itemType: "hardware" as const, ...emptyFields };
+    const hardwareResult = computeAllProcurementPlannedDates(hardwareItem, phase2PlanAnchor, null);
+    expect(hardwareResult.requirementCrossCheck).toBeNull();
+  });
 });
 
 describe("withLiveExpectedArrivalDates: overdue detection reads each item's live planned arrival, not the frozen legacy column", () => {
@@ -534,6 +544,7 @@ describe("withLiveExpectedArrivalDates: overdue detection reads each item's live
   };
   const emptyFields: Omit<ProcurementItemArrivalInputs, "itemType"> & {
     requirementCreatedAt: Date | null;
+    requirementCrossCheckAt: Date | null;
     quoteCreatedAt: Date | null;
     paymentSettledAt: Date | null;
     qcCheckedAt: Date | null;
@@ -551,6 +562,7 @@ describe("withLiveExpectedArrivalDates: overdue detection reads each item's live
     arrivedForPowderCoatingAt: null,
     arrivedForPowderCoatingPlannedOverride: null,
     requirementCreatedAt: null,
+    requirementCrossCheckAt: null,
     quoteCreatedAt: null,
     paymentSettledAt: null,
     qcCheckedAt: null,

@@ -20,6 +20,7 @@ function firstUnfilledDepartment<T>(record: T, stages: StageSpec<T>[]): Departme
 
 export interface ProcurementItemFields {
   requirementCreatedAt: Date | null;
+  requirementCrossCheckAt: Date | null;
   quoteCreatedAt: Date | null;
   paymentSettledAt: Date | null;
   orderConfirmedAt: Date | null;
@@ -35,6 +36,11 @@ export interface ProcurementItemFields {
 export const PROCUREMENT_STAGES: Record<ItemType, StageSpec<ProcurementItemFields>[]> = {
   section: [
     { field: "requirementCreatedAt", department: "design_engineer" },
+    // Section only — Design Engineer cross-checking the requirement against the cutting list
+    // right after it's created. Shares Requirement created's own planned date (see
+    // computeAllProcurementPlannedDates in procurement.ts) rather than being independently
+    // computed, so it has no PlannedOverride column of its own.
+    { field: "requirementCrossCheckAt", department: "design_engineer" },
     { field: "quoteCreatedAt", department: "purchase" },
     { field: "paymentSettledAt", department: "accounts", secondaryDepartment: "purchase" },
     { field: "orderConfirmedAt", department: "purchase" },

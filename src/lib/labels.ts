@@ -174,11 +174,14 @@ export const DELAY_CATEGORY_OPTIONS: DelayCategory[] = Object.keys(
 // about?" dropdown can offer the same list the table itself shows (see FollowUpsButton).
 // unified-tasks.ts has its own field->label map for the same stages; this is the display order.
 const PROCUREMENT_STAGE_LABELS_BASE = [
-  "Requirement created",
   "Quote created",
   "Payment done",
   "Order confirmed",
 ] as const;
+
+/** Section alone cross-checks the requirement against the cutting list, right after it's
+ *  created — see PROCUREMENT_STAGES.section in project-filters.ts. */
+const SECTION_ONLY_REQUIREMENT_FOLLOWUP_LABEL = "Requirement cross check with cutting list";
 
 /** Section alone carries despatch and powder coating between Order confirmed and Arrival. */
 const SECTION_ONLY_STAGE_LABELS = ["Material despatch", "Arrived for powder coating"] as const;
@@ -187,6 +190,8 @@ const PROCUREMENT_STAGE_LABELS_TAIL = ["Actual arrival", "QC checked"] as const;
 
 export function procurementStageLabels(itemType: string): string[] {
   return [
+    "Requirement created",
+    ...(itemType === "section" ? [SECTION_ONLY_REQUIREMENT_FOLLOWUP_LABEL] : []),
     ...PROCUREMENT_STAGE_LABELS_BASE,
     ...(itemType === "section" ? SECTION_ONLY_STAGE_LABELS : []),
     ...PROCUREMENT_STAGE_LABELS_TAIL,

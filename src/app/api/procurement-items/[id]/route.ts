@@ -18,6 +18,11 @@ const updateSchema = z.object({
   requirementCreatedAt: dateOrNull,
   requirementNote: z.string().nullable().optional(),
   requirementPlannedOverride: dateOrNull,
+  // Section only — always null on hardware/gasket rows, same "no need to reject the wrong item
+  // type" reasoning as materialDespatch/arrivedForPowderCoating below. No PlannedOverride: its
+  // planned date is always Requirement created's own (see computeAllProcurementPlannedDates).
+  requirementCrossCheckAt: dateOrNull,
+  requirementCrossCheckNote: z.string().nullable().optional(),
   quoteCreatedAt: dateOrNull,
   quoteNote: z.string().nullable().optional(),
   quotePlannedOverride: dateOrNull,
@@ -76,7 +81,12 @@ export async function PATCH(
   // date/note/Planned-override fields is authorized for that department too.
   const touchedFields = Object.keys(parsed.data);
   const isRequirementOnlyUpdate = touchedFields.every(
-    (k) => k === "requirementCreatedAt" || k === "requirementNote" || k === "requirementPlannedOverride"
+    (k) =>
+      k === "requirementCreatedAt" ||
+      k === "requirementNote" ||
+      k === "requirementPlannedOverride" ||
+      k === "requirementCrossCheckAt" ||
+      k === "requirementCrossCheckNote"
   );
   const isPaymentOnlyUpdate = touchedFields.every(
     (k) =>

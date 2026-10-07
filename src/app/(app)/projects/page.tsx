@@ -328,6 +328,7 @@ export default async function ProjectsPage({
           actualArrivalDate: true,
           qcPassed: true,
           requirementCreatedAt: true,
+          requirementCrossCheckAt: true,
           quoteCreatedAt: true,
           paymentSettledAt: true,
           orderConfirmedAt: true,

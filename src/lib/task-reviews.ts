@@ -74,6 +74,7 @@ export function isStepFullyDone(
 // stage regardless of fill order.
 const STAGE_LABEL: Record<string, string> = {
   requirementCreatedAt: "Requirement created",
+  requirementCrossCheckAt: "Requirement cross check with cutting list",
   quoteCreatedAt: "Quote created",
   paymentSettledAt: "Payment done",
   orderConfirmedAt: "Order confirmed",

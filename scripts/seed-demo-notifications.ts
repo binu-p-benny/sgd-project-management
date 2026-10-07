@@ -203,6 +203,7 @@ async function procurementOverdueExamples(limit: number): Promise<DemoNotificati
         select: {
           itemType: true,
           requirementCreatedAt: true,
+          requirementCrossCheckAt: true,
           quoteCreatedAt: true,
           paymentSettledAt: true,
           actualArrivalDate: true,

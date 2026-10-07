@@ -47,6 +47,7 @@ const KPI_DEPARTMENTS = ASSIGNABLE_DEPARTMENTS.filter((d) => d !== "owner_admin"
 // map in unified-tasks.ts' buildProcurementStageTasks).
 const PROCUREMENT_PLANNED_KEY: Record<string, keyof ProcurementStagePlannedDates> = {
   requirementCreatedAt: "requirement",
+  requirementCrossCheckAt: "requirementCrossCheck",
   quoteCreatedAt: "quote",
   paymentSettledAt: "payment",
   orderConfirmedAt: "order",
@@ -68,6 +69,7 @@ const GLASS_PLANNED_COLUMN: Record<string, string> = {
 
 const STAGE_LABEL: Record<string, string> = {
   requirementCreatedAt: "Requirement created",
+  requirementCrossCheckAt: "Requirement cross check with cutting list",
   quoteCreatedAt: "Quote created",
   paymentSettledAt: "Payment done",
   orderConfirmedAt: "Order confirmed",

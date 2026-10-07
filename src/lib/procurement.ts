@@ -481,6 +481,7 @@ export function computeProcurementPlannedDates(
 
 export interface ProcurementStagePlannedDates {
   requirement: Date | null;
+  requirementCrossCheck: Date | null; // section only, null otherwise — always equal to `requirement` itself
   quote: Date | null;
   payment: Date | null;
   order: Date | null;
@@ -528,6 +529,7 @@ export function computeAllProcurementPlannedDates(
     });
     return {
       requirement: planned.requirement,
+      requirementCrossCheck: planned.requirement,
       quote: planned.quote,
       payment: planned.payment,
       order: planned.order,
@@ -547,6 +549,7 @@ export function computeAllProcurementPlannedDates(
   });
   return {
     requirement: planned.requirement,
+    requirementCrossCheck: null, // hardware/gasket never get this stage — see PROCUREMENT_STAGES
     quote: hwGasket.quote,
     payment: hwGasket.payment,
     order: hwGasket.order,
@@ -572,6 +575,7 @@ function procurementItemStages(
   item: ProcurementItemArrivalInputs & {
     requirementPlannedOverride: Date | null;
     requirementCreatedAt: Date | null;
+    requirementCrossCheckAt: Date | null;
     quoteCreatedAt: Date | null;
     paymentSettledAt: Date | null;
     actualArrivalDate: Date | null;
@@ -583,10 +587,19 @@ function procurementItemStages(
   const planned = computeAllProcurementPlannedDates(item, phase2PlanAnchor, sectionQCPlanned);
   const stages: ProcurementItemStage[] = [
     { label: "Requirement created", planned: planned.requirement, actual: item.requirementCreatedAt },
+  ];
+  if (item.itemType === "section") {
+    stages.push({
+      label: "Requirement cross check with cutting list",
+      planned: planned.requirementCrossCheck,
+      actual: item.requirementCrossCheckAt,
+    });
+  }
+  stages.push(
     { label: "Quote created", planned: planned.quote, actual: item.quoteCreatedAt },
     { label: "Payment done", planned: planned.payment, actual: item.paymentSettledAt },
-    { label: "Order confirmed", planned: planned.order, actual: item.orderConfirmedAt },
-  ];
+    { label: "Order confirmed", planned: planned.order, actual: item.orderConfirmedAt }
+  );
   if (item.itemType === "section") {
     stages.push(
       { label: "Material despatch", planned: planned.materialDespatch, actual: item.materialDespatchAt },
@@ -625,6 +638,7 @@ export function withLiveExpectedArrivalDates<
   T extends ProcurementItemArrivalInputs & {
     requirementPlannedOverride: Date | null;
     requirementCreatedAt: Date | null;
+    requirementCrossCheckAt: Date | null;
     quoteCreatedAt: Date | null;
     paymentSettledAt: Date | null;
     actualArrivalDate: Date | null;
@@ -872,6 +886,11 @@ export const PROCUREMENT_LIFECYCLE = [
     fields: {
       requirementCreatedAt: null,
       requirementNote: null,
+      // Section only (always already null for hardware/gasket) — shares this stage's own gate,
+      // since it only ever makes sense once a requirement to cross-check exists in the first
+      // place; see PROCUREMENT_STAGES.section in project-filters.ts.
+      requirementCrossCheckAt: null,
+      requirementCrossCheckNote: null,
       expectedArrivalDate: null,
       notes: null,
       requirementPlannedOverride: null,

@@ -98,7 +98,12 @@ describe("getUnifiedMyTasks — procurement/glass-PO stages surface as their own
     await advanceThroughPhase1(project.id, users);
     const now = new Date();
     for (const itemType of ["section", "hardware", "gasket"] as const) {
-      await patchProcurementItem(project.id, itemType, users.design_engineer, { requirementCreatedAt: now });
+      await patchProcurementItem(project.id, itemType, users.design_engineer, {
+        requirementCreatedAt: now,
+        // Section only — hardware/gasket never populate this, same as despatch/powder-coating
+        // below, but harmless to always pass (see patchProcurementItem's ...rest spread).
+        requirementCrossCheckAt: itemType === "section" ? now : undefined,
+      });
       await patchProcurementItem(project.id, itemType, users.purchase, {
         quoteCreatedAt: now,
         paymentSettledAt: now,

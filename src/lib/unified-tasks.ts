@@ -67,6 +67,7 @@ export type TaskKind =
 // wiring specific to its own render loop, not reusable here).
 const STAGE_LABEL: Record<string, string> = {
   requirementCreatedAt: "Requirement created",
+  requirementCrossCheckAt: "Requirement cross check with cutting list",
   quoteCreatedAt: "Quote created",
   paymentSettledAt: "Payment done",
   orderConfirmedAt: "Order confirmed",
@@ -77,6 +78,7 @@ const STAGE_LABEL: Record<string, string> = {
 };
 const STAGE_NOTE_FIELD: Record<string, string> = {
   requirementCreatedAt: "requirementNote",
+  requirementCrossCheckAt: "requirementCrossCheckNote",
   quoteCreatedAt: "quoteNote",
   paymentSettledAt: "paymentNote",
   orderConfirmedAt: "orderNote",
@@ -548,6 +550,7 @@ async function buildProcurementStageTasks(department: Department | null): Promis
         const planned = computeAllProcurementPlannedDates(item, phase2PlanAnchor, sectionQCPlanned);
         const plannedByField: Record<string, Date | null> = {
           requirementCreatedAt: planned.requirement,
+          requirementCrossCheckAt: planned.requirementCrossCheck,
           quoteCreatedAt: planned.quote,
           paymentSettledAt: planned.payment,
           orderConfirmedAt: planned.order,

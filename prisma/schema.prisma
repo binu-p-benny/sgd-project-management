@@ -463,6 +463,13 @@ model ProcurementItem {
   // item's chain (see computeProcurementPlannedDates), the same "shift together" principle
   // planAnchorOverride already applies at the whole-item level.
   requirementPlannedOverride DateTime? @map("requirement_planned_override") @db.Timestamptz(3)
+  // Section only (see PROCUREMENT_STAGES.section in project-filters.ts) — Design Engineer
+  // cross-checking the Requirement against the cutting list, right after Requirement created.
+  // Deliberately no requirementCrossCheckPlannedOverride: its planned date is always Requirement
+  // created's own (see computeAllProcurementPlannedDates), not independently computed or
+  // overridable — moving Requirement created's planned date moves this one with it.
+  requirementCrossCheckAt   DateTime? @map("requirement_cross_check_at") @db.Timestamptz(3)
+  requirementCrossCheckNote String?   @map("requirement_cross_check_note") @db.Text
   quoteCreatedAt             DateTime? @map("quote_created_at") @db.Timestamptz(3)
   quoteNote                  String?   @map("quote_note") @db.Text
   quotePlannedOverride       DateTime? @map("quote_planned_override") @db.Timestamptz(3)

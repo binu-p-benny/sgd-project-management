@@ -14,6 +14,7 @@ import {
 
 const EMPTY_ITEM_FIELDS: ProcurementItemFields = {
   requirementCreatedAt: null,
+  requirementCrossCheckAt: null,
   quoteCreatedAt: null,
   paymentSettledAt: null,
   orderConfirmedAt: null,
@@ -56,10 +57,18 @@ describe("currentProcurementItemDepartment: the department owning an item's next
     ).toBe("accounts");
   });
 
+  it("section alone cross-checks the requirement against the cutting list right after Requirement created — hardware/gasket skip straight to Quote created", () => {
+    const upToRequirement: ProcurementItemFields = { ...EMPTY_ITEM_FIELDS, requirementCreatedAt: new Date() };
+    expect(currentProcurementItemDepartment({ itemType: "section", ...upToRequirement })).toBe("design_engineer");
+    expect(currentProcurementItemDepartment({ itemType: "hardware", ...upToRequirement })).toBe("purchase");
+    expect(currentProcurementItemDepartment({ itemType: "gasket", ...upToRequirement })).toBe("purchase");
+  });
+
   it("section stops at Purchase for despatch/powder-coating, which hardware and gasket don't have", () => {
     const upToOrder: ProcurementItemFields = {
       ...EMPTY_ITEM_FIELDS,
       requirementCreatedAt: new Date(),
+      requirementCrossCheckAt: new Date(),
       quoteCreatedAt: new Date(),
       paymentSettledAt: new Date(),
       orderConfirmedAt: new Date(),
@@ -71,6 +80,7 @@ describe("currentProcurementItemDepartment: the department owning an item's next
   it("null once every stage is filled", () => {
     const done: ProcurementItemFields = {
       requirementCreatedAt: new Date(),
+      requirementCrossCheckAt: new Date(),
       quoteCreatedAt: new Date(),
       paymentSettledAt: new Date(),
       orderConfirmedAt: new Date(),
@@ -175,6 +185,7 @@ describe("getProjectActiveDepartments: the union /projects' department filter ma
   it("a fully-completed project with every item fully paid has no active departments", () => {
     const done: ProcurementItemFields = {
       requirementCreatedAt: new Date(),
+      requirementCrossCheckAt: new Date(),
       quoteCreatedAt: new Date(),
       paymentSettledAt: new Date(),
       orderConfirmedAt: new Date(),
