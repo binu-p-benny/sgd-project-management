@@ -21,6 +21,7 @@ import { getProjectDelayReasons } from "@/lib/overrun";
 import { withLiveExpectedArrivalDates } from "@/lib/procurement";
 import { BLOCKED_REASON_LABELS, stepStatusLabel } from "@/lib/labels";
 import { addDays } from "@/lib/step-template";
+import { addWorkingDays } from "@/lib/working-days";
 import type { Department } from "@prisma/client";
 
 const DEMO_KEY_PREFIX = "demo:";
@@ -325,7 +326,7 @@ async function websiteReviewExamples(limit: number): Promise<DemoNotification[]>
   return projects.map((project, i) => ({
     type: "website_review_due",
     message: `Website review for ${project.name} is due — planned ${formatShortDate(
-      addDays(project.phaseSteps[0].actualEndDate!, 1)
+      addWorkingDays(project.phaseSteps[0].actualEndDate!, 1)
     )}`,
     projectId: project.id,
     departments: ["hr_admin"],

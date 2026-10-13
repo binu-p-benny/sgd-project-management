@@ -1,5 +1,5 @@
 import { isProcurementStageOverrun } from "@/lib/overrun";
-import { addDays } from "@/lib/step-template";
+import { addWorkingDays } from "@/lib/working-days";
 
 // Not a stored value — same "date-driven, computed at read time" reasoning as
 // EffectiveOverallStatus's own `delayed` in overrun.ts: a service can *become* delayed (or, once
@@ -12,12 +12,12 @@ export interface ServiceItemLike {
   actualDate: Date | null;
 }
 
-/** completedAt + this many days is when the customer review is due — see getServiceStatus and
+/** completedAt + this many working days (Sundays excluded) is when the customer review is due — see getServiceStatus and
  *  the read-only "Planned date" field on ServiceReviewCard, which both derive it the same way. */
 export const SERVICE_REVIEW_DUE_DAYS = 2;
 
 export function getServiceReviewPlannedDate(completedAt: Date): Date {
-  return addDays(completedAt, SERVICE_REVIEW_DUE_DAYS);
+  return addWorkingDays(completedAt, SERVICE_REVIEW_DUE_DAYS);
 }
 
 /**

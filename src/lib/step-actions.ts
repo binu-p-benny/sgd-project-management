@@ -24,6 +24,7 @@ import { rescheduleProjectDates } from "@/lib/reschedule";
 import { createEmptyGlassPurchaseOrderForProject } from "@/lib/glass";
 import { PROCUREMENT_STAGES } from "@/lib/project-filters";
 import { markTaskReviewed } from "@/lib/task-reviews";
+import { addWorkingDays, rollToWorkingDay } from "@/lib/working-days";
 
 // 2A, 2D1 and 2F are derived from procurement_items — never manually settable.
 export const DERIVED_STEP_CODES = new Set(["2A", "2D1", "2F"]);
@@ -137,7 +138,7 @@ async function applyVisitUrgency(projectId: string, visitUrgency: VisitUrgency, 
         status: "blocked",
         blockedReason: "site_not_ready",
         plannedDurationDays: null,
-        plannedStartDate: anchor,
+        plannedStartDate: rollToWorkingDay(anchor),
         plannedEndDate: null,
         notifiedOverdueAt: null,
       },
@@ -155,8 +156,10 @@ async function applyVisitUrgency(projectId: string, visitUrgency: VisitUrgency, 
   }
 
   const duration = deriveVisitDurationDays(visitUrgency);
+  // 1B depends on 1A, resolved to its actual end — the same dependency-end footing
+  // rescheduleProjectDates gives 1B, so both agree on its dates to the day.
   const remainingTemplate = [
-    { stepCode: "1B", dependsOn: [] as string[], plannedDurationDays: duration },
+    { stepCode: "1B", dependsOn: ["1A"], plannedDurationDays: duration },
     { stepCode: "1C", dependsOn: ["1B"], plannedDurationDays: 2 },
     { stepCode: "1D", dependsOn: ["1C"], plannedDurationDays: 2 },
   ];
@@ -164,7 +167,8 @@ async function applyVisitUrgency(projectId: string, visitUrgency: VisitUrgency, 
     // owningDepartment is a placeholder here — computePlannedDates never reads it, this
     // array only exists to satisfy StepTemplateItem's shape for the date computation below.
     remainingTemplate.map((s) => ({ ...s, phase: "phase_1" as const, stepName: "", owningDepartment: "accounts" as const })),
-    anchor
+    anchor,
+    new Map([["1A", anchor]])
   );
 
   for (const stepCode of ["1B", "1C", "1D"]) {
@@ -172,11 +176,11 @@ async function applyVisitUrgency(projectId: string, visitUrgency: VisitUrgency, 
     // 1B is next in line with nothing left to gate it once 1A's welcome call wraps up, so
     // there's no "not started" limbo for the department to notice and act on — it moves
     // straight to in_progress instead of waiting on a manual Start. Its actual start is the
-    // day after 1A's actual end, not the same day: the two are separate visits in practice,
-    // even though nothing blocks 1B from being picked up immediately.
+    // working day after 1A's actual end, not the same day: the two are separate visits in
+    // practice, even though nothing blocks 1B from being picked up immediately.
     const extra: { plannedDurationDays?: number | null; status?: StepStatus; actualStartDate?: Date } =
       stepCode === "1B"
-        ? { plannedDurationDays: duration, status: "in_progress", actualStartDate: addDays(anchor, 1) }
+        ? { plannedDurationDays: duration, status: "in_progress", actualStartDate: addWorkingDays(anchor, 1) }
         : {};
     await prisma.phaseStep.updateMany({
       where: { projectId, stepCode },
@@ -204,8 +208,8 @@ async function applyVisitUrgency(projectId: string, visitUrgency: VisitUrgency, 
  * Flips a step straight to in_progress with its actual start stamped, the same treatment
  * 1B gets in applyVisitUrgency once 1A wraps up: the step immediately after a just-completed
  * one has nothing left to gate it, so there's no "not started" limbo for the department to
- * notice and act on. `anchor` is expected to already be the day after the dependency's actual
- * end (see the 1B/1C/1D call sites) rather than "now" — the actual start is a function of when
+ * notice and act on. `anchor` is expected to already be the working day after the dependency's
+ * actual end (see the 1B/1C/1D call sites) rather than "now" — the actual start is a function of when
  * the prior step's work finished, not of when someone happened to click the button. No-ops if
  * the step isn't sitting at not_started (already touched, or blocked) — this only ever fires
  * the moment its sole dependency completes.
@@ -254,7 +258,7 @@ export async function cascadeActualStart(
   const next = await prisma.phaseStep.findFirst({ where: { projectId, stepCode: nextCode } });
   if (!next || next.status === "completed") return;
 
-  const newStart = addDays(actualEndDate, 1);
+  const newStart = addWorkingDays(actualEndDate, 1);
   if (next.actualStartDate?.getTime() === newStart.getTime()) return;
 
   await prisma.phaseStep.update({ where: { id: next.id }, data: { actualStartDate: newStart } });
@@ -907,7 +911,7 @@ export async function syncDerivedStepStatus(
   // 2A's actual start, the first time real progress is made, is set to 2A's own planned
   // finish (same day) rather than whatever moment the first requirement box happened to get
   // checked. plannedEndDate is 2A's single source of truth for "when it was expected to
-  // begin" — already 1D's actual end + 1 day by construction (1 day duration, dependsOn 1D —
+  // begin" — already 1D's actual end + 1 working day by construction (1 day duration, dependsOn 1D —
   // see step-template.ts), so this stays in sync with the schedule automatically rather than
   // re-deriving the same anchor by hand. 2D1 uses derivedStartAnchor instead (see above).
   let actualStartAnchor = now;
@@ -1237,7 +1241,7 @@ export async function updateStepStatus(
         step.projectId,
         "1C",
         actorId,
-        addDays(updated.actualEndDate ?? now, 1),
+        addWorkingDays(updated.actualEndDate ?? now, 1),
         "Auto-started: site visit (1B) completed"
       );
     }
@@ -1247,7 +1251,7 @@ export async function updateStepStatus(
         step.projectId,
         "1D",
         actorId,
-        addDays(updated.actualEndDate ?? now, 1),
+        addWorkingDays(updated.actualEndDate ?? now, 1),
         "Auto-started: revised drawing confirmation (1C) completed"
       );
     }

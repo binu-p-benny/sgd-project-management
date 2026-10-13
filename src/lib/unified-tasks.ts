@@ -9,7 +9,7 @@ import {
   getRequirementCreatedStatus,
 } from "@/lib/procurement";
 import { PROCUREMENT_STAGES, firstUnfilledStage, type StageSpec } from "@/lib/project-filters";
-import { addDays } from "@/lib/step-template";
+import { addWorkingDays } from "@/lib/working-days";
 import {
   DERIVED_STEP_CODES,
   MANUAL_CONTRACTOR_STEP_CODES,
@@ -1042,7 +1042,7 @@ async function buildCommonTaskTasks(department: Department | null): Promise<Unif
  * same Project row, same HR & Admin-only audience, so it rides along on this query rather than a
  * second round trip. Unlike the two review cards above, it needs 3E to have actually *completed*
  * (not just exist) before it can open at all: its planned date is 3E's own actual end date + 1
- * day, so there's nothing to compute a plan from — let alone anything to ask about — until final
+ * working day, so there's nothing to compute a plan from — let alone anything to ask about — until final
  * QC has genuinely happened.
  */
 async function buildCustomerReviewTasks(department: Department | null): Promise<UnifiedTask[]> {
@@ -1149,7 +1149,7 @@ async function buildCustomerReviewTasks(department: Department | null): Promise<
     }
 
     if (project.websiteReviewAsked === null && threeE?.actualEndDate) {
-      const plannedDate = addDays(threeE.actualEndDate, 1);
+      const plannedDate = addWorkingDays(threeE.actualEndDate, 1);
       tasks.push({
         id: `website_review:${project.id}`,
         kind: "website_review",

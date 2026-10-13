@@ -37,7 +37,7 @@ import {
   withLiveExpectedArrivalDates,
 } from "@/lib/procurement";
 import { findUpstreamDelay } from "@/lib/reschedule";
-import { addDays } from "@/lib/step-template";
+import { addWorkingDays } from "@/lib/working-days";
 import {
   maybeEarlyUnlockPhase3,
   ensureProductionMaterialDeliveryBlock,
@@ -580,7 +580,7 @@ export default async function ProjectDetailPage({
     <div className="sm:col-span-2">
       <WebsiteReviewCard
         projectId={project.id}
-        plannedDate={threeE?.actualEndDate ? addDays(threeE.actualEndDate, 1).toISOString() : null}
+        plannedDate={threeE?.actualEndDate ? addWorkingDays(threeE.actualEndDate, 1).toISOString() : null}
         asked={project.websiteReviewAsked}
         askedAt={project.websiteReviewedAt?.toISOString() ?? null}
         note={project.websiteReviewNote}

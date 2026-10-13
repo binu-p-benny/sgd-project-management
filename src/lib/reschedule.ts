@@ -6,12 +6,8 @@ import {
   computeExpectedFinalMeasurementDate,
   computeProjectInstallationForecast,
 } from "@/lib/procurement";
-
-function addDays(date: Date, days: number): Date {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
-}
+import { plannedWindowFrom } from "@/lib/step-template";
+import { rollToWorkingDay } from "@/lib/working-days";
 
 export interface DelayGraphNode {
   stepCode: string;
@@ -190,14 +186,22 @@ export async function rescheduleProjectDates(projectId: string): Promise<void> {
     for (const step of steps) {
       if (step.status === "completed") continue;
 
-      let newStart: Date | null;
+      // When this step is ready to begin — its latest dependency's end — before Sundays are
+      // accounted for; plannedWindowFrom (the same helper the baseline scheduler uses) turns it
+      // into a start rolled off a Sunday and an end counted in working days.
+      let readyFrom: Date | null;
       if (step.dependsOn.length === 0) {
-        newStart = step.plannedStartDate; // no upstream to react to — leave as is
+        // No upstream to react to — leave as is, only rolled off a Sunday (a start stored before
+        // Sundays were skipped). computePlannedDates rolls a dependency-free step's anchor the
+        // same way before counting from it, so this lands on the same end it did.
+        readyFrom = step.plannedStartDate ? rollToWorkingDay(step.plannedStartDate) : null;
       } else {
         const depEnds = step.dependsOn.map((code) => endDates.get(code));
         const allResolved = depEnds.every((d): d is Date => d instanceof Date);
-        newStart = allResolved ? new Date(Math.max(...(depEnds as Date[]).map((d) => d.getTime()))) : null;
+        readyFrom = allResolved ? new Date(Math.max(...(depEnds as Date[]).map((d) => d.getTime()))) : null;
       }
+      const baseline = plannedWindowFrom(readyFrom, step.plannedDurationDays);
+      const newStart = baseline.plannedStartDate;
 
       const newEnd =
         newStart === null
@@ -212,9 +216,7 @@ export async function rescheduleProjectDates(projectId: string): Promise<void> {
               ? step.plannedEndDateOverride
               : step.stepCode === "2D2" && finalMeasurementPlanned !== null
                 ? finalMeasurementPlanned
-                : step.plannedDurationDays !== null
-                  ? addDays(newStart, step.plannedDurationDays)
-                  : null;
+                : baseline.plannedEndDate;
 
       const prevStart = updates.get(step.stepCode)?.plannedStartDate ?? step.plannedStartDate;
       const prevEnd = updates.get(step.stepCode)?.plannedEndDate ?? step.plannedEndDate;

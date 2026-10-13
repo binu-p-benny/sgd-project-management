@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { Department, RecurrenceFrequency } from "@prisma/client";
 import { addDays } from "@/lib/step-template";
+import { addWorkingDays, rollToWorkingDay } from "@/lib/working-days";
 
 export interface CommonTaskRow {
   id: string;
@@ -22,15 +23,19 @@ export interface CommonTaskRow {
  * it as due again. Shared by both a completion and a skip (see PATCH /api/common-tasks/[id]):
  * completing passes the actual completion time as `anchor`, skipping passes "now". `recurrence:
  * "none"` is never passed here — that case never advances, it just closes.
+ *
+ * Never lands on a Sunday (see working-days.ts): a daily chore's next cycle is the next *working*
+ * day (Saturday's comes back Monday), while weekly/monthly keep their own weekday/date and only
+ * move to the Monday if that falls on a Sunday.
  */
 export function nextRecurrenceDate(plannedDate: Date, anchor: Date, recurrence: RecurrenceFrequency): Date {
   const base = plannedDate > anchor ? plannedDate : anchor;
-  if (recurrence === "daily") return addDays(base, 1);
-  if (recurrence === "weekly") return addDays(base, 7);
+  if (recurrence === "daily") return addWorkingDays(base, 1);
+  if (recurrence === "weekly") return rollToWorkingDay(addDays(base, 7));
   // monthly
   const next = new Date(base);
   next.setMonth(next.getMonth() + 1);
-  return next;
+  return rollToWorkingDay(next);
 }
 
 /**

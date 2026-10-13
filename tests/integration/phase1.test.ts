@@ -12,6 +12,7 @@ import {
   FULLY_CHECKED_WELCOME_CALL,
 } from "../helpers/db";
 import type { Department, VisitUrgency } from "@prisma/client";
+import { addWorkingDays, isSunday } from "@/lib/working-days";
 
 let users: Record<Department, string>;
 
@@ -137,9 +138,11 @@ describe("Phase 1 — 1B duration auto-derived from visit_urgency", () => {
       expect(oneB.status).toBe("in_progress");
       expect(oneB.actualStartDate).not.toBeNull();
       expect(oneB.plannedStartDate).not.toBeNull();
-      expect(oneB.plannedEndDate).toEqual(
-        new Date(oneB.plannedStartDate!.getTime() + expectedDays * 24 * 60 * 60 * 1000)
-      );
+      // expectedDays *working* days on from 1A's actual end (the start, unless that's a Sunday) —
+      // Sundays don't count toward the visit's duration.
+      const oneAAfter = await getStep(project.id, "1A");
+      expect(oneB.plannedEndDate).toEqual(addWorkingDays(oneAAfter.actualEndDate!, expectedDays));
+      expect(isSunday(oneB.plannedEndDate!)).toBe(false);
 
       const project2 = await getProject(project.id);
       expect(project2.visitUrgency).toBe(urgency);

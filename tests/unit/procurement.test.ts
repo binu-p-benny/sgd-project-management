@@ -29,57 +29,65 @@ import {
   ALUMINUM_FRAMEWORK_END_OFFSET_DAYS,
   type ProcurementItemArrivalInputs,
 } from "@/lib/procurement";
+import { addWorkingDays } from "@/lib/working-days";
 
+// A Thursday. Every "day N" below is N *working* days later — Sundays (4, 11, 18, 25 Jan, 1 Feb)
+// don't count — so each expected date is spelled out rather than derived.
 const requirementCreatedAt = new Date("2026-01-01T00:00:00.000Z");
-function daysLater(n: number): Date {
-  const d = new Date(requirementCreatedAt);
-  d.setDate(d.getDate() + n);
-  return d;
-}
+const utc = (ymd: string) => new Date(`${ymd}T00:00:00.000Z`);
 
-describe("section track: quote (2d) -> order+payment (2d) -> arrival (~21d)", () => {
+describe("section track: quote (2d) -> order+payment (2d) -> arrival (~21d), all working days", () => {
   it("quote requested day 2", () => {
-    expect(computeExpectedQuoteDate("section", requirementCreatedAt)).toEqual(daysLater(2));
+    expect(computeExpectedQuoteDate("section", requirementCreatedAt)).toEqual(utc("2026-01-03"));
   });
-  it("order confirmed day 4 (2 days after quote)", () => {
-    expect(computeExpectedOrderDate("section", requirementCreatedAt)).toEqual(daysLater(4));
+  it("order confirmed day 4 (2 working days after quote — skipping Sunday the 4th)", () => {
+    expect(computeExpectedOrderDate("section", requirementCreatedAt)).toEqual(utc("2026-01-06"));
   });
-  it("arrival ~21 days from requirement", () => {
-    expect(computeExpectedArrivalDate("section", requirementCreatedAt)).toEqual(daysLater(21));
+  it("arrival ~21 working days from requirement", () => {
+    expect(computeExpectedArrivalDate("section", requirementCreatedAt)).toEqual(utc("2026-01-26"));
   });
 });
 
-describe("hardware/gasket track: quote day 13 -> order day 15 -> arrival day 25 -> QC day 27 (client-given timeline)", () => {
+describe("hardware/gasket track: quote day 13 -> order day 15 -> arrival day 25 -> QC day 27 (client-given timeline, working days)", () => {
   it("hardware: quote requested day 13", () => {
-    expect(computeExpectedQuoteDate("hardware", requirementCreatedAt)).toEqual(daysLater(13));
+    expect(computeExpectedQuoteDate("hardware", requirementCreatedAt)).toEqual(utc("2026-01-16"));
   });
   it("hardware: order confirmed day 15", () => {
-    expect(computeExpectedOrderDate("hardware", requirementCreatedAt)).toEqual(daysLater(15));
+    expect(computeExpectedOrderDate("hardware", requirementCreatedAt)).toEqual(utc("2026-01-19"));
   });
   it("hardware: arrival day 25", () => {
-    expect(computeExpectedArrivalDate("hardware", requirementCreatedAt)).toEqual(daysLater(25));
+    expect(computeExpectedArrivalDate("hardware", requirementCreatedAt)).toEqual(utc("2026-01-30"));
   });
   it("hardware: QC day 27 (arrival + 2, not + 3 like section)", () => {
-    expect(computeExpectedQCDate("hardware", requirementCreatedAt)).toEqual(daysLater(27));
+    expect(computeExpectedQCDate("hardware", requirementCreatedAt)).toEqual(utc("2026-02-02"));
   });
   it("gasket follows the same timing pattern as hardware", () => {
-    expect(computeExpectedQuoteDate("gasket", requirementCreatedAt)).toEqual(daysLater(13));
-    expect(computeExpectedOrderDate("gasket", requirementCreatedAt)).toEqual(daysLater(15));
-    expect(computeExpectedArrivalDate("gasket", requirementCreatedAt)).toEqual(daysLater(25));
-    expect(computeExpectedQCDate("gasket", requirementCreatedAt)).toEqual(daysLater(27));
+    expect(computeExpectedQuoteDate("gasket", requirementCreatedAt)).toEqual(utc("2026-01-16"));
+    expect(computeExpectedOrderDate("gasket", requirementCreatedAt)).toEqual(utc("2026-01-19"));
+    expect(computeExpectedArrivalDate("gasket", requirementCreatedAt)).toEqual(utc("2026-01-30"));
+    expect(computeExpectedQCDate("gasket", requirementCreatedAt)).toEqual(utc("2026-02-02"));
   });
   it("section keeps its own day-21 arrival / arrival+3 QC — unaffected by hardware/gasket's new offsets", () => {
-    expect(computeExpectedArrivalDate("section", requirementCreatedAt)).toEqual(daysLater(21));
-    expect(computeExpectedQCDate("section", requirementCreatedAt)).toEqual(daysLater(24));
+    expect(computeExpectedArrivalDate("section", requirementCreatedAt)).toEqual(utc("2026-01-26"));
+    expect(computeExpectedQCDate("section", requirementCreatedAt)).toEqual(utc("2026-01-29"));
+  });
+  it("no computed stage ever lands on a Sunday", () => {
+    for (const itemType of ["section", "hardware", "gasket"] as const) {
+      for (const fn of [computeExpectedQuoteDate, computeExpectedPaymentDate, computeExpectedOrderDate, computeExpectedArrivalDate, computeExpectedQCDate]) {
+        expect(fn(itemType, requirementCreatedAt).getUTCDay()).not.toBe(0);
+      }
+    }
   });
 });
 
-describe("action plan (only relevant once QC fails): 2 days after the QC check itself", () => {
+describe("action plan (only relevant once QC fails): 2 working days after the QC check itself", () => {
   it("plans off qc_checked_at directly, not the shared requirement anchor", () => {
-    const qcCheckedAt = new Date("2026-03-10T00:00:00.000Z");
-    const expected = new Date(qcCheckedAt);
-    expected.setDate(expected.getDate() + 2);
-    expect(computeExpectedActionPlanDate(qcCheckedAt)).toEqual(expected);
+    const qcCheckedAt = new Date("2026-03-10T00:00:00.000Z"); // Tuesday
+    expect(computeExpectedActionPlanDate(qcCheckedAt)).toEqual(utc("2026-03-12"));
+  });
+  it("skips a Sunday inside the span", () => {
+    const qcCheckedAt = new Date("2026-03-14T00:00:00.000Z"); // Saturday
+    expect(computeExpectedActionPlanDate(qcCheckedAt)).toEqual(utc("2026-03-17")); // Mon = 1, Tue = 2
   });
 });
 
@@ -109,24 +117,23 @@ describe("computeProcurementPlannedDates", () => {
     });
   });
 
-  it("overriding one stage shifts every stage after it by the same delta, leaving earlier stages untouched", () => {
-    const originalQuote = computeExpectedQuoteDate("section", requirementCreatedAt);
-    const newQuote = daysLater(10); // 8 days later than the original day-2 quote
-    const shiftDays = (newQuote.getTime() - originalQuote.getTime()) / (1000 * 60 * 60 * 24);
+  it("overriding one stage re-anchors every stage after it at the same working-day gaps, leaving earlier stages untouched", () => {
+    const newQuote = utc("2026-01-12"); // Monday
 
     const result = computeProcurementPlannedDates("section", requirementCreatedAt, { quote: newQuote });
 
     expect(result.requirement).toEqual(requirementCreatedAt); // before the override — unaffected
     expect(result.quote).toEqual(newQuote);
-    const shift = (d: Date) => new Date(d.getTime() + shiftDays * 24 * 60 * 60 * 1000);
-    expect(result.payment).toEqual(shift(computeExpectedPaymentDate("section", requirementCreatedAt)));
-    expect(result.order).toEqual(shift(computeExpectedOrderDate("section", requirementCreatedAt)));
-    expect(result.arrival).toEqual(shift(computeExpectedArrivalDate("section", requirementCreatedAt)));
-    expect(result.qc).toEqual(shift(computeExpectedQCDate("section", requirementCreatedAt)));
+    // Section's gaps after Quote: Payment/Order +2, Arrival +19, QC +22 — all working days.
+    expect(result.payment).toEqual(utc("2026-01-14"));
+    expect(result.order).toEqual(utc("2026-01-14"));
+    expect(result.arrival).toEqual(utc("2026-02-03"));
+    expect(result.qc).toEqual(utc("2026-02-06"));
+    expect(result.arrival).toEqual(addWorkingDays(newQuote, 19));
   });
 
   it("overriding the last stage only changes that one stage", () => {
-    const newQC = daysLater(100);
+    const newQC = utc("2026-04-11");
     const result = computeProcurementPlannedDates("section", requirementCreatedAt, { qc: newQC });
 
     expect(result.qc).toEqual(newQC);
@@ -138,8 +145,8 @@ describe("computeProcurementPlannedDates", () => {
   });
 
   it("a later override takes precedence over an earlier one's shift, and re-anchors everything after itself in turn", () => {
-    const newQuote = daysLater(10);
-    const newArrival = daysLater(50);
+    const newQuote = utc("2026-01-12");
+    const newArrival = utc("2026-02-20"); // Friday
 
     const result = computeProcurementPlannedDates("section", requirementCreatedAt, {
       quote: newQuote,
@@ -148,16 +155,16 @@ describe("computeProcurementPlannedDates", () => {
 
     expect(result.quote).toEqual(newQuote);
     expect(result.arrival).toEqual(newArrival); // its own override, not shifted by quote's
-    expect(result.qc).toEqual(new Date(newArrival.getTime() + 3 * 24 * 60 * 60 * 1000)); // qc = arrival + 3, off arrival's override
+    expect(result.qc).toEqual(utc("2026-02-24")); // qc = arrival + 3 working days (Sat, Mon, Tue), off arrival's override
   });
 
   it("an override still anchors downstream stages even when the base anchor itself is unresolved", () => {
-    const newQuote = daysLater(10);
+    const newQuote = utc("2026-01-12");
     const result = computeProcurementPlannedDates("section", null, { quote: newQuote });
 
     expect(result.requirement).toBeNull(); // before the override, and the anchor is null
     expect(result.quote).toEqual(newQuote);
-    expect(result.payment).toEqual(new Date(newQuote.getTime() + 2 * 24 * 60 * 60 * 1000));
+    expect(result.payment).toEqual(utc("2026-01-14"));
   });
 });
 
@@ -199,7 +206,7 @@ describe("computeSectionChainDates", () => {
     expect(result.materialDespatch).toEqual(new Date("2026-09-01T00:00:00.000Z"));
     expect(result.powderCoatingArrival).toEqual(new Date("2026-09-09T00:00:00.000Z"));
     expect(result.arrival).toEqual(new Date("2026-09-17T00:00:00.000Z"));
-    expect(result.qc).toEqual(new Date("2026-09-19T00:00:00.000Z")); // arrival + 2 calendar days
+    expect(result.qc).toEqual(new Date("2026-09-19T00:00:00.000Z")); // arrival + 2 working days
   });
 
   it("Order confirmed's own actual date, once set, is used instead of its planned date", () => {
@@ -217,12 +224,12 @@ describe("computeSectionChainDates", () => {
     expect(result.powderCoatingArrival).toEqual(new Date("2026-09-14T00:00:00.000Z")); // but chains off the actual, not the stale forecast
   });
 
-  it("arrival plans off arrived-for-powder-coating's ground truth, and QC stays 2 calendar days after arrival", () => {
+  it("arrival plans off arrived-for-powder-coating's ground truth, and QC is 2 working days after arrival", () => {
     const arrivedForPowderCoatingAt = new Date("2026-08-24T00:00:00.000Z"); // Monday
     const result = computeSectionChainDates(orderConfirmedPlanned, null, null, arrivedForPowderCoatingAt, {});
 
     expect(result.arrival).toEqual(new Date("2026-09-01T00:00:00.000Z"));
-    expect(result.qc).toEqual(new Date("2026-09-03T00:00:00.000Z")); // arrival + 2 calendar days, not working days
+    expect(result.qc).toEqual(new Date("2026-09-03T00:00:00.000Z")); // arrival + 2 working days
   });
 
   it("a manual arrival override wins over the chained value, and QC re-anchors off the override — same as the other stages' overrides", () => {
@@ -233,7 +240,14 @@ describe("computeSectionChainDates", () => {
     });
 
     expect(result.arrival).toEqual(overrideArrival);
-    expect(result.qc).toEqual(new Date("2026-09-12T00:00:00.000Z")); // override + 2 calendar days
+    expect(result.qc).toEqual(new Date("2026-09-12T00:00:00.000Z")); // override + 2 working days
+  });
+
+  it("QC skips a Sunday — a Friday arrival plans QC for the Monday, not the Sunday 2 calendar days on", () => {
+    const fridayArrival = new Date("2026-09-11T00:00:00.000Z");
+    const result = computeSectionChainDates(orderConfirmedPlanned, null, null, null, { arrival: fridayArrival });
+
+    expect(result.qc).toEqual(new Date("2026-09-14T00:00:00.000Z")); // Sat = 1, Mon = 2
   });
 
   it("a manual QC override wins outright, independent of arrival", () => {
@@ -273,7 +287,7 @@ describe("computeSectionChainDates", () => {
 
     expect(result.powderCoatingArrival).toEqual(overridePowderCoatingArrival);
     expect(result.arrival).toEqual(new Date("2026-09-23T00:00:00.000Z")); // override + 7 working days
-    expect(result.qc).toEqual(new Date("2026-09-25T00:00:00.000Z")); // that arrival + 2 calendar days
+    expect(result.qc).toEqual(new Date("2026-09-25T00:00:00.000Z")); // that arrival + 2 working days
   });
 });
 
@@ -284,9 +298,9 @@ describe("computePhase2PlanAnchor", () => {
     expect(computePhase2PlanAnchor(oneDPlanned, null, null)).toBeNull();
   });
 
-  it("anchors off 1D's actual end + 1 day when there's no delay category", () => {
-    const oneDActual = new Date("2026-08-22T00:00:00.000Z");
-    expect(computePhase2PlanAnchor(oneDPlanned, oneDActual, null)).toEqual(new Date("2026-08-23T00:00:00.000Z"));
+  it("anchors off 1D's actual end + 1 working day when there's no delay category — a Saturday finish anchors on the Monday", () => {
+    const oneDActual = new Date("2026-08-22T00:00:00.000Z"); // Saturday
+    expect(computePhase2PlanAnchor(oneDPlanned, oneDActual, null)).toEqual(new Date("2026-08-24T00:00:00.000Z"));
   });
 
   it("still anchors off the (late) actual end for a client_side delay — same as no delay", () => {
@@ -469,9 +483,7 @@ describe("computeSectionQCPlanned: hardware/gasket's own QC planned date comes f
   it("matches computeSectionChainDates's own QC for the same section item — no drift between the two", () => {
     const item = { itemType: "section" as const, ...emptyFields };
     const arrival = computeItemArrivalPlanned(item, phase2PlanAnchor)!;
-    expect(computeSectionQCPlanned(item, phase2PlanAnchor)).toEqual(
-      new Date(arrival.getTime() + 2 * 24 * 60 * 60 * 1000) // arrival + 2 calendar days
-    );
+    expect(computeSectionQCPlanned(item, phase2PlanAnchor)).toEqual(addWorkingDays(arrival, 2)); // arrival + 2 working days
   });
 
   it("a manual override on Section's own QC row carries straight through", () => {

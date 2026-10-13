@@ -4,7 +4,7 @@ import { GLASS_PO_OVERRUN_SELECT, PROCUREMENT_ITEM_OVERRUN_SELECT } from "@/lib/
 import { getProjectDelayReasons, isContractorSelectionOverdue, isProcurementStageOverrun } from "@/lib/overrun";
 import { withLiveExpectedArrivalDates } from "@/lib/procurement";
 import { MANUAL_CONTRACTOR_STEP_CODES } from "@/lib/step-actions";
-import { addDays } from "@/lib/step-template";
+import { addWorkingDays } from "@/lib/working-days";
 import type { Department } from "@prisma/client";
 
 /**
@@ -197,7 +197,7 @@ export async function notifyWebsiteReviewDue(): Promise<{ notified: number }> {
     const actualEnd = project.phaseSteps[0]?.actualEndDate;
     if (!actualEnd) continue;
 
-    const plannedDate = addDays(actualEnd, 1);
+    const plannedDate = addWorkingDays(actualEnd, 1);
     if (plannedDate > now) continue;
 
     const daysWaiting = Math.floor((now.getTime() - plannedDate.getTime()) / 86_400_000);

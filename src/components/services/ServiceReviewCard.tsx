@@ -112,7 +112,7 @@ export function ServiceReviewCard({
             value={toDateInputValue(plannedDate)}
             disabled
             readOnly
-            title="2 days after the service was marked completed"
+            title="2 working days after the service was marked completed (Sundays excluded)"
             className="h-10 w-full rounded-lg border border-edge bg-overlay px-2 text-sm text-fg-muted outline-none"
           />
         </div>

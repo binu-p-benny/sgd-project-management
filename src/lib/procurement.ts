@@ -1,14 +1,27 @@
 import type { ItemType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { addWorkingDays, subtractWorkingDays } from "@/lib/working-days";
 
-function addDays(date: Date, days: number): Date {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
-}
+// Every span below is counted in working days — Sundays never count, and no computed planned date
+// lands on one (see working-days.ts). Only hand-entered overrides can still fall on a Sunday.
+
+const PLANNED_STAGE_ORDER = ["requirement", "quote", "payment", "order", "arrival", "qc"] as const;
+type PlannedStage = (typeof PLANNED_STAGE_ORDER)[number];
+
+/** Each stage's offset from the plan anchor, in working days, per item type — the one table the
+ *  computeExpectedXDate functions below and computeProcurementPlannedDates' own stage-by-stage
+ *  walk both read, so the two can never drift apart. Payment is 2 days after Quote and Order the
+ *  same day as Payment for every type; Section's QC is 3 days after its Arrival, hardware/gasket's
+ *  2. (Only Section's quote/payment/order are still displayed off this table — see the per-
+ *  function notes below for which entries are legacy.) */
+const STAGE_OFFSET_WORKING_DAYS: Record<ItemType, Record<PlannedStage, number>> = {
+  section: { requirement: 0, quote: 2, payment: 4, order: 4, arrival: 21, qc: 24 },
+  hardware: { requirement: 0, quote: 13, payment: 15, order: 15, arrival: 25, qc: 27 },
+  gasket: { requirement: 0, quote: 13, payment: 15, order: 15, arrival: 25, qc: 27 },
+};
 
 /**
- * Phase 2's shared planned-date anchor — 1D's ground-truth end date + 1 day, the day Phase 2
+ * Phase 2's shared planned-date anchor — 1D's ground-truth end date + 1 working day, the day Phase 2
  * begins. Null until 1D actually completes (`actualEndDate` unset): the plan can't show until
  * the field it heads off has actually happened. Once it has, an in_house delay anchors off
  * 1D's *planned* end date instead of its late actual one — the same ground-truth rule
@@ -24,7 +37,7 @@ export function computePhase2PlanAnchor(
 ): Date | null {
   if (!oneDActualEndDate) return null;
   const groundTruth = oneDDelayCategory === "in_house" ? oneDPlannedEndDate : oneDActualEndDate;
-  return groundTruth ? addDays(groundTruth, 1) : null;
+  return groundTruth ? addWorkingDays(groundTruth, 1) : null;
 }
 
 /**
@@ -37,42 +50,36 @@ export function computePhase2PlanAnchor(
  * shown on screen, so don't assume it matches the current display formula for either.
  */
 export function computeExpectedArrivalDate(itemType: ItemType, requirementCreatedAt: Date): Date {
-  if (itemType === "section") {
-    return addDays(requirementCreatedAt, 21);
-  }
-  return addDays(requirementCreatedAt, 25);
+  return addWorkingDays(requirementCreatedAt, STAGE_OFFSET_WORKING_DAYS[itemType].arrival);
 }
 
 /** Feeds computeProcurementPlannedDates only — still load-bearing for Section's displayed Quote,
  *  but dead for hardware/gasket, whose displayed Quote comes from
  *  computeExpectedHardwareGasketQuoteDate/computeHardwareGasketChainDates instead. */
 export function computeExpectedQuoteDate(itemType: ItemType, requirementCreatedAt: Date): Date {
-  if (itemType === "section") {
-    return addDays(requirementCreatedAt, 2);
-  }
-  return addDays(requirementCreatedAt, 13);
+  return addWorkingDays(requirementCreatedAt, STAGE_OFFSET_WORKING_DAYS[itemType].quote);
 }
 
-/** Payment is expected 2 days after the quote. Same "Section only, dead for hardware/gasket
- *  display" caveat as computeExpectedQuoteDate. */
+/** Payment is expected 2 working days after the quote. Same "Section only, dead for
+ *  hardware/gasket display" caveat as computeExpectedQuoteDate. */
 export function computeExpectedPaymentDate(itemType: ItemType, requirementCreatedAt: Date): Date {
-  return addDays(computeExpectedQuoteDate(itemType, requirementCreatedAt), 2);
+  return addWorkingDays(requirementCreatedAt, STAGE_OFFSET_WORKING_DAYS[itemType].payment);
 }
 
 /** Order confirmation is expected the same day as payment. Same "Section only, dead for
  *  hardware/gasket display" caveat as computeExpectedQuoteDate. */
 export function computeExpectedOrderDate(itemType: ItemType, requirementCreatedAt: Date): Date {
-  return computeExpectedPaymentDate(itemType, requirementCreatedAt);
+  return addWorkingDays(requirementCreatedAt, STAGE_OFFSET_WORKING_DAYS[itemType].order);
 }
 
 /**
- * Planned date for "Requirement created" itself — 1D's actual end + 1 day (i.e.
+ * Planned date for "Requirement created" itself — 1D's actual end + 1 working day (i.e.
  * `phase2PlanAnchor` unchanged), the same for every item type. Unlike quote/order/arrival/QC,
  * raising the requirement doesn't depend on each item's own supplier lead time — it's a same
- * internal step expected within 24 hours of 1D closing out, full stop.
+ * internal step expected within a working day of 1D closing out, full stop.
  *
- * `phase2PlanAnchor` is 1D's actual end + 1 day, not requirement_created_at itself: that field
- * is what this date is a *plan for*, is filled in manually, and may never happen on the
+ * `phase2PlanAnchor` is 1D's actual end + 1 working day, not requirement_created_at itself: that
+ * field is what this date is a *plan for*, is filled in manually, and may never happen on the
  * planned day — the plan has to be anchored to something that's fixed the moment 1D closes
  * out, not to the very field it's meant to be compared against.
  */
@@ -85,45 +92,14 @@ export function computeExpectedRequirementDate(phase2PlanAnchor: Date): Date {
  *  comes from computeSectionChainDates, hardware/gasket's from computeHardwareGasketChainDates.
  *  There's no stored column riding on this one the way computeExpectedArrivalDate's is. */
 export function computeExpectedQCDate(itemType: ItemType, phase2PlanAnchor: Date): Date {
-  const arrival = computeExpectedArrivalDate(itemType, phase2PlanAnchor);
-  return addDays(arrival, itemType === "section" ? 3 : 2);
+  return addWorkingDays(phase2PlanAnchor, STAGE_OFFSET_WORKING_DAYS[itemType].qc);
 }
 
-/** The corrective action plan (only relevant once QC fails) is expected 2 days after the QC
- *  check itself — the one date this stage plans from, since a plan can't predate the failure
+/** The corrective action plan (only relevant once QC fails) is expected 2 working days after the
+ *  QC check itself — the one date this stage plans from, since a plan can't predate the failure
  *  that triggered it. */
 export function computeExpectedActionPlanDate(qcCheckedAt: Date): Date {
-  return addDays(qcCheckedAt, 2);
-}
-
-/** Advances `date` by `days` working days, treating every day except Sunday as one. Walks
- *  forward a calendar day at a time and only counts a day toward `days` when it isn't a Sunday —
- *  so a Sunday inside the span costs an extra calendar day rather than shortening the count. */
-function addWorkingDays(date: Date, days: number): Date {
-  let result = date;
-  let remaining = days;
-  while (remaining > 0) {
-    result = addDays(result, 1);
-    if (result.getDay() !== 0) {
-      remaining -= 1;
-    }
-  }
-  return result;
-}
-
-/** The mirror of addWorkingDays for counting backward from a later anchor — walks one calendar
- *  day at a time toward the past, skipping Sunday the same way, so neither end of a window
- *  computed this way can ever land on one. */
-function subtractWorkingDays(date: Date, days: number): Date {
-  let result = date;
-  let remaining = days;
-  while (remaining > 0) {
-    result = addDays(result, -1);
-    if (result.getDay() !== 0) {
-      remaining -= 1;
-    }
-  }
-  return result;
+  return addWorkingDays(qcCheckedAt, 2);
 }
 
 /** Section only: material despatch is expected 7 working days after Order confirmed's own
@@ -197,9 +173,8 @@ export function computeSectionChainDates(
   const computedArrival = powderCoatingGroundTruth ? computeExpectedSectionArrivalDate(powderCoatingGroundTruth) : null;
   const arrival = overrides.arrival ?? computedArrival;
 
-  // QC is expected 2 days after Actual arrival's own planned date — plain calendar days, not
-  // working days like the 3 stages above (only those were specified as working-day spans).
-  const computedQC = arrival ? addDays(arrival, 2) : null;
+  // QC is expected 2 working days after Actual arrival's own planned date.
+  const computedQC = arrival ? addWorkingDays(arrival, 2) : null;
   const qc = overrides.qc ?? computedQC;
 
   return { materialDespatch, powderCoatingArrival, arrival, qc };
@@ -422,24 +397,6 @@ export interface ProcurementPlannedDates {
   qc: Date | null;
 }
 
-const PLANNED_STAGE_ORDER = ["requirement", "quote", "payment", "order", "arrival", "qc"] as const;
-
-/** Each stage's day offset from the anchor, read off the computeExpectedXDate functions above
- *  themselves (evaluated against a fixed reference point) rather than re-stated as separate
- *  magic numbers — so this can never drift out of sync with the formulas it's meant to match. */
-function stageOffsetDays(itemType: ItemType): Record<(typeof PLANNED_STAGE_ORDER)[number], number> {
-  const reference = new Date(0);
-  const daysFromReference = (d: Date) => Math.round((d.getTime() - reference.getTime()) / (1000 * 60 * 60 * 24));
-  return {
-    requirement: 0,
-    quote: daysFromReference(computeExpectedQuoteDate(itemType, reference)),
-    payment: daysFromReference(computeExpectedPaymentDate(itemType, reference)),
-    order: daysFromReference(computeExpectedOrderDate(itemType, reference)),
-    arrival: daysFromReference(computeExpectedArrivalDate(itemType, reference)),
-    qc: daysFromReference(computeExpectedQCDate(itemType, reference)),
-  };
-}
-
 /**
  * Every stage's effective Planned date for one item, with manual per-stage overrides layered on
  * top of the usual anchor+offset formulas above. Setting an override re-anchors every stage
@@ -448,14 +405,15 @@ function stageOffsetDays(itemType: ItemType): Record<(typeof PLANNED_STAGE_ORDER
  * item. A stage before the override, or a later stage with its own separate override, is
  * unaffected. With no overrides at all, this reproduces exactly what calling each
  * computeExpectedXDate function individually would — see the unit tests — since it's purely an
- * additive layer, not a replacement for them.
+ * additive layer, not a replacement for them: stepping stage-to-stage in working days lands on
+ * the same day as one jump of the summed offset, since every step skips the same Sundays.
  */
 export function computeProcurementPlannedDates(
   itemType: ItemType,
   anchor: Date | null,
   overrides: ProcurementPlannedOverrides
 ): ProcurementPlannedDates {
-  const offsets = stageOffsetDays(itemType);
+  const offsets = STAGE_OFFSET_WORKING_DAYS[itemType];
   const result = {} as ProcurementPlannedDates;
 
   let effectiveDate = anchor;
@@ -470,7 +428,7 @@ export function computeProcurementPlannedDates(
     } else if (effectiveDate === null) {
       result[stage] = null;
     } else {
-      result[stage] = addDays(effectiveDate, offsets[stage] - effectiveOffset);
+      result[stage] = addWorkingDays(effectiveDate, offsets[stage] - effectiveOffset);
       effectiveDate = result[stage];
       effectiveOffset = offsets[stage];
     }
@@ -984,7 +942,7 @@ export async function clearProcurementFromStage(projectId: string, fromStage: nu
  *
  * `newPlanAnchor` sets planAnchorOverride at the same time — the client gives a fresh planned
  * date for this item's redo, which stops matching the rest of the project's default schedule
- * (1D's actual end + 1 day) the moment it's failed and restarted.
+ * (1D's actual end + 1 working day) the moment it's failed and restarted.
  */
 export async function resetProcurementItem(itemId: string, newPlanAnchor: Date) {
   const data = PROCUREMENT_LIFECYCLE.reduce<Record<string, unknown>>((acc, stage) => ({ ...acc, ...stage.fields }), {});

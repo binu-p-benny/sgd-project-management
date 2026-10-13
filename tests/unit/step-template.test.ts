@@ -137,8 +137,20 @@ describe("buildPhase1And2Steps", () => {
       expect(dates.get(code)!.plannedStartDate).not.toBeNull();
       expect(dates.get(code)!.plannedEndDate).not.toBeNull();
     }
-    // 2A starts when 1D ends: 1A(1d)+1B(2d emergency)+1C(2d)+1D(2d) = day 7 from anchor
-    expect(dates.get("2A")!.plannedStartDate).toEqual(new Date("2026-01-08T00:00:00.000Z"));
+    // 2A starts when 1D ends: 1A(1d)+1B(2d emergency)+1C(2d)+1D(2d) = 7 working days from the
+    // (Thursday) anchor — Sunday the 4th doesn't count, so Friday the 9th rather than the 8th.
+    expect(dates.get("2A")!.plannedStartDate).toEqual(new Date("2026-01-09T00:00:00.000Z"));
+  });
+
+  it("no computed planned date in the Phase 1+2 chain ever lands on a Sunday, whatever weekday it's anchored on", () => {
+    for (let offset = 0; offset < 7; offset++) {
+      const anchor = new Date(Date.UTC(2026, 0, 1 + offset));
+      const dates = computePlannedDates(buildPhase1And2Steps("hot"), anchor);
+      for (const [code, d] of dates) {
+        expect(d.plannedStartDate?.getUTCDay(), `${code} start, anchor +${offset}`).not.toBe(0);
+        expect(d.plannedEndDate?.getUTCDay(), `${code} end, anchor +${offset}`).not.toBe(0);
+      }
+    }
   });
 
   it("computePlannedDates leaves every Phase 1+2 date unresolved when urgency is site_not_ready", () => {
@@ -186,9 +198,35 @@ describe("computePlannedDates", () => {
   });
 
   it("a step with no dependencies starts at anchorDate", () => {
-    const anchor = new Date("2026-03-15T00:00:00.000Z");
+    const anchor = new Date("2026-03-17T00:00:00.000Z"); // Tuesday
     const dates = computePlannedDates(buildPhase1Steps(), anchor);
     expect(dates.get("1A")!.plannedStartDate).toEqual(anchor);
+  });
+
+  it("…rolled to the Monday when anchorDate is a Sunday, and counted on from there", () => {
+    const anchor = new Date("2026-03-15T00:00:00.000Z"); // Sunday
+    const dates = computePlannedDates(buildPhase1Steps(), anchor);
+    expect(dates.get("1A")!.plannedStartDate).toEqual(new Date("2026-03-16T00:00:00.000Z"));
+    expect(dates.get("1A")!.plannedEndDate).toEqual(new Date("2026-03-17T00:00:00.000Z"));
+  });
+
+  it("durations skip Sundays: a 1-day step ready on a Saturday is due the Monday", () => {
+    const saturday = new Date("2026-01-03T00:00:00.000Z");
+    const dates = computePlannedDates(buildPhase2Steps(), saturday, new Map([["1D", saturday]]));
+    // 2A (1 day, dependsOn 1D) — the Sunday doesn't count, so it's due Monday.
+    expect(dates.get("2A")!.plannedStartDate).toEqual(saturday);
+    expect(dates.get("2A")!.plannedEndDate).toEqual(new Date("2026-01-05T00:00:00.000Z"));
+  });
+
+  it("a dependency ending on a Sunday rolls the start to Monday but costs no extra day over a Saturday finish", () => {
+    const sunday = new Date("2026-01-04T00:00:00.000Z");
+    const saturday = new Date("2026-01-03T00:00:00.000Z");
+    const fromSunday = computePlannedDates(buildPhase2Steps(), sunday, new Map([["1D", sunday]]));
+    const fromSaturday = computePlannedDates(buildPhase2Steps(), saturday, new Map([["1D", saturday]]));
+
+    expect(fromSunday.get("2A")!.plannedStartDate).toEqual(new Date("2026-01-05T00:00:00.000Z"));
+    expect(fromSunday.get("2A")!.plannedEndDate).toEqual(new Date("2026-01-05T00:00:00.000Z"));
+    expect(fromSunday.get("2A")!.plannedEndDate).toEqual(fromSaturday.get("2A")!.plannedEndDate);
   });
 
   it("uses resolvedDates for dependencies outside the batch", () => {

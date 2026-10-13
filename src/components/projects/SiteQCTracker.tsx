@@ -210,7 +210,7 @@ function Row({
           value={toDateInputValue(row.plannedDate)}
           disabled
           readOnly
-          title={isActionPlan ? "2 days after the QC failure was recorded" : "Planned — not editable"}
+          title={isActionPlan ? "2 working days after the QC failure was recorded (Sundays excluded)" : "Planned — not editable"}
           className="h-9 w-[9.5rem] rounded-lg border border-edge bg-overlay px-2 text-sm text-fg-muted outline-none"
         />
       </td>

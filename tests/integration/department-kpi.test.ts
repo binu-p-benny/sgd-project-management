@@ -123,8 +123,8 @@ describe("Operations Manager reviews — credited as their own on-time/late comp
 
     // Pin completedAt/reviewedAt to known values directly, same "write the exact dates" approach
     // setStepDates uses above, so the on-time/late math is deterministic regardless of when this
-    // test runs. Due date is completedAt (1 Aug) + REVIEW_DUE_DAYS (1) = 2 Aug; reviewed 6 Aug is
-    // 4 days late.
+    // test runs. Due date is completedAt (Saturday 1 Aug) + REVIEW_DUE_DAYS (1 working day) =
+    // Monday 3 Aug — Sunday the 2nd doesn't count; reviewed 6 Aug is 3 days late.
     await prisma.taskReview.update({
       where: { taskId },
       data: { completedAt: new Date("2026-08-01"), reviewedAt: new Date("2026-08-06") },
@@ -137,7 +137,7 @@ describe("Operations Manager reviews — credited as their own on-time/late comp
       expect(units).toHaveLength(1);
       expect(units[0].department).toBe("operations_manager");
       expect(units[0].outcome).toBe("late");
-      expect(units[0].daysLate).toBe(4);
+      expect(units[0].daysLate).toBe(3);
       expect(units[0].taskLabel).toBe(step.stepName);
       expect(units[0].contextName).toBe(project.name);
     } finally {

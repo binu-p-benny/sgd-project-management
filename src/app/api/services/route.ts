@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import { addDays } from "@/lib/step-template";
+import { addWorkingDays } from "@/lib/working-days";
 
 const createServiceSchema = z.object({
   title: z.string().min(1),
@@ -12,7 +12,7 @@ const createServiceSchema = z.object({
 
 /**
  * Creates a standalone service — no phase steps, no procurement rows. Seeded with one work item,
- * "Action plan", planned for a day after creation and always assigned to Project Engineer — a
+ * "Action plan", planned for the working day after creation and always assigned to Project Engineer — a
  * service otherwise starts completely open-ended (see ServiceTracker.tsx / POST
  * /api/services/[id]/items for every row after this one, which do each pick their own department).
  */
@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
         serviceId: created.id,
         taskLabel: "Action plan",
         department: "project_engineer",
-        plannedDate: addDays(created.createdAt, 1),
+        plannedDate: addWorkingDays(created.createdAt, 1),
       },
     });
 

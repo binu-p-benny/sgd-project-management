@@ -24,7 +24,7 @@ function formatDate(iso: string | null): string {
  * so the field shape genuinely differs, not just which Project columns it reads/writes. Same
  * "separate from the step timeline, no gate, nothing else reads it" spirit as that card though —
  * see the comment on Project.websiteReviewAsked in schema.prisma. Planned date is 3E's own
- * actual end date + 1 day, computed by the caller (see ProjectDetailPage) the same way
+ * actual end date + 1 working day, computed by the caller (see ProjectDetailPage) the same way
  * buildCustomerReviewTasks computes it for the matching HR & Admin /my-tasks row — this card and
  * that row answer the exact same question, so both must read as done/not-done together, which is
  * exactly what them both keying off websiteReviewAsked already guarantees.
@@ -38,7 +38,7 @@ export function WebsiteReviewCard({
   canEdit,
 }: {
   projectId: string;
-  /** Display only — 3E's actual end date + 1 day, or null if 3E hasn't completed yet. */
+  /** Display only — 3E's actual end date + 1 working day, or null if 3E hasn't completed yet. */
   plannedDate: string | null;
   asked: boolean | null;
   askedAt: string | null;
@@ -103,7 +103,7 @@ export function WebsiteReviewCard({
           value={toDateInputValue(plannedDate)}
           disabled
           readOnly
-          title="3E's own actual end date (Final QC on site) + 1 day — fixed, not editable here"
+          title="3E's own actual end date (Final QC on site) + 1 working day (Sundays excluded) — fixed, not editable here"
           className="h-10 w-full rounded-lg border border-edge bg-overlay px-2 text-sm text-fg-muted outline-none"
         />
         {!plannedDate && <p className="text-[11px] text-fg-subtle">Not yet — waiting on 3E&apos;s own final QC to complete.</p>}

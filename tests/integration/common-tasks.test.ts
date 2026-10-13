@@ -65,6 +65,18 @@ describe("nextRecurrenceDate", () => {
     // the next cycle in the past and show up as already overdue.
     expect(nextRecurrenceDate(planned, completedLate, "weekly").toISOString().slice(0, 10)).toBe("2026-01-27");
   });
+
+  it("never lands on a Sunday — daily skips to Monday, weekly/monthly move off a Sunday to the Monday", () => {
+    const saturday = new Date("2026-01-10T00:00:00.000Z");
+    expect(nextRecurrenceDate(saturday, saturday, "daily").toISOString().slice(0, 10)).toBe("2026-01-12");
+
+    const sunday = new Date("2026-01-04T00:00:00.000Z");
+    expect(nextRecurrenceDate(sunday, sunday, "weekly").toISOString().slice(0, 10)).toBe("2026-01-12");
+
+    // 1 Feb 2026 is a Sunday.
+    const firstOfJan = new Date("2026-01-01T00:00:00.000Z");
+    expect(nextRecurrenceDate(firstOfJan, firstOfJan, "monthly").toISOString().slice(0, 10)).toBe("2026-02-02");
+  });
 });
 
 describe("common tasks in /my-tasks", () => {

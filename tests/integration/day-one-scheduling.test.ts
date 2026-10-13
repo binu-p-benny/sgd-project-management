@@ -18,6 +18,7 @@ import {
   maybeEarlyUnlockPhase3,
 } from "@/lib/step-actions";
 import { rescheduleProjectDates } from "@/lib/reschedule";
+import { rollToWorkingDay } from "@/lib/working-days";
 import {
   computeItemArrivalPlanned,
   computePhase2PlanAnchor,
@@ -474,7 +475,8 @@ describe("Actual-date edits cascade through the live Phase 1+2 schedule", () => 
     await rescheduleProjectDates(project.id);
 
     const oneBAfter = await getStep(project.id, "1B");
-    expect(oneBAfter.plannedStartDate).toEqual(earlierEnd);
+    // Rolled to the Monday if 3 days back happens to be a Sunday (it depends on today's weekday).
+    expect(oneBAfter.plannedStartDate).toEqual(rollToWorkingDay(earlierEnd));
     expect(oneBAfter.plannedStartDate!.getTime()).toBeLessThan(oneBOriginal.plannedStartDate!.getTime());
   });
 });
@@ -502,7 +504,7 @@ describe("1B's delay_category controls whether a late completion moves 1C's plan
     await updateStepStatus(oneB.id, "completed", users.project_engineer, { delayCategory: "client_side" });
 
     const oneCAfter = await getStep(project.id, "1C");
-    expect(oneCAfter.plannedStartDate).toEqual(lateEnd);
+    expect(oneCAfter.plannedStartDate).toEqual(rollToWorkingDay(lateEnd)); // Monday if lateEnd is a Sunday
     expect(oneCAfter.plannedEndDate!.getTime()).toBeGreaterThan(oneCFirst.plannedEndDate!.getTime());
   });
 
@@ -605,8 +607,9 @@ describe("The delay-category requirement now also covers 1A, 1C, 1D, 2D2 — not
     expect(updated.delayCategory).toBe("client_side");
 
     // Same cascade as 1B already has: a client_side 1A still pushes 1B's planned finish out.
+    // (Rolled to the Monday when lateEnd itself happens to be a Sunday — depends on today's weekday.)
     const oneB = await getStep(project.id, "1B");
-    expect(oneB.plannedStartDate).toEqual(lateEnd);
+    expect(oneB.plannedStartDate).toEqual(rollToWorkingDay(lateEnd));
   });
 
   it("rejects completing 1D late with no delayCategory; an in_house 1D freezes 2A's planned finish exactly where it was first set", async () => {

@@ -1,4 +1,5 @@
 import type { Department, GlassType, StepPhase, VisitUrgency } from "@prisma/client";
+import { addWorkingDays, rollToWorkingDay } from "@/lib/working-days";
 
 export interface StepTemplateItem {
   stepCode: string;
@@ -181,6 +182,8 @@ export const PHASE_GATE_STEP_CODE = {
   phase_3: "2F",
 } as const;
 
+/** Plain calendar-day arithmetic — for windows and thresholds, not planned dates. Every
+ *  automatically computed planned/due date skips Sundays instead (see working-days.ts). */
 export function addDays(date: Date, days: number): Date {
   const result = new Date(date);
   result.setDate(result.getDate() + days);
@@ -193,8 +196,26 @@ export interface PlannedDates {
 }
 
 /**
+ * A step's planned start/end from the moment it's ready to begin (`readyFrom` — its latest
+ * dependency's end) and its duration, both counted around Sundays: the start is rolled off a
+ * Sunday onto the Monday, and the end is `durationDays` *working* days after `readyFrom`. The end
+ * counts from readyFrom rather than the rolled start on purpose — a dependency finishing on a
+ * Sunday shouldn't cost the next step an extra day over one finishing on the Saturday (both mean
+ * "Monday is the first working day"). Shared by computePlannedDates below and
+ * rescheduleProjectDates so the baseline and every later recompute agree to the day.
+ */
+export function plannedWindowFrom(readyFrom: Date | null, durationDays: number | null): PlannedDates {
+  if (readyFrom === null) return { plannedStartDate: null, plannedEndDate: null };
+  return {
+    plannedStartDate: rollToWorkingDay(readyFrom),
+    plannedEndDate: durationDays === null ? null : addWorkingDays(readyFrom, durationDays),
+  };
+}
+
+/**
  * Forward-pass baseline scheduler: each step starts when its latest dependency ends
- * (or at anchorDate if it has none), and ends start + planned_duration_days later.
+ * (or at anchorDate if it has none), and ends planned_duration_days working days later
+ * (Sundays never count, and neither date lands on one — see plannedWindowFrom).
  * `steps` must already be in a topological order (dependencies before dependents) —
  * true of every array returned by the build* functions above. `resolvedDates` carries
  * end dates for steps outside this batch (e.g. an earlier phase's actual_end_date).
@@ -215,24 +236,23 @@ export function computePlannedDates(
   const endDates = new Map<string, Date | null>(resolvedDates);
 
   for (const step of steps) {
-    let start: Date | null;
+    let readyFrom: Date | null;
     if (step.dependsOn.length === 0) {
-      start = anchorDate;
+      // Rolled up front (unlike a dependency's end below) so the stored start is also what the
+      // end counts from — rescheduleProjectDates only has that stored start to go on for a
+      // dependency-free step, and must land on the same end date.
+      readyFrom = rollToWorkingDay(anchorDate);
     } else {
       const depEnds = step.dependsOn.map((code) => endDates.get(code));
       const allResolved = depEnds.every((d): d is Date => d instanceof Date);
-      start = allResolved
+      readyFrom = allResolved
         ? new Date(Math.max(...(depEnds as Date[]).map((d) => d.getTime())))
         : null;
     }
 
-    const end =
-      start !== null && step.plannedDurationDays !== null
-        ? addDays(start, step.plannedDurationDays)
-        : null;
-
-    result.set(step.stepCode, { plannedStartDate: start, plannedEndDate: end });
-    endDates.set(step.stepCode, end);
+    const window = plannedWindowFrom(readyFrom, step.plannedDurationDays);
+    result.set(step.stepCode, window);
+    endDates.set(step.stepCode, window.plannedEndDate);
   }
 
   return result;

@@ -1,6 +1,6 @@
 import type { Department } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { addDays } from "@/lib/step-template";
+import { addWorkingDays } from "@/lib/working-days";
 import { isProcurementStageOverrun } from "@/lib/overrun";
 import { PROCUREMENT_STAGES } from "@/lib/project-filters";
 import { GLASS_PO_FULL_STAGES } from "@/lib/unified-tasks";
@@ -8,7 +8,7 @@ import { DERIVED_STEP_CODES } from "@/lib/step-actions";
 import { DEPARTMENT_LABELS } from "@/lib/labels";
 import type { UnifiedTask } from "@/lib/unified-tasks";
 
-/** How long the operation manager has to review a completed unit of work before it reads as
+/** How many working days (Sundays excluded) the operation manager has to review a completed unit of work before it reads as
  *  due, same "date-driven, computed at read time" convention as every other overdue check in
  *  the app (see overrun.ts) — not the customer-facing SERVICE_REVIEW_DUE_DAYS in service.ts,
  *  which is a completely separate review (the client's, not internal QA). */
@@ -113,7 +113,7 @@ function buildReviewTask(args: {
   completedAt: Date;
   completedByDepartment: Department;
 }): UnifiedTask {
-  const dueDate = addDays(args.completedAt, REVIEW_DUE_DAYS);
+  const dueDate = addWorkingDays(args.completedAt, REVIEW_DUE_DAYS);
   return {
     id: `review_completed:${args.taskId}`,
     kind: "review_completed",

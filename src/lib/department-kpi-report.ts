@@ -6,7 +6,7 @@ import {
   computeAllProcurementPlannedDates,
   type ProcurementStagePlannedDates,
 } from "@/lib/procurement";
-import { addDays } from "@/lib/step-template";
+import { addWorkingDays } from "@/lib/working-days";
 import { PROCUREMENT_STAGES } from "@/lib/project-filters";
 import { GLASS_PO_FULL_STAGES, getUnifiedMyTasks } from "@/lib/unified-tasks";
 import { REVIEW_DUE_DAYS, getReviewQueueTasks } from "@/lib/task-reviews";
@@ -314,12 +314,12 @@ export async function getCompletedUnits(range: KpiRange): Promise<CompletedUnitR
   // --- Operations Manager's own reviews of other departments' completed work ---
   // Always credited to operations_manager, regardless of which department did the original
   // work being reviewed — this scores the review itself, not a second time the same unit.
-  // "Planned" here is the review's own due date (REVIEW_DUE_DAYS after the original
+  // "Planned" here is the review's own due date (REVIEW_DUE_DAYS working days after the original
   // completion, snapshotted onto the row at review time — see resolveReviewContext), not the
   // original unit's own planned date. No client-caused concept for a review.
   for (const r of reviews) {
     if (!inRange(r.reviewedAt, range)) continue;
-    const dueDate = addDays(r.completedAt, REVIEW_DUE_DAYS);
+    const dueDate = addWorkingDays(r.completedAt, REVIEW_DUE_DAYS);
     const { outcome, daysLate } = classifyCompletion(dueDate, r.reviewedAt, null);
     rows.push({
       department: "operations_manager",
