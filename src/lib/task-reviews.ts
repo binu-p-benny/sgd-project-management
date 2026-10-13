@@ -360,10 +360,9 @@ async function actionItemReviewTasks(reviewed: Set<string>): Promise<UnifiedTask
   return tasks;
 }
 
-// A service's own completed (actualDate filled) work items — reviewable even after the whole
-// service has been closed out (unlike buildServiceItemTasks' own open-task list, which stops
-// nagging a department once a service is marked completed): the work still happened and still
-// needs reviewing regardless of whether the service itself is still open.
+// A service's own completed (actualDate filled) work items — reviewable whether or not the whole
+// service has since been marked completed: the work still happened and still needs reviewing
+// regardless of the service's own status.
 async function serviceItemReviewTasks(reviewed: Set<string>): Promise<UnifiedTask[]> {
   const items = await prisma.serviceItem.findMany({
     where: { actualDate: { not: null } },

@@ -792,16 +792,19 @@ async function buildActionItemTasks(department: Department | null): Promise<Unif
 /**
  * A service's own flat work-item list (see ServiceItem/ServiceTracker.tsx) — structurally the
  * same "one date field + one note field, optional pass/fail" shape as the 3 action-item tables
- * above, just scoped to a Service instead of a Project. Excludes items under a service that's
- * already been explicitly marked completed (see getServiceStatus's "never inferred from items"
- * rule) — once an admin has closed a service out, its stray unfinished rows shouldn't keep
- * nagging a department that no longer has anything to act on.
+ * above, just scoped to a Service instead of a Project. Deliberately does *not* skip items under
+ * a service that's been marked completed (see getServiceStatus's "never inferred from items"
+ * rule): completing a service is an explicit status flip, not a statement that every row is done,
+ * and in practice rows keep being added to — or were left open on — a completed service (its
+ * customer-review row, a follow-up visit). Hiding those made the Service work tab read empty
+ * while a department still owed real, overdue work; same reason Additional works rows and
+ * follow-ups on a completed Project still show up. A row nobody needs any more is dropped by
+ * deleting it or filling in its date from the service's own page.
  */
 async function buildServiceItemTasks(department: Department | null): Promise<UnifiedTask[]> {
   const items = await prisma.serviceItem.findMany({
     where: {
       actualDate: null,
-      service: { completedAt: null },
       ...(department ? { department } : {}),
     },
     include: { service: { select: { id: true, title: true, client: { select: { name: true } } } } },

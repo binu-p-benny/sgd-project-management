@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { Department } from "@prisma/client";
 import { getUnifiedMyTasks } from "@/lib/unified-tasks";
 import { updateStepStatus } from "@/lib/step-actions";
-import { createTestProjectDayOne, ensureTestUsers, cleanupTestProjects, getStep, prisma } from "../helpers/db";
+import { createTestProjectDayOne, ensureTestUsers, cleanupTestProjects, getStep, prisma, TEST_PREFIX } from "../helpers/db";
 import { advanceThroughPhase1, advanceThroughPhase2, patchProcurementItem } from "../helpers/scenarios";
 
 let users: Record<Department, string>;
@@ -536,5 +536,71 @@ describe("getUnifiedMyTasks — sorting", () => {
 
     const step = await prisma.phaseStep.findUniqueOrThrow({ where: { id: oneA.id } });
     expect(step.actualStartDate?.toISOString()).toBe(backdated.toISOString());
+  });
+});
+
+describe("getUnifiedMyTasks — a service's own work items (Service/ServiceItem)", () => {
+  const serviceIds: string[] = [];
+  let clientId: string;
+
+  beforeAll(async () => {
+    const client = await prisma.client.create({
+      data: { name: `${TEST_PREFIX}service-tasks-client`, phone: "0000000000", address: "N/A" },
+    });
+    clientId = client.id;
+  });
+
+  afterAll(async () => {
+    // Items cascade with their service; the client can only go once nothing references it.
+    await prisma.service.deleteMany({ where: { id: { in: serviceIds } } });
+    await prisma.client.delete({ where: { id: clientId } }).catch(() => {});
+  });
+
+  async function createService(title: string, overrides: { completedAt?: Date; deletedAt?: Date } = {}) {
+    const service = await prisma.service.create({
+      data: { title: `${TEST_PREFIX}${title}`, clientId, ...overrides },
+    });
+    serviceIds.push(service.id);
+    return service;
+  }
+
+  async function createItem(serviceId: string, taskLabel: string, department: Department = "project_engineer") {
+    return prisma.serviceItem.create({
+      data: { serviceId, taskLabel, department, plannedDate: new Date("2026-10-01T00:00:00.000Z") },
+    });
+  }
+
+  it("surfaces an open item as a phase=service row for its own department only, and drops it once its date is filled", async () => {
+    const service = await createService("open-service");
+    const item = await createItem(service.id, "Site visit");
+
+    const mine = tasksFor(await getUnifiedMyTasks("project_engineer"), service.id);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toMatchObject({ kind: "service_item", phase: "service", taskLabel: "Site visit", refId: item.id });
+    expect(tasksFor(await getUnifiedMyTasks("purchase"), service.id)).toHaveLength(0);
+
+    await prisma.serviceItem.update({ where: { id: item.id }, data: { actualDate: new Date() } });
+    expect(tasksFor(await getUnifiedMyTasks("project_engineer"), service.id)).toHaveLength(0);
+  });
+
+  // Regression for the Service work tab reading empty: every open row in production sat under a
+  // service that had been marked completed (its customer-review row, follow-up visits added
+  // afterwards), and buildServiceItemTasks used to filter those out.
+  it("still surfaces an open item under a service that's been marked completed — completing a service isn't 'every row is done'", async () => {
+    const service = await createService("completed-service", { completedAt: new Date() });
+    await createItem(service.id, "CUSTOMER REVIEW");
+
+    const mine = tasksFor(await getUnifiedMyTasks("project_engineer"), service.id);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toMatchObject({ kind: "service_item", phase: "service", taskLabel: "CUSTOMER REVIEW" });
+    expect(mine[0].overrun).toBe(true);
+  });
+
+  it("a soft-deleted service contributes nothing, completed or not", async () => {
+    const service = await createService("deleted-service", { deletedAt: new Date() });
+    await createItem(service.id, "Should stay hidden");
+
+    expect(tasksFor(await getUnifiedMyTasks("project_engineer"), service.id)).toHaveLength(0);
+    expect(tasksFor(await getUnifiedMyTasks(null), service.id)).toHaveLength(0);
   });
 });
